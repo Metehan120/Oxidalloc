@@ -13,6 +13,7 @@ pub const SIZE_CLASSES: [usize; 12] = [
 ];
 pub const ITERATIONS: [usize; 12] = [1024, 1024, 512, 512, 256, 128, 64, 32, 16, 8, 4, 2];
 
+#[thread_local]
 static mut MAP_LIST: [AtomicPtr<Header>; 12] = [
     AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
