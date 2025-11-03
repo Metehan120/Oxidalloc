@@ -2,8 +2,12 @@
 
 use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, size_t};
 use std::{
+    env,
     os::raw::c_void,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
+    },
 };
 
 const MAGIC: u64 = 0x01B01698BF;
@@ -13,11 +17,14 @@ pub const SIZE_CLASSES: [usize; 16] = [
     12582912, 16777216, 33554432, 67108864,
 ];
 pub const ITERATIONS: [usize; 16] = [
-    8192, 4096, 2048, 1024, 512, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2,
+    2048, 1024, 512, 512, 256, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2,
 ];
 
 #[thread_local]
-static mut MAP_LIST: [AtomicPtr<Header>; 13] = [
+static MAP_LIST: [AtomicPtr<MapHeader>; 16] = [
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
@@ -33,19 +40,53 @@ static mut MAP_LIST: [AtomicPtr<Header>; 13] = [
     AtomicPtr::new(std::ptr::null_mut()),
 ];
 
-// Will be added in future
-pub const TRIM_LEVEL: usize = 100;
+#[thread_local]
+static MAP_ALLOCATION_LIST: [AtomicUsize; 16] = [
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+    AtomicUsize::new(0),
+];
+
+pub static TOTAL_USAGE: AtomicUsize = AtomicUsize::new(0);
+pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+static IS_LAZY_INIT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+static TRIM_THRESHOLD_PERCENT: LazyLock<usize> = LazyLock::new(|| {
+    IS_LAZY_INIT_ACTIVE.store(true, Ordering::Relaxed);
+
+    let result = env::var("OXIDALLOC_TRIM")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(75);
+
+    IS_LAZY_INIT_ACTIVE.store(false, Ordering::Relaxed);
+    result
+});
 
 #[repr(C, align(16))]
-struct Header {
+struct MapHeader {
     pub size: usize,
     pub magic: u64,
-    pub next: *mut Header,
+    pub next: *mut MapHeader,
 }
 
 fn bulk_allocate(count: usize, class: usize) -> bool {
     let user_size = SIZE_CLASSES[class];
-    let header_size = std::mem::size_of::<Header>();
+    let header_size = std::mem::size_of::<MapHeader>();
     let block_size = header_size + user_size;
     let total_mmap_size = block_size * count;
 
@@ -60,6 +101,8 @@ fn bulk_allocate(count: usize, class: usize) -> bool {
         )
     };
 
+    MAP_ALLOCATION_LIST[class].fetch_add(count, Ordering::Relaxed);
+
     if chunk == libc::MAP_FAILED {
         return false;
     }
@@ -68,10 +111,10 @@ fn bulk_allocate(count: usize, class: usize) -> bool {
         unsafe { madvise(chunk, total_mmap_size, libc::MADV_HUGEPAGE) };
     }
 
-    let mut prev: *mut Header = std::ptr::null_mut();
+    let mut prev: *mut MapHeader = std::ptr::null_mut();
 
     for i in (0..count).rev() {
-        let header = (chunk as usize + i * block_size) as *mut Header;
+        let header = (chunk as usize + i * block_size) as *mut MapHeader;
 
         unsafe {
             (*header).size = user_size;
@@ -82,9 +125,9 @@ fn bulk_allocate(count: usize, class: usize) -> bool {
         prev = header;
     }
 
-    unsafe {
-        MAP_LIST[class].store(prev, std::sync::atomic::Ordering::Relaxed);
-    };
+    MAP_LIST[class].store(prev, std::sync::atomic::Ordering::Relaxed);
+    TOTAL_ALLOCATED.fetch_add(total_mmap_size, Ordering::Relaxed);
+    TOTAL_USAGE.fetch_add(total_mmap_size, Ordering::Relaxed);
 
     true
 }
@@ -126,8 +169,7 @@ fn pop_from_list(class: usize) -> *mut c_void {
                 .is_ok()
             {
                 (*header).next = std::ptr::null_mut();
-                (*header).magic = MAGIC;
-                return (header as *mut u8).add(std::mem::size_of::<Header>()) as *mut c_void;
+                return (header as *mut u8).add(std::mem::size_of::<MapHeader>()) as *mut c_void;
             }
         }
     }
@@ -135,7 +177,7 @@ fn pop_from_list(class: usize) -> *mut c_void {
 
 pub fn big_alloc(size: usize) -> *mut c_void {
     unsafe {
-        let total_size = size + std::mem::size_of::<Header>();
+        let total_size = size + std::mem::size_of::<MapHeader>();
 
         let chunk = libc::mmap(
             std::ptr::null_mut(),
@@ -150,13 +192,15 @@ pub fn big_alloc(size: usize) -> *mut c_void {
             return std::ptr::null_mut();
         }
 
+        TOTAL_ALLOCATED.fetch_add(total_size, Ordering::Relaxed);
+
         madvise(chunk, total_size, MADV_HUGEPAGE);
 
-        let header = chunk as *mut Header;
+        let header = chunk as *mut MapHeader;
         (*header).magic = MAGIC;
         (*header).size = size;
         (*header).next = std::ptr::null_mut();
-        (header as *mut u8).add(std::mem::size_of::<Header>()) as *mut c_void
+        (header as *mut u8).add(std::mem::size_of::<MapHeader>()) as *mut c_void
     }
 }
 
@@ -171,16 +215,85 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
 
     let ptr = pop_from_list(class);
     if !ptr.is_null() {
+        TOTAL_USAGE.fetch_sub(size, Ordering::Relaxed);
+        MAP_ALLOCATION_LIST[class].fetch_sub(1, Ordering::Relaxed);
         return ptr;
     }
 
     for _ in 0..3 {
         if bulk_allocate(ITERATIONS[class], class) {
+            TOTAL_USAGE.fetch_sub(size, Ordering::Relaxed);
+            MAP_ALLOCATION_LIST[class].fetch_sub(1, Ordering::Relaxed);
             return pop_from_list(class);
         }
     }
 
     std::ptr::null_mut()
+}
+
+fn trim() {
+    if IS_LAZY_INIT_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let usage = TOTAL_USAGE.load(Ordering::Relaxed);
+    let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
+    let trim_threshold = *TRIM_THRESHOLD_PERCENT;
+
+    if allocated == 0 {
+        return;
+    }
+
+    if (usage * 100) / allocated > trim_threshold {
+        for allocation_class in (0..MAP_ALLOCATION_LIST.len()).rev() {
+            let trim_target_count = ITERATIONS[allocation_class];
+
+            if allocation_class == 0 {
+                continue;
+            }
+
+            if MAP_ALLOCATION_LIST[allocation_class].load(Ordering::Relaxed) <= trim_target_count {
+                continue;
+            }
+
+            while MAP_ALLOCATION_LIST[allocation_class].load(Ordering::Relaxed) > trim_target_count
+            {
+                let header = MAP_LIST[allocation_class].load(Ordering::Acquire);
+
+                if header.is_null() {
+                    break;
+                }
+
+                let next = unsafe { (*header).next };
+
+                unsafe {
+                    loop {
+                        if MAP_LIST[allocation_class]
+                            .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
+                            .is_ok()
+                        {
+                            let size = (*header).size;
+                            let total = std::mem::size_of::<MapHeader>() + size;
+                            (*header).next = std::ptr::null_mut();
+                            MAP_ALLOCATION_LIST[allocation_class].fetch_sub(1, Ordering::Relaxed);
+
+                            let released_successfully =
+                                libc::munmap(header as *mut c_void, total) == 0;
+
+                            if released_successfully {
+                                TOTAL_ALLOCATED.fetch_sub(total, Ordering::Relaxed);
+                                TOTAL_USAGE.fetch_sub(total, Ordering::Relaxed);
+                            } else {
+                                libc::madvise(header as *mut c_void, total, libc::MADV_DONTNEED);
+                            }
+
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -189,19 +302,13 @@ pub extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
-    let header = unsafe { (ptr as *mut Header).sub(1) };
-
-    let magic = match std::panic::catch_unwind(|| unsafe { (*header).magic }) {
-        Ok(m) => m,
-        Err(_) => return,
-    };
-
-    if magic != MAGIC {
+    let header = unsafe { (ptr as *mut MapHeader).sub(1) };
+    if unsafe { (*header).magic } != MAGIC {
         return;
     }
 
     let size = unsafe { (*header).size };
-    let total = std::mem::size_of::<Header>() + size;
+    let total = std::mem::size_of::<MapHeader>() + size;
 
     let class = match match_size_class(size) {
         Some(class) => class,
@@ -215,36 +322,22 @@ pub extern "C" fn free(ptr: *mut c_void) {
     };
 
     unsafe {
-        match TRIM_LEVEL {
-            1 => {
-                let _ = munmap(header as *mut c_void, total);
-                (*header).magic = 0;
+        loop {
+            let head = MAP_LIST[class].load(Ordering::Acquire);
+            (*header).next = head;
+            if MAP_LIST[class]
+                .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
             }
-            2..=99 => loop {
-                if class >= 9 {
-                    madvise(header as *mut c_void, total, libc::MADV_FREE);
-                }
-                let head = MAP_LIST[class].load(Ordering::Acquire);
-                (*header).next = head;
-                if MAP_LIST[class]
-                    .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
-                    .is_ok()
-                {
-                    break;
-                }
-            },
-            _ => loop {
-                let head = MAP_LIST[class].load(Ordering::Acquire);
-                (*header).next = head;
-                if MAP_LIST[class]
-                    .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
-                    .is_ok()
-                {
-                    break;
-                }
-            },
         }
     }
+
+    TOTAL_USAGE.fetch_add(total, Ordering::Relaxed);
+    MAP_ALLOCATION_LIST[class].fetch_add(1, Ordering::Relaxed);
+
+    trim();
 }
 
 #[unsafe(no_mangle)]
@@ -259,7 +352,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     }
 
     unsafe {
-        let header = (ptr as *mut u8).sub(std::mem::size_of::<Header>()) as *mut Header;
+        let header = (ptr as *mut u8).sub(std::mem::size_of::<MapHeader>()) as *mut MapHeader;
         if (*header).magic != MAGIC {
             return std::ptr::null_mut();
         }
@@ -280,7 +373,11 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
-    let total = nmemb * size;
+    let total = match nmemb.checked_mul(size) {
+        Some(t) => t,
+        None => return std::ptr::null_mut(),
+    };
+
     let ptr = malloc(total);
     if !ptr.is_null() {
         unsafe {
@@ -331,7 +428,7 @@ fn bench_allocator() {
     // Bench large allocations
     let start = Instant::now();
     for _ in black_box(0..10000) {
-        let ptr = black_box(malloc(1048576));
+        let ptr = black_box(malloc(1024 * 1024 * 2));
         black_box(free(ptr));
     }
     let large_time = start.elapsed();
