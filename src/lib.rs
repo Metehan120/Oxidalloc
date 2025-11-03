@@ -1,6 +1,6 @@
 #![feature(thread_local)]
 
-use libc::{MADV_DONTNEED, madvise, munmap, size_t};
+use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, size_t};
 use std::{
     os::raw::c_void,
     sync::atomic::{AtomicPtr, Ordering},
@@ -8,13 +8,17 @@ use std::{
 
 const MAGIC: u64 = 0x01B01698BF;
 
-pub const SIZE_CLASSES: [usize; 12] = [
-    512, 4096, 6144, 8192, 16384, 32768, 65536, 262144, 1048576, 12582912, 33554432, 67108864,
+pub const SIZE_CLASSES: [usize; 16] = [
+    512, 4096, 6144, 8192, 16384, 32768, 65536, 262144, 1048576, 2097152, 4194304, 8388608,
+    12582912, 16777216, 33554432, 67108864,
 ];
-pub const ITERATIONS: [usize; 12] = [8192, 4096, 2048, 1024, 512, 128, 64, 32, 16, 8, 4, 2];
+pub const ITERATIONS: [usize; 16] = [
+    8192, 4096, 2048, 1024, 512, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2,
+];
 
 #[thread_local]
-static mut MAP_LIST: [AtomicPtr<Header>; 12] = [
+static mut MAP_LIST: [AtomicPtr<Header>; 13] = [
+    AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
     AtomicPtr::new(std::ptr::null_mut()),
@@ -60,6 +64,10 @@ fn bulk_allocate(count: usize, class: usize) -> bool {
         return false;
     }
 
+    if class >= 9 {
+        unsafe { madvise(chunk, total_mmap_size, libc::MADV_HUGEPAGE) };
+    }
+
     let mut prev: *mut Header = std::ptr::null_mut();
 
     for i in (0..count).rev() {
@@ -92,9 +100,13 @@ pub fn match_size_class(size: usize) -> Option<usize> {
         32769..=65536 => Some(6),
         65537..=262144 => Some(7),
         262145..=1048576 => Some(8),
-        1048577..=12582912 => Some(9),
-        12582913..=33554432 => Some(10),
-        33554433..=67108864 => Some(11),
+        1048577..=2097152 => Some(9),
+        2097153..=4194304 => Some(10),
+        4194305..=8388608 => Some(11),
+        8388609..=12582912 => Some(12),
+        12582913..=16777216 => Some(13),
+        16777217..=33554432 => Some(14),
+        33554433..=67108864 => Some(15),
         _ => None,
     }
 }
@@ -137,6 +149,8 @@ pub fn big_alloc(size: usize) -> *mut c_void {
         if chunk == libc::MAP_FAILED {
             return std::ptr::null_mut();
         }
+
+        madvise(chunk, total_size, MADV_HUGEPAGE);
 
         let header = chunk as *mut Header;
         (*header).magic = MAGIC;
@@ -207,7 +221,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 (*header).magic = 0;
             }
             2..=99 => loop {
-                if class >= 6 {
+                if class >= 9 {
                     madvise(header as *mut c_void, total, libc::MADV_FREE);
                 }
                 let head = MAP_LIST[class].load(Ordering::Acquire);
