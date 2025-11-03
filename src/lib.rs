@@ -174,8 +174,14 @@ pub extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
-    let header = unsafe { (ptr as *mut u8).sub(std::mem::size_of::<Header>()) } as *mut Header;
-    if unsafe { (*header).magic } != MAGIC {
+    let header = unsafe { (ptr as *mut Header).sub(1) };
+
+    let magic = match std::panic::catch_unwind(|| unsafe { (*header).magic }) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+
+    if magic != MAGIC {
         return;
     }
 
