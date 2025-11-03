@@ -206,7 +206,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 (*header).magic = 0;
             }
             2..=99 => loop {
-                if class > 8 {
+                if class >= 6 {
                     madvise(header as *mut c_void, total, libc::MADV_FREE);
                 }
                 let head = MAP_LIST[class].load(Ordering::Acquire);
