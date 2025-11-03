@@ -308,7 +308,8 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     }
 }
 
-fn trim() {
+// FIXME: Broken Trim Logic
+fn _trim() {
     let used = TOTAL_USED.load(Ordering::Relaxed);
     let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
 
@@ -407,8 +408,6 @@ pub extern "C" fn free(ptr: *mut c_void) {
             }
         }
     }
-
-    trim();
 }
 
 #[unsafe(no_mangle)]
@@ -423,22 +422,20 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     }
 
     unsafe {
-        let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
+        let header = (ptr as *mut u8).sub(std::mem::size_of::<Header>()) as *mut Header;
         if (*header).magic != MAGIC {
             return std::ptr::null_mut();
         }
 
         let old_size = (*header).size;
         let new_ptr = malloc(new_size);
+
         if new_ptr.is_null() {
             return std::ptr::null_mut();
         }
 
-        std::ptr::copy_nonoverlapping(
-            ptr as *const u8,
-            new_ptr as *mut u8,
-            old_size.min(new_size as u64) as usize,
-        );
+        let copy_size = old_size.min(new_size as u64);
+        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size as usize);
 
         free(ptr);
         new_ptr
