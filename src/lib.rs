@@ -122,7 +122,6 @@ fn pop_from_list(class: usize) -> *mut c_void {
 
 pub fn big_alloc(size: usize) -> *mut c_void {
     unsafe {
-        eprintln!("big_malloc({})", size);
         let total_size = size + std::mem::size_of::<Header>();
 
         let chunk = libc::mmap(
