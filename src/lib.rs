@@ -193,8 +193,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
         Some(class) => class,
         None => unsafe {
             if munmap(header as *mut c_void, total) != 0 {
-                madvise(header as *mut c_void, total, MADV_DONTNEED);
                 (*header).magic = 0;
+                madvise(header as *mut c_void, total, MADV_DONTNEED);
             }
             return;
         },
