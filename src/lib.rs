@@ -6,6 +6,7 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+#[thread_local]
 // Thread-local map list for thread-specific memory allocation
 static MAP_LIST: [AtomicPtr<Header>; 16] = [
     AtomicPtr::new(std::ptr::null_mut()),
