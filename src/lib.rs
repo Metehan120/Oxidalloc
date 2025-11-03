@@ -1,6 +1,6 @@
 #![feature(thread_local)]
 
-use libc::{munmap, size_t};
+use libc::{madvise, munmap, size_t};
 use std::{
     os::raw::c_void,
     sync::atomic::{AtomicPtr, Ordering},
@@ -11,7 +11,7 @@ const MAGIC: u64 = 0x01B01698BF;
 pub const SIZE_CLASSES: [usize; 12] = [
     512, 4096, 6144, 8192, 16384, 32768, 65536, 262144, 1048576, 12582912, 33554432, 67108864,
 ];
-pub const ITERATIONS: [usize; 12] = [1024, 1024, 512, 512, 256, 128, 64, 32, 16, 8, 4, 2];
+pub const ITERATIONS: [usize; 12] = [8192, 4096, 2048, 1024, 512, 128, 64, 32, 16, 8, 4, 2];
 
 #[thread_local]
 static mut MAP_LIST: [AtomicPtr<Header>; 12] = [
@@ -205,38 +205,19 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 let _ = munmap(header as *mut c_void, total);
                 (*header).magic = 0;
             }
-            2..=99 => {
+            2..=99 => loop {
                 if class > 8 {
-                    if munmap(header as *mut c_void, total) != 0 {
-                        loop {
-                            let head = MAP_LIST[class].load(Ordering::Acquire);
-                            (*header).next = head;
-                            if MAP_LIST[class]
-                                .compare_exchange(
-                                    head,
-                                    header,
-                                    Ordering::Release,
-                                    Ordering::Acquire,
-                                )
-                                .is_ok()
-                            {
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    loop {
-                        let head = MAP_LIST[class].load(Ordering::Acquire);
-                        (*header).next = head;
-                        if MAP_LIST[class]
-                            .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
-                            .is_ok()
-                        {
-                            break;
-                        }
-                    }
+                    madvise(header as *mut c_void, total, libc::MADV_FREE);
                 }
-            }
+                let head = MAP_LIST[class].load(Ordering::Acquire);
+                (*header).next = head;
+                if MAP_LIST[class]
+                    .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
+                    .is_ok()
+                {
+                    break;
+                }
+            },
             _ => loop {
                 let head = MAP_LIST[class].load(Ordering::Acquire);
                 (*header).next = head;
