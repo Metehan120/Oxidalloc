@@ -1,8 +1,8 @@
 use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, pthread_key_t, size_t};
 use std::ffi::c_void;
 use std::ptr::null_mut;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 // Global map list for shared memory allocation
 static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
@@ -29,7 +29,6 @@ static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
 ];
 
 static PTHREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
-static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
 static BOOT_STRAP: AtomicBool = AtomicBool::new(true);
 
 static TOTAL_USED: AtomicUsize = AtomicUsize::new(0);
@@ -91,7 +90,7 @@ unsafe fn push_to_global(class: usize, head: *mut Header, tail: *mut Header) {
 
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn pop_batch_from_global(class: usize, batch_size: usize) -> *mut Header {
-    loop {
+    for _ in 0..2 {
         let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
 
         if current_head.is_null() {
@@ -116,6 +115,8 @@ unsafe fn pop_batch_from_global(class: usize, batch_size: usize) -> *mut Header 
             return current_head;
         }
     }
+
+    null_mut()
 }
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -162,8 +163,10 @@ pub const ITERATIONS: [usize; 20] = [
     1024, 1024, 512, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
 ];
 
+static TRIM_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 const OUR_VA_START: usize = 0x600000000000;
-const OUR_VA_END: usize = 0x610000000000;
+const OUR_VA_END: usize = 0x620000000000;
 // TODO: Add optional ASLR-style randomization for VA_OFFSET
 // Current: deterministic start at OUR_VA_START
 // Future: randomize within range on bootstrap
@@ -221,8 +224,6 @@ pub fn big_alloc(size: usize) -> *mut c_void {
         if chunk == libc::MAP_FAILED {
             return std::ptr::null_mut();
         }
-
-        eprintln!("big_page(size={}, addr={:p})", size, chunk);
 
         // Huge Page optimization:
         // Going to slow down the allocation process but increase performance in usage
@@ -335,18 +336,96 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 
 // -----
 
+static BOOTSTRAP_DONE: OnceLock<()> = OnceLock::new();
+
 fn bootstrap_once() {
-    if !BOOT_STRAP.load(Ordering::Acquire) {
+    BOOTSTRAP_DONE.get_or_init(|| {
+        get_thread_cache();
+        ()
+    });
+}
+
+// -----
+
+fn maybe_trim() {
+    let used = TOTAL_USED.load(Ordering::Relaxed);
+    let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
+
+    if allocated == 0 {
         return;
     }
 
-    let _lock = GLOBAL_LOCK.lock().unwrap();
-    if !BOOT_STRAP.load(Ordering::Relaxed) {
+    let usage_percent = (used * 100) / allocated;
+
+    if usage_percent > 50 {
         return;
     }
 
-    get_thread_cache();
-    BOOT_STRAP.store(false, Ordering::Release);
+    trim_unused_blocks();
+}
+
+fn trim_unused_blocks() {
+    let cache = get_thread_cache();
+
+    for class in (0..20).rev() {
+        let mut count = 0;
+        let mut node = cache.map_list[class].load(Ordering::Acquire);
+
+        while !node.is_null() && count < 100 {
+            count += 1;
+            unsafe {
+                node = (*node).next;
+            }
+        }
+
+        if count > ITERATIONS[class] {
+            let blocks_to_trim = count / 2;
+            trim_blocks(class, blocks_to_trim);
+        }
+    }
+
+    for class in (0..20).rev() {
+        let mut count = 0;
+        let mut node = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
+        while !node.is_null() && count < 100 {
+            count += 1;
+            unsafe {
+                node = (*node).next;
+            }
+        }
+        if count > ITERATIONS[class] {
+            let blocks_to_trim = count / 2;
+            trim_blocks_global(class, blocks_to_trim);
+        }
+    }
+}
+
+fn trim_blocks_global(class: usize, count: usize) {
+    for _ in 0..count {
+        unsafe {
+            let block = pop_batch_from_global(class, 1);
+            if block.is_null() {
+                break;
+            }
+            let size = SIZE_CLASSES[class] + HEADER_SIZE;
+            madvise(block as *mut c_void, size, MADV_DONTNEED);
+            TOTAL_ALLOCATED.fetch_sub(size, Ordering::Relaxed);
+        }
+    }
+}
+
+fn trim_blocks(class: usize, count: usize) {
+    for _ in 0..count {
+        unsafe {
+            let block = pop_from_list(class, get_thread_cache());
+            if block.is_null() {
+                break;
+            }
+            let size = SIZE_CLASSES[class] + HEADER_SIZE;
+            madvise(block, size, MADV_DONTNEED);
+            TOTAL_ALLOCATED.fetch_sub(size, Ordering::Relaxed);
+        }
+    }
 }
 
 // -----
@@ -419,7 +498,6 @@ pub extern "C" fn free(ptr: *mut c_void) {
     }
 
     let header_addr = (ptr as usize).saturating_sub(HEADER_SIZE);
-
     if header_addr >= (ptr as usize) {
         return;
     }
@@ -466,6 +544,10 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 break;
             }
         }
+    }
+
+    if TRIM_COUNTER.fetch_add(1, Ordering::Relaxed) % 5000 == 0 {
+        maybe_trim();
     }
 }
 
@@ -585,3 +667,5 @@ fn bench_allocator() {
         large_time.as_nanos() as f64 / 10000.0
     );
 }
+
+// --------------------------------------------
