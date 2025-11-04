@@ -149,7 +149,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
 const HEADER_SIZE: usize = size_of::<Header>();
 
-const MAGIC: u64 = 0x01B01698BF0;
+const MAGIC: u64 = 0x01B01698BF0BEEF;
 
 // Size classes for memory allocation
 pub const SIZE_CLASSES: [usize; 20] = [
@@ -161,6 +161,13 @@ pub const SIZE_CLASSES: [usize; 20] = [
 pub const ITERATIONS: [usize; 20] = [
     1024, 1024, 512, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
 ];
+
+const OUR_VA_START: usize = 0x600000000000;
+const OUR_VA_END: usize = 0x610000000000;
+// TODO: Add optional ASLR-style randomization for VA_OFFSET
+// Current: deterministic start at OUR_VA_START
+// Future: randomize within range on bootstrap
+static VA_OFFSET: AtomicUsize = AtomicUsize::new(OUR_VA_START);
 
 #[repr(C, align(16))]
 pub struct Header {
@@ -199,9 +206,11 @@ pub fn big_alloc(size: usize) -> *mut c_void {
     unsafe {
         let total_size = size + HEADER_SIZE;
 
+        let hint = VA_OFFSET.fetch_add(size, Ordering::Relaxed);
+
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            std::ptr::null_mut(),
+            hint as *mut c_void,
             total_size,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
@@ -212,6 +221,8 @@ pub fn big_alloc(size: usize) -> *mut c_void {
         if chunk == libc::MAP_FAILED {
             return std::ptr::null_mut();
         }
+
+        eprintln!("big_page(size={}, addr={:p})", size, chunk);
 
         // Huge Page optimization:
         // Going to slow down the allocation process but increase performance in usage
@@ -233,9 +244,11 @@ pub fn bulk_allocate(class: usize) -> bool {
         let block_size = SIZE_CLASSES[class] + HEADER_SIZE;
         let total_mmap_size = block_size * ITERATIONS[class];
 
+        let hint = VA_OFFSET.fetch_add(total_mmap_size, Ordering::Relaxed);
+
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            std::ptr::null_mut(),
+            hint as *mut c_void,
             total_mmap_size,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
@@ -347,11 +360,6 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
         None => return big_alloc(size),
     };
 
-    if size > 1_000_000_000 {
-        eprintln!("[MALLOC] HUGE SIZE: {}", size);
-        return null_mut();
-    }
-
     // Search the free list for a suitable block
     let map = get_thread_cache();
 
@@ -392,14 +400,31 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     }
 }
 
+// -----
+
+#[inline(always)]
+fn is_our_pointer(ptr: *mut c_void) -> bool {
+    let addr = ptr as usize;
+    addr >= OUR_VA_START && addr < OUR_VA_END
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() || BOOT_STRAP.load(Ordering::Relaxed) {
         return;
     }
 
-    // This should be fine: -1 Header (which is exactly what we need), -24 bytes (Total 32 Bytes aligned)
-    let header = unsafe { (ptr as *mut Header).sub(1) };
+    if !is_our_pointer(ptr) {
+        return;
+    }
+
+    let header_addr = (ptr as usize).saturating_sub(HEADER_SIZE);
+
+    if header_addr >= (ptr as usize) {
+        return;
+    }
+
+    let header = header_addr as *mut Header;
 
     // Check if the header is valid
     if unsafe { (*header).magic } != MAGIC {
