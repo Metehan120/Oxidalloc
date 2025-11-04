@@ -159,7 +159,7 @@ pub const SIZE_CLASSES: [usize; 20] = [
 
 // Iterations of each size class, each iteration is a try to allocate a chunk of memory
 pub const ITERATIONS: [usize; 20] = [
-    512, 512, 256, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
+    1024, 1024, 512, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
 ];
 
 #[repr(C, align(16))]
@@ -249,7 +249,6 @@ pub fn bulk_allocate(class: usize) -> bool {
 
         // Add allocated memory to the total allocated counter
         TOTAL_ALLOCATED.fetch_add(total_mmap_size, Ordering::Relaxed);
-        TOTAL_USED.fetch_add(total_mmap_size, Ordering::Relaxed);
 
         // If allocation is huge, try to use huge pages: better performance on runtime
         if class >= 9 {
