@@ -1,121 +1,165 @@
-#![feature(thread_local)]
-
 use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, pthread_key_t, size_t};
 use std::ffi::c_void;
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-#[thread_local]
-// Thread-local map list for thread-specific memory allocation
-static MAP_LIST: [AtomicPtr<Header>; 16] = [
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-];
-
 // Global map list for shared memory allocation
-static GLOBAL_MAP_LIST: [Mutex<AtomicPtr<Header>>; 16] = [
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
-    Mutex::new(AtomicPtr::new(std::ptr::null_mut())),
+static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
+    AtomicPtr::new(std::ptr::null_mut()),
 ];
 
 static PTHREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
+static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
+static BOOT_STRAP: AtomicBool = AtomicBool::new(true);
 
 static TOTAL_USED: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
-// The destructor function signature required by pthreads.
-unsafe extern "C" fn thread_exit_cleanup_destructor(_ptr: *mut c_void) {
+struct ThreadLocalCache {
+    map_list: [AtomicPtr<Header>; 20],
+}
+
+fn get_thread_cache() -> &'static ThreadLocalCache {
     unsafe {
-        for class in 0..MAP_LIST.len() {
-            let drained_head = MAP_LIST[class].swap(null_mut(), Ordering::Relaxed);
+        let key = PTHREAD_KEY.get_or_init(|| {
+            let mut key = 0;
+            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+            key
+        });
 
-            if drained_head.is_null() {
-                continue;
-            }
+        let cache_ptr = libc::pthread_getspecific(*key) as *mut ThreadLocalCache;
 
-            if let Ok(global_list_ptr) = GLOBAL_MAP_LIST[class].lock() {
-                let new_head = drained_head;
-                let mut expected_head = global_list_ptr.load(Ordering::Acquire);
+        if cache_ptr.is_null() {
+            let cache_ptr = libc::mmap(
+                std::ptr::null_mut(),
+                std::mem::size_of::<ThreadLocalCache>(),
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            ) as *mut ThreadLocalCache;
 
-                loop {
-                    (*new_head).next = expected_head;
+            std::ptr::write(
+                cache_ptr,
+                ThreadLocalCache {
+                    map_list: [const { AtomicPtr::new(std::ptr::null_mut()) }; 20],
+                },
+            );
 
-                    match global_list_ptr.compare_exchange(
-                        expected_head,
-                        new_head,
-                        Ordering::Release,
-                        Ordering::Acquire,
-                    ) {
-                        Ok(_) => break,
-                        Err(stale_head) => {
-                            expected_head = stale_head;
-                        }
-                    }
-                }
-            }
+            libc::pthread_setspecific(*key, cache_ptr as *mut c_void);
+            &*cache_ptr
+        } else {
+            &*cache_ptr
         }
     }
 }
 
-fn register_thread_destructor() {
-    let key = PTHREAD_KEY.get_or_init(|| {
-        let mut key: pthread_key_t = 0;
-        unsafe {
-            let result = libc::pthread_key_create(&mut key, Some(thread_exit_cleanup_destructor));
-            if result == 0 { key } else { 0 }
-        }
-    });
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn push_to_global(class: usize, head: *mut Header, tail: *mut Header) {
+    loop {
+        let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
+        (*tail).next = current_head;
 
-    // Actually register the destructor for this thread
-    unsafe {
-        libc::pthread_setspecific(*key, 1 as *mut c_void);
+        if GLOBAL_MAP_LIST[class]
+            .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+        {
+            return;
+        }
     }
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn pop_batch_from_global(class: usize, batch_size: usize) -> *mut Header {
+    loop {
+        let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
+
+        if current_head.is_null() {
+            return null_mut();
+        }
+
+        // Walk to find tail of batch
+        let mut tail = current_head;
+        let mut count = 1;
+        while count < batch_size && !(*tail).next.is_null() {
+            tail = (*tail).next;
+            count += 1;
+        }
+
+        let new_head = (*tail).next;
+
+        if GLOBAL_MAP_LIST[class]
+            .compare_exchange(current_head, new_head, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+        {
+            (*tail).next = null_mut(); // Detach batch
+            return current_head;
+        }
+    }
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
+    let cache = cache_ptr as *mut ThreadLocalCache;
+
+    // Move all blocks to global
+    for class in 0..20 {
+        let head = (*cache).map_list[class].swap(null_mut(), Ordering::AcqRel);
+
+        if !head.is_null() {
+            let mut tail = head;
+            while !(*tail).next.is_null() {
+                tail = (*tail).next;
+            }
+            push_to_global(class, head, tail);
+        }
+    }
+
+    // Free the cache itself
+    if libc::munmap(cache_ptr, std::mem::size_of::<ThreadLocalCache>()) != 0 {
+        madvise(
+            cache_ptr,
+            std::mem::size_of::<ThreadLocalCache>(),
+            MADV_DONTNEED,
+        );
+    };
 }
 
 // ------------------------------------------------------
 
-const HEADER_SIZE: usize = std::mem::size_of::<Header>();
+const HEADER_SIZE: usize = size_of::<Header>();
 
 const MAGIC: u64 = 0x01B01698BF0;
 
 // Size classes for memory allocation
-pub const SIZE_CLASSES: [usize; 16] = [
-    512, 4096, 6144, 8192, 16384, 32768, 65536, 262144, 1048576, 2097152, 4194304, 8388608,
-    12582912, 16777216, 33554432, 67108864,
+pub const SIZE_CLASSES: [usize; 20] = [
+    512, 4096, 6144, 8192, 10240, 12288, 16384, 32768, 65536, 262144, 1048576, 2097152, 4194304,
+    8388608, 12582912, 16777216, 33554432, 67108864, 100663296, 134217728,
 ];
 
 // Iterations of each size class, each iteration is a try to allocate a chunk of memory
-pub const ITERATIONS: [usize; 16] = [
-    512, 512, 256, 256, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2,
+pub const ITERATIONS: [usize; 20] = [
+    512, 512, 256, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
 ];
 
 #[repr(C, align(16))]
@@ -131,18 +175,22 @@ pub fn match_size_class(size: usize) -> Option<usize> {
         513..=4096 => Some(1),
         4097..=6144 => Some(2),
         6145..=8192 => Some(3),
-        8193..=16384 => Some(4),
-        16385..=32768 => Some(5),
-        32769..=65536 => Some(6),
-        65537..=262144 => Some(7),
-        262145..=1048576 => Some(8),
-        1048577..=2097152 => Some(9),
-        2097153..=4194304 => Some(10),
-        4194305..=8388608 => Some(11),
-        8388609..=12582912 => Some(12),
-        12582913..=16777216 => Some(13),
-        16777217..=33554432 => Some(14),
-        33554433..=67108864 => Some(15),
+        8193..=10240 => Some(4),
+        10241..=12288 => Some(5),
+        12289..=16384 => Some(6),
+        16385..=32768 => Some(7),
+        32769..=65536 => Some(8),
+        65537..=262144 => Some(9),
+        262145..=1048576 => Some(10),
+        1048577..=2097152 => Some(11),
+        2097153..=4194304 => Some(12),
+        4194305..=8388608 => Some(13),
+        8388609..=12582912 => Some(14),
+        12582913..=16777216 => Some(15),
+        16777217..=33554432 => Some(16),
+        33554433..=67108864 => Some(17),
+        67108865..=100663296 => Some(18),
+        100663297..=134217728 => Some(19),
         _ => None,
     }
 }
@@ -215,7 +263,7 @@ pub fn bulk_allocate(class: usize) -> bool {
         for i in (0..ITERATIONS[class]).rev() {
             let current_header = (chunk as usize + i * block_size) as *mut Header;
             (*current_header).next = prev;
-            (*current_header).size = SIZE_CLASSES[class] as u64; // FIXED: store usable size, not block_size
+            (*current_header).size = SIZE_CLASSES[class] as u64;
             (*current_header).magic = MAGIC;
             prev = current_header;
         }
@@ -228,13 +276,18 @@ pub fn bulk_allocate(class: usize) -> bool {
             tail = (*tail).next;
         }
 
+        let map = get_thread_cache();
         // Now link the TAIL to the existing list
-        let mut list = MAP_LIST[class].load(Ordering::Acquire);
+        let mut list = map.map_list[class].load(Ordering::Acquire);
         loop {
             (*tail).next = list;
 
-            match MAP_LIST[class].compare_exchange(list, head, Ordering::Release, Ordering::Acquire)
-            {
+            match map.map_list[class].compare_exchange(
+                list,
+                head,
+                Ordering::Release,
+                Ordering::Acquire,
+            ) {
                 Ok(_) => return true,
                 Err(stale_head) => {
                     list = stale_head;
@@ -244,11 +297,11 @@ pub fn bulk_allocate(class: usize) -> bool {
     }
 }
 
-fn pop_from_list(class: usize) -> *mut c_void {
+fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
     unsafe {
         loop {
             // Acquire the lock for the list
-            let header = MAP_LIST[class].load(Ordering::Acquire);
+            let header = cache.map_list[class].load(Ordering::Acquire);
 
             if header.is_null() {
                 return null_mut();
@@ -258,7 +311,7 @@ fn pop_from_list(class: usize) -> *mut c_void {
             let next = (*header).next;
 
             // Try to pop the element from the list
-            if MAP_LIST[class]
+            if cache.map_list[class]
                 .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
                 .is_ok()
             {
@@ -270,24 +323,56 @@ fn pop_from_list(class: usize) -> *mut c_void {
 
 // -----
 
+fn bootstrap_once() {
+    if !BOOT_STRAP.load(Ordering::Acquire) {
+        return;
+    }
+
+    let _lock = GLOBAL_LOCK.lock().unwrap();
+    if !BOOT_STRAP.load(Ordering::Relaxed) {
+        return;
+    }
+
+    get_thread_cache();
+    BOOT_STRAP.store(false, Ordering::Release);
+}
+
+// -----
+
 #[unsafe(no_mangle)]
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
-    register_thread_destructor();
+    bootstrap_once();
 
     let class = match match_size_class(size) {
         Some(size) => size,
         None => return big_alloc(size),
     };
 
+    if size > 1_000_000_000 {
+        eprintln!("[MALLOC] HUGE SIZE: {}", size);
+        return null_mut();
+    }
+
     // Search the free list for a suitable block
-    let mut header_ptr = pop_from_list(class);
+    let map = get_thread_cache();
+
+    let mut header_ptr = pop_from_list(class, map);
+
+    if header_ptr.is_null() {
+        // Checks if the global list has allocated pages
+        let batch = unsafe { pop_batch_from_global(class, 16) };
+        if !batch.is_null() {
+            map.map_list[class].store(batch, Ordering::Release);
+            header_ptr = pop_from_list(class, map);
+        }
+    }
 
     // If the free list is empty, try to allocate a new block
     if header_ptr.is_null() {
         for _ in 0..3 {
             // Trying to allocate a new block
             if bulk_allocate(class) {
-                let ptr = pop_from_list(class);
+                let ptr = pop_from_list(class, map);
                 // Assigns the pointer to the header pointer
                 header_ptr = ptr;
                 break;
@@ -301,67 +386,16 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
 
     unsafe {
         let header_ptr = header_ptr as *mut Header;
-        TOTAL_USED.fetch_sub(SIZE_CLASSES[class], Ordering::Relaxed);
+        TOTAL_USED.fetch_add(SIZE_CLASSES[class], Ordering::Relaxed);
 
         // header_ptr + HEADER_SIZE = actual pointer to the allocated block
         (header_ptr as *mut u8).add(HEADER_SIZE) as *mut c_void
     }
 }
 
-// FIXME: Broken Trim Logic
-fn _trim() {
-    let used = TOTAL_USED.load(Ordering::Relaxed);
-    let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
-
-    if allocated == 0 {
-        return;
-    }
-
-    let usage_percent = (used * 100) / allocated;
-
-    // If usage > 75%, we're using most of our memory, don't trim
-    if usage_percent > 75 {
-        return;
-    }
-
-    // Trim from largest classes first (most memory impact)
-    for class in (0..MAP_LIST.len()).rev() {
-        // Try to trim half of the blocks in this class
-        let target_trim = ITERATIONS[class] / 2;
-
-        for _ in 0..target_trim {
-            unsafe {
-                let header = MAP_LIST[class].load(Ordering::Acquire);
-
-                if header.is_null() {
-                    break; // No more blocks in this class
-                }
-
-                let next = (*header).next;
-
-                // Try to remove this block from the free list
-                if MAP_LIST[class]
-                    .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
-                    .is_ok()
-                {
-                    let size = (*header).size as usize;
-                    let total_size = HEADER_SIZE + size;
-
-                    if libc::munmap(header as *mut c_void, total_size) == 0 {
-                        TOTAL_ALLOCATED.fetch_sub(total_size, Ordering::Relaxed);
-                        TOTAL_USED.fetch_sub(total_size, Ordering::Relaxed);
-                    } else {
-                        madvise(header as *mut c_void, total_size, MADV_DONTNEED);
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
-    if ptr.is_null() {
+    if ptr.is_null() || BOOT_STRAP.load(Ordering::Relaxed) {
         return;
     }
 
@@ -389,21 +423,22 @@ pub extern "C" fn free(ptr: *mut c_void) {
         },
     };
 
+    let map = get_thread_cache();
     // # SAFETY:
     // 1- There shouldnt be any Infinite loops
     // 2- Data is writing back to the MapList
     unsafe {
         loop {
             // Acquire the head of the list
-            let head = MAP_LIST[class].load(Ordering::Acquire);
+            let head = map.map_list[class].load(Ordering::Acquire);
             (*header).next = head;
 
             // If the CAS operation fails, try again
-            if MAP_LIST[class]
+            if map.map_list[class]
                 .compare_exchange(head, header, Ordering::Release, Ordering::Acquire)
                 .is_ok()
             {
-                TOTAL_USED.fetch_add(size as usize, Ordering::Relaxed);
+                TOTAL_USED.fetch_sub(size as usize, Ordering::Relaxed);
                 break;
             }
         }
@@ -412,43 +447,73 @@ pub extern "C" fn free(ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
+    // Case 1: NULL pointer = just malloc
     if ptr.is_null() {
         return malloc(new_size);
     }
 
+    // Case 2: Zero size = free and return minimal allocation
     if new_size == 0 {
         free(ptr);
-        return std::ptr::null_mut();
+        return malloc(1);
     }
 
     unsafe {
-        let header = (ptr as *mut u8).sub(std::mem::size_of::<Header>()) as *mut Header;
-        if (*header).magic != MAGIC {
-            return std::ptr::null_mut();
+        // Try to get our header
+        let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
+
+        // Check if this is our allocation
+        let is_ours = (*header).magic == MAGIC;
+
+        if !is_ours {
+            // Not our pointer - it's from glibc before we took over
+            // Strategy: Use libc::realloc to handle it properly
+            return libc::realloc(ptr, new_size);
         }
 
-        let old_size = (*header).size;
-        let new_ptr = malloc(new_size);
+        // It's our allocation
+        let old_size = (*header).size as usize;
 
+        // Need new allocation
+        let new_ptr = malloc(new_size);
         if new_ptr.is_null() {
             return std::ptr::null_mut();
         }
 
-        let copy_size = old_size.min(new_size as u64);
-        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size as usize);
+        // Copy old data
+        let copy_size = old_size.min(new_size);
+        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size);
 
+        // Free old allocation
         free(ptr);
+
         new_ptr
     }
 }
 
-#[test]
-fn test_simple() {
-    let ptr = malloc(100);
-    assert!(!ptr.is_null());
-    free(ptr);
-    println!("Simple test passed!");
+#[unsafe(no_mangle)]
+pub extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
+    let total_size = match nmemb.checked_mul(size) {
+        Some(s) => s,
+        None => return std::ptr::null_mut(),
+    };
+
+    if total_size == 0 {
+        return std::ptr::null_mut();
+    }
+
+    let ptr = malloc(total_size);
+
+    if !ptr.is_null() {
+        unsafe {
+            std::ptr::write_bytes(ptr as *mut u8, 0, total_size);
+        }
+    }
+
+    ptr
 }
+
+// ---
 
 #[test]
 fn bench_allocator() {
