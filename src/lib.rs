@@ -1,8 +1,8 @@
 use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, pthread_key_t, size_t};
 use std::ffi::c_void;
 use std::ptr::null_mut;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // Global map list for shared memory allocation
 static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
@@ -29,8 +29,6 @@ static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
 ];
 
 static PTHREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
-static BOOT_STRAP: AtomicBool = AtomicBool::new(true);
-
 static TOTAL_USED: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
@@ -336,13 +334,21 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 
 // -----
 
-static BOOTSTRAP_DONE: OnceLock<()> = OnceLock::new();
+static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
+static BOOT_STRAP: AtomicBool = AtomicBool::new(true);
 
 fn bootstrap_once() {
-    BOOTSTRAP_DONE.get_or_init(|| {
-        get_thread_cache();
-        ()
-    });
+    if !BOOT_STRAP.load(Ordering::Acquire) {
+        return;
+    }
+
+    let _lock = GLOBAL_LOCK.lock().unwrap();
+    if !BOOT_STRAP.load(Ordering::Relaxed) {
+        return;
+    }
+
+    get_thread_cache();
+    BOOT_STRAP.store(false, Ordering::Release);
 }
 
 // -----
