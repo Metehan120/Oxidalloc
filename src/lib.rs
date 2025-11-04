@@ -461,13 +461,8 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         // Try to get our header
         let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
 
-        // Check if this is our allocation
-        let is_ours = (*header).magic == MAGIC;
-
-        if !is_ours {
-            // Not our pointer - it's from glibc before we took over
-            // Strategy: Use libc::realloc to handle it properly
-            return libc::realloc(ptr, new_size);
+        if !(*header).magic == MAGIC {
+            return null_mut();
         }
 
         // It's our allocation
