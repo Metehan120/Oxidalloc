@@ -6,29 +6,9 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-// Global map list for shared memory allocation
-static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-];
+use crate::global::GlobalHandler;
+
+mod global;
 
 static PTHREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 static TOTAL_USED: AtomicUsize = AtomicUsize::new(0);
@@ -74,52 +54,6 @@ fn get_thread_cache() -> &'static ThreadLocalCache {
 }
 
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn push_to_global(class: usize, head: *mut Header, tail: *mut Header) {
-    loop {
-        let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
-        (*tail).next = current_head;
-
-        if GLOBAL_MAP_LIST[class]
-            .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
-            .is_ok()
-        {
-            return;
-        }
-    }
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn pop_batch_from_global(class: usize, batch_size: usize) -> *mut Header {
-    for _ in 0..2 {
-        let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
-
-        if current_head.is_null() {
-            return null_mut();
-        }
-
-        // Walk to find tail of batch
-        let mut tail = current_head;
-        let mut count = 1;
-        while count < batch_size && !(*tail).next.is_null() {
-            tail = (*tail).next;
-            count += 1;
-        }
-
-        let new_head = (*tail).next;
-
-        if GLOBAL_MAP_LIST[class]
-            .compare_exchange(current_head, new_head, Ordering::Release, Ordering::Acquire)
-            .is_ok()
-        {
-            (*tail).next = null_mut(); // Detach batch
-            return current_head;
-        }
-    }
-
-    null_mut()
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     let cache = cache_ptr as *mut ThreadLocalCache;
 
@@ -132,7 +66,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             while !(*tail).next.is_null() {
                 tail = (*tail).next;
             }
-            push_to_global(class, head, tail);
+            GlobalHandler.push_to_global(class, head, tail);
         }
     }
 
@@ -142,7 +76,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
 // ------------------------------------------------------
 
-const HEADER_SIZE: usize = size_of::<Header>();
+const HEADER_SIZE: usize = 32;
 
 const MAGIC: u64 = 0x01B01698BF0BEEF;
 
@@ -176,15 +110,12 @@ pub const ITERATIONS: [usize; 20] = [
     1,    // 32MB  - basically never
 ];
 
-const OUR_VA_START: usize = 0x200000000000;
-const OUR_VA_END: usize = 0x240000000000;
-static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
-
 #[repr(C, align(16))]
 pub struct Header {
     magic: u64,
     size: u64,
     next: *mut Header,
+    _pad: u64,
 }
 
 pub fn match_size_class(size: usize) -> Option<usize> {
@@ -280,7 +211,7 @@ pub fn bulk_allocate(class: usize) -> bool {
         TOTAL_ALLOCATED.fetch_add(aligned_size, Ordering::Relaxed);
 
         // If allocation is huge, try to use huge pages: better performance on runtime
-        if class >= 9 {
+        if class >= 14 {
             madvise(chunk, total_mmap_size, libc::MADV_HUGEPAGE);
         }
 
@@ -306,6 +237,7 @@ pub fn bulk_allocate(class: usize) -> bool {
         }
 
         let map = get_thread_cache();
+
         // Now link the TAIL to the existing list
         let mut list = map.map_list[class].load(Ordering::Acquire);
         loop {
@@ -352,9 +284,36 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 
 // -----
 
+static VA_START: AtomicUsize = AtomicUsize::new(0);
+static VA_END: AtomicUsize = AtomicUsize::new(0);
+static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
+
+fn init_va_range() {
+    unsafe {
+        let probe = libc::mmap(
+            std::ptr::null_mut(),
+            256 * 1024 * 1024 * 1024, // 256GB
+            libc::PROT_NONE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            -1,
+            0,
+        );
+
+        if probe == libc::MAP_FAILED {
+            VA_START.store(0x200000000000, Ordering::Release);
+            VA_END.store(0x240000000000, Ordering::Release);
+            return;
+        }
+
+        let start = probe as usize;
+        VA_START.store(start, Ordering::Release);
+        VA_END.store(start + 256 * 1024 * 1024 * 1024, Ordering::Release);
+    }
+}
+
 fn init_va_offset() -> usize {
-    let start = 0x200000000000;
-    let end = 0x240000000000;
+    let start = VA_START.load(Ordering::Relaxed);
+    let end = VA_END.load(Ordering::Relaxed);
 
     let mut rng = 0u64;
     unsafe {
@@ -380,6 +339,10 @@ fn bootstrap_once() {
         return;
     }
 
+    if VA_START.load(Ordering::Acquire) == 0 {
+        init_va_range();
+    }
+
     if VA_OFFSET.load(Ordering::Acquire) == 0 {
         let random_start = init_va_offset();
         VA_OFFSET.store(random_start, Ordering::Release);
@@ -395,7 +358,7 @@ fn bootstrap_once() {
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     bootstrap_once();
 
-    if size > OUR_VA_END - OUR_VA_START {
+    if size > VA_END.load(Ordering::Relaxed) - VA_START.load(Ordering::Relaxed) {
         return null_mut();
     }
 
@@ -411,7 +374,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
 
     if header_ptr.is_null() {
         // Checks if the global list has allocated pages
-        let batch = unsafe { pop_batch_from_global(class, 16) };
+        let batch = unsafe { GlobalHandler.pop_batch_from_global(class, 16) };
         if !batch.is_null() {
             map.map_list[class].store(batch, Ordering::Release);
             header_ptr = pop_from_list(class, map);
@@ -437,6 +400,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
 
     unsafe {
         let header_ptr = header_ptr as *mut Header;
+        (*header_ptr).magic = MAGIC;
         TOTAL_USED.fetch_add(SIZE_CLASSES[class], Ordering::Relaxed);
 
         // header_ptr + HEADER_SIZE = actual pointer to the allocated block
@@ -449,7 +413,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
 #[inline(always)]
 fn is_our_pointer(ptr: *mut c_void) -> bool {
     let addr = ptr as usize;
-    addr >= OUR_VA_START && addr < OUR_VA_END
+    addr >= VA_START.load(Ordering::Relaxed) && addr < VA_END.load(Ordering::Relaxed)
 }
 
 #[unsafe(no_mangle)]
@@ -482,8 +446,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
         Some(class) => class,
         None => unsafe {
             // FIXME: better page handling
+            (*header).magic = 0;
             if munmap(header as *mut c_void, total_size) != 0 {
-                (*header).magic = 0;
                 madvise(header as *mut c_void, total_size, MADV_DONTNEED);
             }
             return;
@@ -495,6 +459,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
     // 1- There shouldnt be any Infinite loops
     // 2- Data is writing back to the MapList
     unsafe {
+        (*header).magic = 0;
+
         loop {
             // Acquire the head of the list
             let head = map.map_list[class].load(Ordering::Acquire);
@@ -519,7 +485,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         return malloc(new_size);
     }
 
-    if new_size > OUR_VA_END - OUR_VA_START {
+    if new_size > VA_END.load(Ordering::Relaxed) - VA_START.load(Ordering::Relaxed) {
         return null_mut();
     }
 
@@ -533,7 +499,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         // Try to get our header
         let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
 
-        if !(*header).magic == MAGIC {
+        if (*header).magic != MAGIC {
             return null_mut();
         }
 
@@ -543,17 +509,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         let old_class = match_size_class(old_size);
         let new_class = match_size_class(new_size);
 
-        if new_class == old_class {
-            return ptr;
-        }
-
-        // Need new allocation
-        let new_ptr = malloc(new_size);
-        if new_ptr.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        if old_class.is_none() && new_class.is_none() {
+        if old_class.is_none() && new_class.is_none() && old_size != new_size {
             let old_total = old_size + HEADER_SIZE;
             let new_total = new_size + HEADER_SIZE;
 
@@ -565,11 +521,23 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
                 std::ptr::null_mut::<c_void>(),
             );
 
-            if result != libc::MAP_FAILED {
-                let new_header = result as *mut Header;
-                (*new_header).size = new_size as u64;
-                return (new_header as *mut u8).add(HEADER_SIZE) as *mut c_void;
+            if result == libc::MAP_FAILED {
+                return null_mut();
             }
+
+            let new_header = result as *mut Header;
+            (*new_header).size = new_size as u64;
+            return (new_header as *mut u8).add(HEADER_SIZE) as *mut c_void;
+        }
+
+        if new_class == old_class {
+            return ptr;
+        }
+
+        // Need new allocation
+        let new_ptr = malloc(new_size);
+        if new_ptr.is_null() {
+            return std::ptr::null_mut();
         }
 
         // Copy old data
