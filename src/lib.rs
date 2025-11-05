@@ -602,7 +602,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
         }
     }
 
-    if TRIM_COUNTER.fetch_add(1, Ordering::Relaxed) % 5000 == 0 {
+    if TRIM_COUNTER.fetch_add(1, Ordering::Relaxed) % 10000 == 0 {
+        eprintln!("Trimming");
         maybe_trim();
     }
 }
@@ -691,7 +692,9 @@ pub extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
 
     if !ptr.is_null() {
         unsafe {
-            std::ptr::write_bytes(ptr as *mut u8, 0, total_size);
+            let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
+            let actual_size = (*header).size as usize;
+            std::ptr::write_bytes(ptr as *mut u8, 0, actual_size);
         }
     }
 
