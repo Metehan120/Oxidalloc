@@ -456,6 +456,10 @@ fn trim_blocks(class: usize, count: usize) {
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     bootstrap_once();
 
+    if size > OUR_VA_END - OUR_VA_START {
+        return null_mut();
+    }
+
     let class = match match_size_class(size) {
         Some(size) => size,
         None => return big_alloc(size),
@@ -578,6 +582,10 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     // Case 1: NULL pointer = just malloc
     if ptr.is_null() {
         return malloc(new_size);
+    }
+
+    if new_size > OUR_VA_END - OUR_VA_START {
+        return null_mut();
     }
 
     // Case 2: Zero size = free and return minimal allocation
