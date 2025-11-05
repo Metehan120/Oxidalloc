@@ -1,4 +1,6 @@
-use libc::{MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, pthread_key_t, size_t};
+use libc::{
+    __errno_location, MADV_DONTNEED, MADV_HUGEPAGE, madvise, munmap, pthread_key_t, size_t,
+};
 use std::ffi::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
@@ -163,8 +165,8 @@ pub const ITERATIONS: [usize; 20] = [
 
 static TRIM_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-const OUR_VA_START: usize = 0x600000000000;
-const OUR_VA_END: usize = 0x640000000000;
+const OUR_VA_START: usize = 0x200000000000;
+const OUR_VA_END: usize = 0x240000000000;
 static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C, align(16))]
@@ -205,10 +207,11 @@ pub fn big_alloc(size: usize) -> *mut c_void {
         let total_size = size + HEADER_SIZE;
 
         let hint = VA_OFFSET.fetch_add(size, Ordering::Relaxed);
+        let aligned_hint = (hint + 4095) & !4095;
 
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            hint as *mut c_void,
+            aligned_hint as *mut c_void,
             total_size,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
@@ -241,18 +244,23 @@ pub fn bulk_allocate(class: usize) -> bool {
         let total_mmap_size = block_size * ITERATIONS[class];
 
         let hint = VA_OFFSET.fetch_add(total_mmap_size, Ordering::Relaxed);
+        let aligned_hint = (hint + 4095) & !4095;
 
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            hint as *mut c_void,
+            aligned_hint as *mut c_void,
             total_mmap_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
             -1,
             0,
         );
 
         if chunk == libc::MAP_FAILED {
+            eprintln!(
+                "[LIBOXIDALLOC] Something went wrong during allocation, errno: {:?}",
+                *__errno_location()
+            );
             return false;
         }
 
@@ -332,17 +340,18 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 // -----
 
 fn init_va_offset() -> usize {
+    let start = 0x200000000000;
+    let end = 0x240000000000;
+
     let mut rng = 0u64;
     unsafe {
-        // Use getrandom for crypto-quality randomness
         libc::getrandom(&mut rng as *mut u64 as *mut c_void, 8, 0);
     }
 
-    // Randomize within your VA range (128GB space)
-    let range = OUR_VA_END - OUR_VA_START;
-    let offset = (rng as usize) % range;
+    let offset = (rng as usize) % (end - start);
+    let aligned_offset = offset & !4095;
 
-    OUR_VA_START + offset
+    start + aligned_offset
 }
 
 static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
