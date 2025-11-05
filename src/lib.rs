@@ -206,15 +206,15 @@ pub fn big_alloc(size: usize) -> *mut c_void {
     unsafe {
         let total_size = size + HEADER_SIZE;
 
-        let hint = VA_OFFSET.fetch_add(size, Ordering::Relaxed);
-        let aligned_hint = (hint + 4095) & !4095;
+        let aligned_size = (total_size + 4095) & !4095;
+        let hint = VA_OFFSET.fetch_add(aligned_size, Ordering::Relaxed);
 
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            aligned_hint as *mut c_void,
-            total_size,
+            hint as *mut c_void,
+            aligned_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
             -1,
             0,
         );
@@ -243,13 +243,13 @@ pub fn bulk_allocate(class: usize) -> bool {
         let block_size = SIZE_CLASSES[class] + HEADER_SIZE;
         let total_mmap_size = block_size * ITERATIONS[class];
 
-        let hint = VA_OFFSET.fetch_add(total_mmap_size, Ordering::Relaxed);
-        let aligned_hint = (hint + 4095) & !4095;
+        let aligned_size = (total_mmap_size + 4095) & !4095;
+        let hint = VA_OFFSET.fetch_add(aligned_size, Ordering::Relaxed);
 
         // Offset 0, PROT_READ | PROT_WRITE: Can Write, Can Read
         let chunk = libc::mmap(
-            aligned_hint as *mut c_void,
-            total_mmap_size,
+            hint as *mut c_void,
+            aligned_size,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
             -1,
@@ -265,7 +265,7 @@ pub fn bulk_allocate(class: usize) -> bool {
         }
 
         // Add allocated memory to the total allocated counter
-        TOTAL_ALLOCATED.fetch_add(total_mmap_size, Ordering::Relaxed);
+        TOTAL_ALLOCATED.fetch_add(aligned_size, Ordering::Relaxed);
 
         // If allocation is huge, try to use huge pages: better performance on runtime
         if class >= 9 {
