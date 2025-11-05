@@ -164,11 +164,8 @@ pub const ITERATIONS: [usize; 20] = [
 static TRIM_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const OUR_VA_START: usize = 0x600000000000;
-const OUR_VA_END: usize = 0x620000000000;
-// TODO: Add optional ASLR-style randomization for VA_OFFSET
-// Current: deterministic start at OUR_VA_START
-// Future: randomize within range on bootstrap
-static VA_OFFSET: AtomicUsize = AtomicUsize::new(OUR_VA_START);
+const OUR_VA_END: usize = 0x640000000000;
+static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C, align(16))]
 pub struct Header {
@@ -334,6 +331,20 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 
 // -----
 
+fn init_va_offset() -> usize {
+    let mut rng = 0u64;
+    unsafe {
+        // Use getrandom for crypto-quality randomness
+        libc::getrandom(&mut rng as *mut u64 as *mut c_void, 8, 0);
+    }
+
+    // Randomize within your VA range (128GB space)
+    let range = OUR_VA_END - OUR_VA_START;
+    let offset = (rng as usize) % range;
+
+    OUR_VA_START + offset
+}
+
 static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
 static BOOT_STRAP: AtomicBool = AtomicBool::new(true);
 
@@ -347,7 +358,12 @@ fn bootstrap_once() {
         return;
     }
 
+    if VA_OFFSET.load(Ordering::Acquire) == 0 {
+        let random_start = init_va_offset();
+        VA_OFFSET.store(random_start, Ordering::Release);
+    }
     get_thread_cache();
+
     BOOT_STRAP.store(false, Ordering::Release);
 }
 
