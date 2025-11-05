@@ -564,6 +564,10 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         return malloc(new_size);
     }
 
+    if !is_our_pointer(ptr) {
+        return null_mut();
+    }
+
     // Case 2: Zero size = free and return minimal allocation
     if new_size == 0 {
         free(ptr);
@@ -574,12 +578,19 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         // Try to get our header
         let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
 
-        if !(*header).magic == MAGIC {
+        if (*header).magic != MAGIC {
             return null_mut();
         }
 
         // It's our allocation
         let old_size = (*header).size as usize;
+
+        let old_class = match_size_class(old_size);
+        let new_class = match_size_class(new_size);
+
+        if new_class == old_class {
+            return ptr;
+        }
 
         // Need new allocation
         let new_ptr = malloc(new_size);
@@ -588,8 +599,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         }
 
         // Copy old data
-        let copy_size = old_size.min(new_size);
-        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size);
+        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, old_size.min(new_size));
 
         // Free old allocation
         free(ptr);
