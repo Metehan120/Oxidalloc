@@ -154,13 +154,32 @@ const MAGIC: u64 = 0x01B01698BF0BEEF;
 
 // Size classes for memory allocation
 pub const SIZE_CLASSES: [usize; 20] = [
-    512, 4096, 6144, 8192, 10240, 12288, 16384, 32768, 65536, 262144, 1048576, 2097152, 4194304,
-    8388608, 12582912, 16777216, 33554432, 67108864, 100663296, 134217728,
+    16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 262144, 1048576,
+    2097152, 4194304, 8388608, 16777216, 33554432,
 ];
 
 // Iterations of each size class, each iteration is a try to allocate a chunk of memory
 pub const ITERATIONS: [usize; 20] = [
-    1024, 1024, 512, 256, 256, 128, 128, 128, 64, 32, 16, 8, 6, 6, 4, 4, 4, 2, 2, 2,
+    4096, // 16B   - tons of tiny allocations (strings, small objects)
+    4096, // 32B   - very common (pointers, small structs)
+    2048, // 64B   - cache-line sized, super common
+    2048, // 128B  - still very frequent
+    1024, // 256B  - common
+    1024, // 512B  - common
+    512,  // 1KB   - moderate
+    512,  // 2KB   - moderate
+    256,  // 4KB   - page-sized, common for buffers
+    256,  // 8KB   - still fairly common
+    128,  // 16KB  - less common
+    64,   // 32KB  - getting rare
+    32,   // 64KB  - rare
+    16,   // 256KB - rare (big gap here)
+    8,    // 1MB   - very rare
+    4,    // 2MB   - very rare
+    2,    // 4MB   - almost never
+    2,    // 8MB   - almost never
+    1,    // 16MB  - basically never
+    1,    // 32MB  - basically never
 ];
 
 static TRIM_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -178,26 +197,27 @@ pub struct Header {
 
 pub fn match_size_class(size: usize) -> Option<usize> {
     match size {
-        0..=512 => Some(0),
-        513..=4096 => Some(1),
-        4097..=6144 => Some(2),
-        6145..=8192 => Some(3),
-        8193..=10240 => Some(4),
-        10241..=12288 => Some(5),
-        12289..=16384 => Some(6),
-        16385..=32768 => Some(7),
-        32769..=65536 => Some(8),
-        65537..=262144 => Some(9),
-        262145..=1048576 => Some(10),
-        1048577..=2097152 => Some(11),
-        2097153..=4194304 => Some(12),
-        4194305..=8388608 => Some(13),
-        8388609..=12582912 => Some(14),
-        12582913..=16777216 => Some(15),
-        16777217..=33554432 => Some(16),
-        33554433..=67108864 => Some(17),
-        67108865..=100663296 => Some(18),
-        100663297..=134217728 => Some(19),
+        0 => None,
+        1..=16 => Some(0),
+        17..=32 => Some(1),
+        33..=64 => Some(2),
+        65..=128 => Some(3),
+        129..=256 => Some(4),
+        257..=512 => Some(5),
+        513..=1024 => Some(6),
+        1025..=2048 => Some(7),
+        2049..=4096 => Some(8),
+        4097..=8192 => Some(9),
+        8193..=16384 => Some(10),
+        16385..=32768 => Some(11),
+        32769..=65536 => Some(12),
+        65537..=262144 => Some(13),
+        262145..=1048576 => Some(14),
+        1048577..=2097152 => Some(15),
+        2097153..=4194304 => Some(16),
+        4194305..=8388608 => Some(17),
+        8388609..=16777216 => Some(18),
+        16777217..=33554432 => Some(19),
         _ => None,
     }
 }
@@ -281,6 +301,7 @@ pub fn bulk_allocate(class: usize) -> bool {
             (*current_header).next = prev;
             (*current_header).size = SIZE_CLASSES[class] as u64;
             (*current_header).magic = MAGIC;
+
             prev = current_header;
         }
 
@@ -402,7 +423,7 @@ fn trim_unused_blocks() {
         let mut count = 0;
         let mut node = cache.map_list[class].load(Ordering::Acquire);
 
-        while !node.is_null() && count < 100 {
+        while !node.is_null() && count < 8192 {
             count += 1;
             unsafe {
                 node = (*node).next;
@@ -418,7 +439,7 @@ fn trim_unused_blocks() {
     for class in (0..20).rev() {
         let mut count = 0;
         let mut node = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
-        while !node.is_null() && count < 100 {
+        while !node.is_null() && count < 8192 {
             count += 1;
             unsafe {
                 node = (*node).next;
@@ -524,7 +545,7 @@ fn is_our_pointer(ptr: *mut c_void) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
-    if ptr.is_null() || BOOT_STRAP.load(Ordering::Relaxed) {
+    if ptr.is_null() {
         return;
     }
 
