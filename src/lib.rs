@@ -564,10 +564,6 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         return malloc(new_size);
     }
 
-    if !is_our_pointer(ptr) {
-        return null_mut();
-    }
-
     // Case 2: Zero size = free and return minimal allocation
     if new_size == 0 {
         free(ptr);
@@ -578,7 +574,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         // Try to get our header
         let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
 
-        if (*header).magic != MAGIC {
+        if !(*header).magic == MAGIC {
             return null_mut();
         }
 
@@ -590,6 +586,12 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
 
         if new_class == old_class {
             return ptr;
+        }
+
+        // Need new allocation
+        let new_ptr = malloc(new_size);
+        if new_ptr.is_null() {
+            return std::ptr::null_mut();
         }
 
         if old_class.is_none() && new_class.is_none() {
@@ -611,18 +613,11 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
             }
         }
 
-        // Need new allocation
-        let new_ptr = malloc(new_size);
-        if new_ptr.is_null() {
-            return std::ptr::null_mut();
-        }
-
         // Copy old data
-        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, old_size);
+        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, old_size.min(new_size));
 
         // Free old allocation
         free(ptr);
-
         new_ptr
     }
 }
