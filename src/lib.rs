@@ -592,6 +592,25 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
             return ptr;
         }
 
+        if old_class.is_none() && new_class.is_none() {
+            let old_total = old_size + HEADER_SIZE;
+            let new_total = new_size + HEADER_SIZE;
+
+            let result = libc::mremap(
+                header as *mut c_void,
+                old_total,
+                new_total,
+                libc::MREMAP_MAYMOVE,
+                std::ptr::null_mut::<c_void>(),
+            );
+
+            if result != libc::MAP_FAILED {
+                let new_header = result as *mut Header;
+                (*new_header).size = new_size as u64;
+                return (new_header as *mut u8).add(HEADER_SIZE) as *mut c_void;
+            }
+        }
+
         // Need new allocation
         let new_ptr = malloc(new_size);
         if new_ptr.is_null() {
@@ -599,7 +618,7 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
         }
 
         // Copy old data
-        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, old_size.min(new_size));
+        std::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, old_size);
 
         // Free old allocation
         free(ptr);
