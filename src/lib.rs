@@ -137,13 +137,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     }
 
     // Free the cache itself
-    if libc::munmap(cache_ptr, std::mem::size_of::<ThreadLocalCache>()) != 0 {
-        madvise(
-            cache_ptr,
-            std::mem::size_of::<ThreadLocalCache>(),
-            MADV_DONTNEED,
-        );
-    };
+    libc::munmap(cache_ptr, std::mem::size_of::<ThreadLocalCache>());
 }
 
 // ------------------------------------------------------
@@ -181,8 +175,6 @@ pub const ITERATIONS: [usize; 20] = [
     1,    // 16MB  - basically never
     1,    // 32MB  - basically never
 ];
-
-static TRIM_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 const OUR_VA_START: usize = 0x200000000000;
 const OUR_VA_END: usize = 0x240000000000;
@@ -399,89 +391,6 @@ fn bootstrap_once() {
 
 // -----
 
-fn maybe_trim() {
-    let used = TOTAL_USED.load(Ordering::Relaxed);
-    let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
-
-    if allocated == 0 {
-        return;
-    }
-
-    let usage_percent = (used * 100) / allocated;
-
-    if usage_percent > 50 {
-        return;
-    }
-
-    trim_unused_blocks();
-}
-
-fn trim_unused_blocks() {
-    let cache = get_thread_cache();
-
-    for class in (0..20).rev() {
-        let mut count = 0;
-        let mut node = cache.map_list[class].load(Ordering::Acquire);
-
-        while !node.is_null() && count < 8192 {
-            count += 1;
-            unsafe {
-                node = (*node).next;
-            }
-        }
-
-        if count > ITERATIONS[class] {
-            let blocks_to_trim = count / 2;
-            trim_blocks(class, blocks_to_trim);
-        }
-    }
-
-    for class in (0..20).rev() {
-        let mut count = 0;
-        let mut node = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
-        while !node.is_null() && count < 8192 {
-            count += 1;
-            unsafe {
-                node = (*node).next;
-            }
-        }
-        if count > ITERATIONS[class] {
-            let blocks_to_trim = count / 2;
-            trim_blocks_global(class, blocks_to_trim);
-        }
-    }
-}
-
-fn trim_blocks_global(class: usize, count: usize) {
-    for _ in 0..count {
-        unsafe {
-            let block = pop_batch_from_global(class, 1);
-            if block.is_null() {
-                break;
-            }
-            let size = SIZE_CLASSES[class] + HEADER_SIZE;
-            madvise(block as *mut c_void, size, MADV_DONTNEED);
-            TOTAL_ALLOCATED.fetch_sub(size, Ordering::Relaxed);
-        }
-    }
-}
-
-fn trim_blocks(class: usize, count: usize) {
-    for _ in 0..count {
-        unsafe {
-            let block = pop_from_list(class, get_thread_cache());
-            if block.is_null() {
-                break;
-            }
-            let size = SIZE_CLASSES[class] + HEADER_SIZE;
-            madvise(block, size, MADV_DONTNEED);
-            TOTAL_ALLOCATED.fetch_sub(size, Ordering::Relaxed);
-        }
-    }
-}
-
-// -----
-
 #[unsafe(no_mangle)]
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     bootstrap_once();
@@ -601,11 +510,6 @@ pub extern "C" fn free(ptr: *mut c_void) {
             }
         }
     }
-
-    if TRIM_COUNTER.fetch_add(1, Ordering::Relaxed) % 10000 == 0 {
-        eprintln!("Trimming");
-        maybe_trim();
-    }
 }
 
 #[unsafe(no_mangle)]
@@ -693,8 +597,13 @@ pub extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
     if !ptr.is_null() {
         unsafe {
             let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut Header;
+
+            if (*header).magic != MAGIC {
+                return null_mut();
+            }
+
             let actual_size = (*header).size as usize;
-            std::ptr::write_bytes(ptr as *mut u8, 0, actual_size);
+            std::ptr::write_bytes(ptr as *mut u8, 0, actual_size.min(total_size));
         }
     }
 
