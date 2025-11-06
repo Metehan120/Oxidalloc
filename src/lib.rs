@@ -420,6 +420,8 @@ fn is_our_pointer(ptr: *mut c_void) -> bool {
     addr >= VA_START.load(Ordering::Relaxed) && addr < VA_END.load(Ordering::Relaxed)
 }
 
+pub static FREES: AtomicUsize = AtomicUsize::new(0);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() {
@@ -481,7 +483,9 @@ pub extern "C" fn free(ptr: *mut c_void) {
         }
     }
 
-    Trimmer.determine();
+    if FREES.fetch_add(1, Ordering::Relaxed) % 5000 == 0 {
+        Trimmer.determine();
+    }
 }
 
 #[unsafe(no_mangle)]
