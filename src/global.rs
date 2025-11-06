@@ -49,7 +49,7 @@ impl GlobalHandler {
 
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut Header {
-        loop {
+        for _ in 0..1000 {
             let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
 
             if current_head.is_null() {
@@ -74,5 +74,7 @@ impl GlobalHandler {
                 return current_head;
             }
         }
+
+        null_mut()
     }
 }

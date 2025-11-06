@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::global::GlobalHandler;
+use crate::trim::Trimmer;
 
 mod global;
+mod trim;
 
 static PTHREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 static TOTAL_USED: AtomicUsize = AtomicUsize::new(0);
@@ -16,6 +18,7 @@ static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 struct ThreadLocalCache {
     map_list: [AtomicPtr<Header>; 20],
+    map_usage: [AtomicUsize; 20],
 }
 
 fn get_thread_cache() -> &'static ThreadLocalCache {
@@ -42,6 +45,7 @@ fn get_thread_cache() -> &'static ThreadLocalCache {
                 cache_ptr,
                 ThreadLocalCache {
                     map_list: [const { AtomicPtr::new(std::ptr::null_mut()) }; 20],
+                    map_usage: [const { AtomicUsize::new(0) }; 20],
                 },
             );
 
@@ -157,7 +161,7 @@ pub fn big_alloc(size: usize) -> *mut c_void {
             hint as *mut c_void,
             aligned_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE,
             -1,
             0,
         );
@@ -194,7 +198,7 @@ pub fn bulk_allocate(class: usize) -> bool {
             hint as *mut c_void,
             aligned_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE,
             -1,
             0,
         );
@@ -237,6 +241,7 @@ pub fn bulk_allocate(class: usize) -> bool {
         }
 
         let map = get_thread_cache();
+        map.map_usage[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
         // Now link the TAIL to the existing list
         let mut list = map.map_list[class].load(Ordering::Acquire);
@@ -284,30 +289,29 @@ fn pop_from_list(class: usize, cache: &ThreadLocalCache) -> *mut c_void {
 
 // -----
 
-static VA_START: AtomicUsize = AtomicUsize::new(0);
-static VA_END: AtomicUsize = AtomicUsize::new(0);
+static VA_START: AtomicUsize = AtomicUsize::new(0x200000000000);
+static VA_END: AtomicUsize = AtomicUsize::new(0x240000000000);
 static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 fn init_va_range() {
     unsafe {
         let probe = libc::mmap(
-            std::ptr::null_mut(),
+            VA_START.load(Ordering::Relaxed) as *mut c_void,
             256 * 1024 * 1024 * 1024, // 256GB
             libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+            libc::MAP_PRIVATE
+                | libc::MAP_ANONYMOUS
+                | libc::MAP_NORESERVE
+                | libc::MAP_FIXED_NOREPLACE,
             -1,
             0,
         );
 
-        if probe == libc::MAP_FAILED {
-            VA_START.store(0x200000000000, Ordering::Release);
-            VA_END.store(0x240000000000, Ordering::Release);
-            return;
+        if probe != libc::MAP_FAILED {
+            let start = probe as usize;
+            VA_START.store(start, Ordering::Release);
+            VA_END.store(start + 256 * 1024 * 1024 * 1024, Ordering::Release);
         }
-
-        let start = probe as usize;
-        VA_START.store(start, Ordering::Release);
-        VA_END.store(start + 256 * 1024 * 1024 * 1024, Ordering::Release);
     }
 }
 
@@ -476,6 +480,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
             }
         }
     }
+
+    Trimmer.determine();
 }
 
 #[unsafe(no_mangle)]
