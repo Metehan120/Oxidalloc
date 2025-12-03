@@ -1,80 +1,83 @@
 use std::{
+    hint::spin_loop,
     ptr::null_mut,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
 
-use crate::Header;
+use crate::{OxHeader, free::is_ours}; // <--- Import is_ours
 
-// Global map list for shared memory allocation
-static GLOBAL_MAP_LIST: [AtomicPtr<Header>; 20] = [
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-    AtomicPtr::new(std::ptr::null_mut()),
-];
+pub static GLOBAL: [AtomicPtr<OxHeader>; 20] = [const { AtomicPtr::new(null_mut()) }; 20];
+pub static GLOBAL_USAGE: [AtomicUsize; 20] = [const { AtomicUsize::new(0) }; 20];
+pub static GLOBAL_LOCKS: [AtomicBool; 20] = [const { AtomicBool::new(false) }; 20];
 
 pub struct GlobalHandler;
 
 impl GlobalHandler {
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn push_to_global(&self, class: usize, head: *mut Header, tail: *mut Header) {
-        loop {
-            let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
-            (*tail).next = current_head;
-
-            if GLOBAL_MAP_LIST[class]
-                .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                return;
-            }
+    #[inline(always)]
+    fn lock(&self, class: usize) {
+        while GLOBAL_LOCKS[class]
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            spin_loop();
         }
     }
 
+    #[inline(always)]
+    fn unlock(&self, class: usize) {
+        GLOBAL_LOCKS[class].store(false, Ordering::Release);
+    }
+
     #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut Header {
-        for _ in 0..1000 {
-            let current_head = GLOBAL_MAP_LIST[class].load(Ordering::Acquire);
+    pub unsafe fn push_to_global(&self, class: usize, head: *mut OxHeader, tail: *mut OxHeader) {
+        self.lock(class);
 
-            if current_head.is_null() {
-                return null_mut();
-            }
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
 
-            // Walk to find tail of batch
-            let mut tail = current_head;
-            let mut count = 1;
-            while count < batch_size && !(*tail).next.is_null() {
-                tail = (*tail).next;
-                count += 1;
-            }
+        (*tail).next = current_head;
+        GLOBAL[class].store(head, Ordering::Relaxed);
 
-            let new_head = (*tail).next;
+        self.unlock(class);
+    }
 
-            if GLOBAL_MAP_LIST[class]
-                .compare_exchange(current_head, new_head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                (*tail).next = null_mut(); // Detach batch
-                return current_head;
-            }
+    #[allow(unsafe_op_in_unsafe_fn)]
+    pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
+        self.lock(class);
+
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
+
+        if current_head.is_null() {
+            self.unlock(class);
+            return null_mut();
         }
 
-        null_mut()
+        let mut tail = current_head;
+        let mut count = 1;
+
+        while count < batch_size {
+            let next = (*tail).next;
+
+            if next.is_null() {
+                break;
+            }
+
+            if !is_ours(next as *mut std::ffi::c_void) {
+                (*tail).next = null_mut();
+                break;
+            }
+
+            tail = next;
+            count += 1;
+        }
+
+        let new_head = (*tail).next;
+        (*tail).next = null_mut();
+
+        GLOBAL[class].store(new_head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
+
+        self.unlock(class);
+
+        current_head
     }
 }

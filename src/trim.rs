@@ -1,66 +1,82 @@
 use std::{
     os::raw::c_void,
+    ptr::null_mut,
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use libc::madvise;
+use libc::{MADV_FREE, madvise};
 
-use crate::{HEADER_SIZE, ITERATIONS, TOTAL_ALLOCATED, TOTAL_USED, global::GlobalHandler};
+use crate::{
+    OX_CURRENT_STAMP,
+    global::{GLOBAL_USAGE, GlobalHandler},
+    internals::ITERATIONS,
+    thread_local::ThreadLocalEngine,
+};
 
 pub static IS_TRIMMING: AtomicBool = AtomicBool::new(false);
 
-pub struct Trimmer;
+// TODO: Add freeing Memory to the OS logic
+pub struct Trim;
 
-impl Trimmer {
-    pub fn determine(&self) {
-        let used = TOTAL_USED.load(Ordering::Relaxed);
-        let allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
+impl Trim {
+    pub fn trim(&self, cache: &ThreadLocalEngine) {
+        unsafe {
+            if IS_TRIMMING
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                return;
+            }
 
-        if allocated == 0 {
-            return;
-        }
+            for class in (0..cache.cache.len()).rev() {
+                let mut _total_trimmed = 0;
 
-        let usage_percent = (used * 100) / allocated;
+                for _ in 0..cache.usages[class].load(Ordering::Relaxed) / 2 {
+                    let cache_mem = cache.pop_from_thread(class);
 
-        if usage_percent > 50 {
-            return;
-        }
-
-        if IS_TRIMMING.load(Ordering::Relaxed) {
-            return;
-        }
-
-        self.trim();
-    }
-
-    fn trim(&self) {
-        IS_TRIMMING.store(true, Ordering::Relaxed);
-
-        for class in 0..20 {
-            let mut list =
-                unsafe { GlobalHandler.pop_batch_from_global(class, ITERATIONS[class] / 2) };
-
-            unsafe {
-                for _ in 0..ITERATIONS[class] / 2 {
-                    if list.is_null() {
+                    if cache_mem.is_null() {
                         break;
                     }
 
-                    let size = (*list).size;
+                    _total_trimmed += 1;
 
-                    madvise(
-                        list as *mut c_void,
-                        size as usize + HEADER_SIZE,
-                        libc::MADV_FREE,
-                    );
+                    (*cache_mem).next = null_mut();
 
-                    TOTAL_ALLOCATED.fetch_sub(size as usize + HEADER_SIZE, Ordering::Relaxed);
+                    let time = OX_CURRENT_STAMP
+                        .load(Ordering::Relaxed)
+                        .saturating_sub((*cache_mem).life_time);
 
-                    list = (*list).next;
+                    let usage = cache.usages[class].load(Ordering::Relaxed);
+
+                    // WARNING: TEST ONLY
+                    #[cfg(debug_assertions)]
+                    if time > 2 && _total_trimmed < ITERATIONS[class] && usage > ITERATIONS[class] {
+                        cache.usages[class].fetch_sub(1, Ordering::Relaxed);
+
+                        madvise(
+                            cache_mem as *mut c_void,
+                            (*cache_mem).size as usize,
+                            MADV_FREE,
+                        );
+
+                        continue;
+                    }
+
+                    if time > 1 {
+                        cache.usages[class].fetch_sub(1, Ordering::Relaxed);
+                        GLOBAL_USAGE[class].fetch_add(1, Ordering::Relaxed);
+
+                        (*cache_mem).life_time = 0;
+
+                        GlobalHandler.push_to_global(class, cache_mem, cache_mem);
+                        continue;
+                    }
+
+                    cache.push_to_thread(class, cache_mem);
                 }
             }
-        }
 
-        IS_TRIMMING.store(false, Ordering::Relaxed);
+            IS_TRIMMING.store(false, Ordering::Release);
+        }
     }
 }
