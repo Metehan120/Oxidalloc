@@ -26,7 +26,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
         let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if total > 0 && total % 1000 == 0 {
-            let stamp = get_clock().elapsed().as_micros() as usize;
+            let stamp = get_clock().elapsed().as_millis() as usize;
 
             OX_CURRENT_STAMP.store(stamp, std::sync::atomic::Ordering::Relaxed);
         }

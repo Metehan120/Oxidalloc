@@ -48,6 +48,7 @@ impl Trim {
                             TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
 
                             self.release_memory(cache_mem, SIZE_CLASSES[class]);
+
                             continue;
                         }
 
