@@ -73,7 +73,7 @@ pub fn bootstrap() {
 
 fn init_va() {
     unsafe {
-        const SIZE: usize = 1024 * 1024 * 1024 * 1024;
+        const SIZE: usize = 1024 * 1024 * 1024 * 256;
 
         let probe = libc::mmap(
             std::ptr::null_mut(),
