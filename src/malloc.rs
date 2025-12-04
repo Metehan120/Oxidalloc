@@ -3,7 +3,8 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use libc::{madvise, size_t};
 
 use crate::{
-    FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, PROT, TOTAL_OPS,
+    FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, PROT, TOTAL_IN_USE,
+    TOTAL_OPS,
     free::is_ours,
     get_clock,
     global::GlobalHandler,
@@ -22,9 +23,9 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
             return null_mut();
         }
 
-        TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        if TOTAL_OPS.load(std::sync::atomic::Ordering::Relaxed) % 1000 == 0 {
+        if total % 1000 == 0 {
             let stamp = get_clock().elapsed().as_micros() as usize;
 
             OX_CURRENT_STAMP.store(stamp, std::sync::atomic::Ordering::Relaxed);
@@ -85,6 +86,8 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                     (*ptr).next = null_mut();
                     (*ptr).magic = MAGIC;
 
+                    TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
+
                     engine.usages[class].fetch_sub(1, Ordering::Relaxed);
                     return (ptr as *mut u8).add(HEADER_SIZE) as *mut c_void;
                 }
@@ -109,6 +112,8 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
             (*popped).life_time = current;
             (*popped).next = null_mut();
             (*popped).magic = MAGIC;
+
+            TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
 
             engine.usages[class].fetch_sub(1, Ordering::Relaxed);
             (popped as *mut u8).add(HEADER_SIZE) as *mut c_void

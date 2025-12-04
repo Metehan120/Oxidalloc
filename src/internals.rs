@@ -9,7 +9,9 @@ use std::{
 
 use libc::{__errno_location, MAP_FAILED, madvise};
 
-use crate::{FLAG_NON, HEADER_SIZE, MAP, OxHeader, PROT, thread_local::ThreadLocalEngine};
+use crate::{
+    FLAG_NON, HEADER_SIZE, MAP, OxHeader, PROT, TOTAL_ALLOCATED, thread_local::ThreadLocalEngine,
+};
 
 pub static IS_BOOTSRAP: AtomicBool = AtomicBool::new(false);
 pub static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
@@ -71,7 +73,7 @@ pub fn bootstrap() {
 
 fn init_va() {
     unsafe {
-        const SIZE: usize = 1024 * 1024 * 1024 * 1024; // 256GB
+        const SIZE: usize = 1024 * 1024 * 1024 * 1024;
 
         let probe = libc::mmap(
             std::ptr::null_mut(),
@@ -177,6 +179,8 @@ impl AllocationHelper {
             let thread = ThreadLocalEngine::get_or_init();
             thread.push_to_thread_tailed(class, prev, tail);
             thread.usages[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
+
+            TOTAL_ALLOCATED.fetch_add(total, Ordering::Relaxed);
 
             true
         }

@@ -1,13 +1,9 @@
-use std::{
-    os::raw::c_void,
-    process::abort,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{os::raw::c_void, process::abort, sync::atomic::Ordering};
 
 use libc::{madvise, munmap};
 
 use crate::{
-    HEADER_SIZE, OxHeader, TOTAL_OPS,
+    HEADER_SIZE, OxHeader, TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
     internals::{AllocationHelper, MAGIC, VA_END, VA_START},
     thread_local::ThreadLocalEngine,
     trim::Trim,
@@ -26,7 +22,6 @@ pub fn is_ours(ptr: *mut c_void) -> bool {
 }
 
 const OFFSET_SIZE: usize = size_of::<usize>();
-pub static TOTAL_FREE: AtomicUsize = AtomicUsize::new(0);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
@@ -92,8 +87,27 @@ pub extern "C" fn free(ptr: *mut c_void) {
         thread.push_to_thread(class, header);
         thread.usages[class].fetch_add(1, Ordering::Relaxed);
 
-        if TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 10000 == 0 {
-            Trim.trim(thread);
-        }
+        TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
+
+        trim(thread);
+    }
+}
+
+pub fn trim(engine: &ThreadLocalEngine) {
+    let total = TOTAL_OPS.load(Ordering::Relaxed);
+
+    let total_allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
+    let total_in_use = TOTAL_IN_USE.load(Ordering::Relaxed);
+
+    let in_use_percentage = if total_allocated > 0 {
+        (total_in_use * 100) / total_allocated
+    } else {
+        0
+    };
+
+    if total % 20000 == 0 && in_use_percentage < 50 || in_use_percentage < 25 {
+        Trim.trim_global();
+    } else if total % 10000 == 0 && in_use_percentage < 50 {
+        Trim.trim(engine);
     }
 }

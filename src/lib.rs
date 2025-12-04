@@ -24,6 +24,8 @@ pub const FLAG_ALIGNED: i32 = 4;
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_OPS: AtomicUsize = AtomicUsize::new(0);
+pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 
 fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
@@ -36,6 +38,7 @@ pub struct OxHeader {
     magic: u64,
     flag: i32,
     life_time: usize,
+    checksum: u64,
 }
 
 #[test]

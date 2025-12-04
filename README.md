@@ -7,6 +7,7 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
 ## Tested on Fedora
+## IMPORTANT: By new update most fragmentation issues are fixed.
 
 ## Features
 
@@ -16,13 +17,13 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * Thread-local fast paths
 * Cross-thread frees supported
 * Optional debug consistency checks
-* Fast: ~50 cycles malloc+free on modern CPUs
+* Fast: ~50 cycles malloc+free on modern CPUs (Under trim, its adding ~50 cycles, ~10ns on 4.65ghz)
 
 ## Incompatibilities
 
-* WARNING: Under extreme loads like AI Workloads, you may see fragmentation.
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
 * Incompatible with Firefox for now.
+* Under some certain conditions, it may cause fragmentation.
 
 ## Architecture
 
@@ -41,7 +42,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 
 | Function | Speed (ns) |
 |-----------|--------------|
-| malloc (thread-local path)   |  6           |
+| malloc (thread-local path)   |  6 + 10 (trim)           |
 | free   (thread-local path)   |  5           |
 
 ## Usage
@@ -67,8 +68,7 @@ export LD_PRELOAD=/path/to/liboxidalloc.so
 ## Known Issues
 
 * When Firefox/Firefox-based browsers starting, UI not loading correctly
-* There's no real Trim to OS logic **yet**, will be added soon
-* Extremely high memory usage when using Rust Analyzer is no full OS-level trimming logic implemented yet — only partial or debug-only trimming is active.
+* Extremely high memory usage when using Rust Analyzer.
 * May crash some APPS
 
 ## License
