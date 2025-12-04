@@ -51,6 +51,7 @@ pub static VA_START: AtomicUsize = AtomicUsize::new(0);
 pub static VA_END: AtomicUsize = AtomicUsize::new(0);
 pub static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
+#[inline(always)]
 pub fn bootstrap() {
     if IS_BOOTSRAP.load(Ordering::Relaxed) {
         return;

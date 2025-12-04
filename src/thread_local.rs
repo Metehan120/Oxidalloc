@@ -24,6 +24,7 @@ pub struct ThreadLocalEngine {
 }
 
 impl ThreadLocalEngine {
+    #[inline(always)]
     pub fn get_or_init() -> &'static ThreadLocalEngine {
         unsafe {
             let key = THREAD_KEY.get_or_init(|| {
@@ -54,6 +55,7 @@ impl ThreadLocalEngine {
         }
     }
 
+    #[inline(always)]
     pub fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
         unsafe {
             loop {
@@ -81,6 +83,7 @@ impl ThreadLocalEngine {
         }
     }
 
+    #[inline(always)]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
         loop {
@@ -98,6 +101,7 @@ impl ThreadLocalEngine {
         }
     }
 
+    #[inline(always)]
     #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn push_to_thread_tailed(
         &self,

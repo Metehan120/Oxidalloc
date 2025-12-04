@@ -9,6 +9,7 @@ use crate::{
     trim::Trim,
 };
 
+#[inline(always)]
 pub fn is_ours(ptr: *mut c_void) -> bool {
     let start = VA_START.load(Ordering::Acquire);
     let end = VA_END.load(Ordering::Acquire);
@@ -93,6 +94,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
     }
 }
 
+#[inline(always)]
 pub fn trim(engine: &ThreadLocalEngine) {
     let total = TOTAL_OPS.load(Ordering::Relaxed);
 
