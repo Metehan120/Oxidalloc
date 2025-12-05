@@ -52,7 +52,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 cargo build --release
 ```
 
-### System-wide preload **(example, do not attempt may cause system instability)**
+### System-wide preload **(example, do not attempt may cause system instability, but mostly works fine)**
 
 ```bash
 echo "/path/to/liboxidalloc.so" | sudo tee /etc/ld.so.preload
