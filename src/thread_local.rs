@@ -19,8 +19,8 @@ use crate::{
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 
 pub struct ThreadLocalEngine {
-    pub cache: [AtomicPtr<OxHeader>; 20],
-    pub usages: [AtomicUsize; 20],
+    pub cache: [AtomicPtr<OxHeader>; 22],
+    pub usages: [AtomicUsize; 22],
 }
 
 impl ThreadLocalEngine {
@@ -42,8 +42,8 @@ impl ThreadLocalEngine {
                 std::ptr::write(
                     cache,
                     ThreadLocalEngine {
-                        cache: [const { AtomicPtr::new(std::ptr::null_mut()) }; 20],
-                        usages: [const { AtomicUsize::new(0) }; 20],
+                        cache: [const { AtomicPtr::new(std::ptr::null_mut()) }; 22],
+                        usages: [const { AtomicUsize::new(0) }; 22],
                     },
                 );
 
@@ -58,6 +58,7 @@ impl ThreadLocalEngine {
     #[inline(always)]
     pub fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
         unsafe {
+            let mut spin = 0;
             loop {
                 let header = self.cache[class].load(Ordering::Acquire);
 
@@ -65,11 +66,11 @@ impl ThreadLocalEngine {
                     return null_mut();
                 }
 
-                let next = (*header).next;
-
                 if !is_ours(header as *mut c_void) {
                     return null_mut();
                 }
+
+                let next = (*header).next;
 
                 if self.cache[class]
                     .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
@@ -78,7 +79,13 @@ impl ThreadLocalEngine {
                     return header;
                 }
 
-                spin_loop();
+                spin += 1;
+                if spin > 100 {
+                    std::thread::yield_now();
+                    spin = 0;
+                } else {
+                    spin_loop();
+                }
             }
         }
     }

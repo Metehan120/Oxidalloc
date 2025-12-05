@@ -1,10 +1,10 @@
-use std::{os::raw::c_void, process::abort, sync::atomic::Ordering};
+use std::{os::raw::c_void, sync::atomic::Ordering};
 
-use libc::{madvise, munmap};
+use libc::{__errno_location, madvise};
 
 use crate::{
-    HEADER_SIZE, OxHeader, TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
-    internals::{AllocationHelper, MAGIC, VA_END, VA_START},
+    HEADER_SIZE, OxHeader, OxidallocError, TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
+    internals::{AllocationHelper, MAGIC, VA_END, VA_MAP, VA_START, align},
     thread_local::ThreadLocalEngine,
     trim::Trim,
 };
@@ -31,17 +31,19 @@ pub extern "C" fn free(ptr: *mut c_void) {
             return;
         }
 
-        let mut header_search_ptr = ptr;
-        let presumed_original_ptr_loc =
-            (ptr as usize).wrapping_sub(OFFSET_SIZE) as *mut *mut c_void;
-        let presumed_original_ptr = *presumed_original_ptr_loc;
-
-        if !presumed_original_ptr.is_null() && is_ours(presumed_original_ptr) {
-            header_search_ptr = presumed_original_ptr;
+        if !is_ours(ptr) {
+            return;
         }
 
-        if !is_ours(header_search_ptr) {
-            return;
+        let mut header_search_ptr = ptr;
+        let presumed_original_ptr_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *mut usize;
+        let tagged = *presumed_original_ptr_loc;
+
+        if (tagged & 1) != 0 {
+            let presumed_original_ptr = (tagged & !1) as *mut c_void;
+            if is_ours(presumed_original_ptr) {
+                header_search_ptr = presumed_original_ptr;
+            }
         }
 
         let header_addr = (header_search_ptr as usize).wrapping_sub(HEADER_SIZE);
@@ -56,33 +58,53 @@ pub extern "C" fn free(ptr: *mut c_void) {
         }
 
         let magic_val = std::ptr::read_volatile(&(*header).magic);
+        let size = std::ptr::read_volatile(&(*header).size);
 
         if magic_val != MAGIC && magic_val != 0 {
-            eprintln!(
-                "Double Free or Memory Corruption | Undefined Behaviour ptr={:p}",
-                header
-            );
-            abort()
+            OxidallocError::MemoryCorruption
+                .log_and_abort(header as *mut c_void, "Possibly Double Free");
         }
 
-        let size = (*header).size;
+        if (*header).in_use.load(Ordering::Relaxed) == 0 {
+            OxidallocError::DoubleFree
+                .log_and_abort(header as *mut c_void, "Pointer is tagged as in_use");
+        }
+
         let class = match AllocationHelper.match_size_class(size as usize) {
             Some(class) => class,
             None => {
-                (*header).magic = 0;
-
-                if munmap(header as *mut c_void, HEADER_SIZE + size as usize) != 0 {
-                    madvise(
-                        header as *mut c_void,
-                        HEADER_SIZE + size as usize,
-                        libc::MADV_DONTNEED,
-                    );
+                if size == 0
+                    || size as usize
+                        > (VA_END.load(Ordering::Acquire) - VA_START.load(Ordering::Acquire))
+                {
+                    eprintln!("Unexpected size in free: size={}, ptr={:p}", size, header);
+                    return;
                 }
+
+                (*header).magic = 0;
+                (*header).change_in_use_state(header as *mut c_void);
+
+                let aligned = align(size as usize + HEADER_SIZE);
+
+                if madvise(header as *mut c_void, aligned, libc::MADV_DONTNEED) != 0 {
+                    eprintln!(
+                        "Madvise Failed, memory leaked. size={}, aligned={}, errno={}",
+                        size,
+                        aligned,
+                        *__errno_location()
+                    );
+
+                    return;
+                }
+
+                VA_MAP.free(header as usize, aligned);
+
                 return;
             }
         };
 
         (*header).magic = 0;
+        (*header).change_in_use_state(header as *mut c_void);
 
         let thread = ThreadLocalEngine::get_or_init();
         thread.push_to_thread(class, header);
@@ -107,9 +129,9 @@ pub fn trim(engine: &ThreadLocalEngine) {
         0
     };
 
-    if total % 20000 == 0 && in_use_percentage < 50 || in_use_percentage < 25 {
+    if total % 20000 == 0 || in_use_percentage < 35 {
         Trim.trim_global();
-    } else if total % 10000 == 0 && in_use_percentage < 50 {
+    } else if total % 10000 == 0 || in_use_percentage < 50 {
         Trim.trim(engine);
     }
 }

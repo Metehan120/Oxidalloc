@@ -7,7 +7,7 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
 ## Tested on Fedora
-## IMPORTANT: By new update most fragmentation issues are fixed.
+## IMPORTANT: New update may add More Compatibility but also May Break some of them, please report any issues you encounter.
 
 ## Features
 
@@ -20,9 +20,8 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * Fast: ~50 cycles malloc+free on modern CPUs (Under trim, its adding ~50 cycles, ~10ns on 4.65ghz)
 
 ## Incompatibilities
-
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
-* Incompatible with Firefox for now.
+* Incompatible with Fedora Firefox for now, use Flatpak Firefox if possible (if you are on another distro, use the official Firefox package). This appears to be due to Fedora-specific patches/build configuration in their Firefox package that conflicts with LD_PRELOAD allocators.
 * Under some certain conditions, it may cause fragmentation.
 
 ## Architecture
@@ -34,7 +33,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * `align.rs` – alignment-specific allocators
 * `thread_local.rs` – per-thread caches
 * `global.rs` – global allocator paths and fallbacks
-* `internals.rs` – metadata, size classes, constants
+* `internals.rs` – metadata, size classes, constants, va reservation
 * `trim.rs` – memory trimming and page returns
 * `lib.rs` – exported C ABI symbols
 
@@ -91,3 +90,5 @@ Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTIN
 ## Current code documentation
 
 * There's no documentation yet, but it will be added soon. (This code was initially intended as a prototype but ended up becoming production-ready — surprise.)
+
+**Note**: This allocator is experimental. Test thoroughly before production use. Benchmark your specific workload.

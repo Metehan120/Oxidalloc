@@ -1,5 +1,10 @@
 use std::{
-    sync::{OnceLock, atomic::AtomicUsize},
+    fmt::Debug,
+    os::raw::c_void,
+    sync::{
+        OnceLock,
+        atomic::{AtomicU8, AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -38,7 +43,61 @@ pub struct OxHeader {
     magic: u64,
     flag: i32,
     life_time: usize,
-    checksum: u64,
+    in_use: AtomicU8,
+}
+
+impl OxHeader {
+    fn try_change_in_use(&self, expected: u8, new_state: u8) -> Result<u8, u8> {
+        self.in_use
+            .compare_exchange(expected, new_state, Ordering::AcqRel, Ordering::Acquire)
+    }
+
+    fn change_in_use_state(&mut self, ptr: *mut c_void) {
+        match self.try_change_in_use(1, 0) {
+            Ok(1) => {
+                self.magic = 0;
+            }
+            Ok(_) => {
+                self.magic = 0;
+            }
+            Err(0) => {
+                OxidallocError::DoubleFree.log_and_abort(ptr, "DoubleFree");
+            }
+            Err(_) => {
+                OxidallocError::MemoryCorruption.log_and_abort(ptr, "MemoryCorruption");
+            }
+        }
+    }
+}
+
+#[repr(u32)]
+pub enum OxidallocError {
+    DoubleFree = 0x1000,
+    MemoryCorruption = 0x1001,
+    InvalidSize = 0x1002,
+    OutOfMemory = 0x1003,
+    VaBitmapExhausted = 0x1004,
+    VAIinitFailed = 0x1005,
+}
+
+impl Debug for OxidallocError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OxidallocError::DoubleFree => write!(f, "DoubleFree (0x1000)"),
+            OxidallocError::MemoryCorruption => write!(f, "MemoryCorruption (0x1001)"),
+            OxidallocError::InvalidSize => write!(f, "InvalidSize (0x1002)"),
+            OxidallocError::OutOfMemory => write!(f, "OutOfMemory (0x1003)"),
+            OxidallocError::VaBitmapExhausted => write!(f, "VaBitmapExhausted (0x1004)"),
+            OxidallocError::VAIinitFailed => write!(f, "VAIinitFailed (0x1005)"),
+        }
+    }
+}
+
+impl OxidallocError {
+    pub fn log_and_abort(&self, ptr: *mut std::ffi::c_void, extra: &str) -> ! {
+        eprintln!("[OXIDALLOC FATAL] {:?} at ptr={:p} | {}", self, ptr, extra);
+        std::process::abort();
+    }
 }
 
 #[test]

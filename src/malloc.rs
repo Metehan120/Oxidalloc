@@ -3,13 +3,13 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use libc::{madvise, size_t};
 
 use crate::{
-    FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, PROT, TOTAL_IN_USE,
-    TOTAL_OPS,
+    FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT,
+    TOTAL_IN_USE, TOTAL_OPS,
     free::is_ours,
     get_clock,
     global::GlobalHandler,
     internals::{
-        AllocationHelper, MAGIC, SIZE_CLASSES, VA_END, VA_OFFSET, VA_START, align, bootstrap,
+        AllocationHelper, MAGIC, SIZE_CLASSES, VA_END, VA_MAP, VA_START, align, bootstrap,
     },
     thread_local::ThreadLocalEngine,
 };
@@ -37,12 +37,10 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                 let total = size + HEADER_SIZE;
 
                 let aligned_total = align(total);
-                let hint = VA_OFFSET.fetch_add(aligned_total, Ordering::Relaxed);
-                let end = VA_END.load(Ordering::Relaxed);
-
-                if end != 0 && hint.saturating_add(aligned_total) > end {
-                    return null_mut();
-                }
+                let hint = match VA_MAP.alloc(aligned_total) {
+                    Some(hint) => hint,
+                    None => return null_mut(),
+                };
 
                 let allocated = libc::mmap(
                     hint as *mut c_void,
@@ -64,6 +62,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                 (*header).next = null_mut();
                 (*header).size = size as u64;
                 (*header).flag = FLAG_NON;
+                (*header).in_use.store(1, Ordering::Relaxed);
 
                 return (header as *mut u8).add(HEADER_SIZE) as *mut c_void;
             }
@@ -85,6 +84,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                     (*ptr).life_time = current;
                     (*ptr).next = null_mut();
                     (*ptr).magic = MAGIC;
+                    (*ptr).in_use.store(1, Ordering::Relaxed);
 
                     TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
 
@@ -107,11 +107,17 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
             popped = popped_2;
         }
 
+        if popped.is_null() {
+            OxidallocError::OutOfMemory
+                .log_and_abort(popped as *mut c_void, "Not able to allocate memory")
+        }
+
         if (*popped).flag != FLAG_FREED {
             (*popped).flag = FLAG_NON;
             (*popped).life_time = current;
             (*popped).next = null_mut();
             (*popped).magic = MAGIC;
+            (*popped).in_use.store(1, Ordering::Relaxed);
 
             TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
 

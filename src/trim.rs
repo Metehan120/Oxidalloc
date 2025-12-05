@@ -36,7 +36,7 @@ impl Trim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*cache_mem).life_time);
 
-                    if time > 1 {
+                    if time > 1 && (*cache_mem).in_use.load(Ordering::Relaxed) != 1 {
                         cache.usages[class].fetch_sub(1, Ordering::Relaxed);
                         GLOBAL_USAGE[class].fetch_add(1, Ordering::Relaxed);
 
@@ -89,7 +89,10 @@ impl Trim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*global_mem).life_time);
 
-                    if time > 5 && count < ITERATIONS[class] * 4 {
+                    if time > 5
+                        && count < ITERATIONS[class] * 4
+                        && (*global_mem).in_use.load(Ordering::Relaxed) != 1
+                    {
                         self.release_memory(global_mem, SIZE_CLASSES[class]);
 
                         TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
@@ -110,9 +113,7 @@ impl Trim {
     fn release_memory(&self, header_ptr: *mut crate::OxHeader, size: usize) {
         unsafe {
             let payload_start = (header_ptr as usize) + HEADER_SIZE;
-
             let payload_end = payload_start + size;
-
             let page_size = 4096;
             let aligned_start = (payload_start + (page_size - 1)) & !(page_size - 1);
 

@@ -6,9 +6,9 @@ use std::{
 
 use crate::{OxHeader, free::is_ours}; // <--- Import is_ours
 
-pub static GLOBAL: [AtomicPtr<OxHeader>; 20] = [const { AtomicPtr::new(null_mut()) }; 20];
-pub static GLOBAL_USAGE: [AtomicUsize; 20] = [const { AtomicUsize::new(0) }; 20];
-pub static GLOBAL_LOCKS: [AtomicBool; 20] = [const { AtomicBool::new(false) }; 20];
+pub static GLOBAL: [AtomicPtr<OxHeader>; 22] = [const { AtomicPtr::new(null_mut()) }; 22];
+pub static GLOBAL_USAGE: [AtomicUsize; 22] = [const { AtomicUsize::new(0) }; 22];
+pub static GLOBAL_LOCKS: [AtomicBool; 22] = [const { AtomicBool::new(false) }; 22];
 
 pub struct GlobalHandler;
 

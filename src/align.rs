@@ -34,7 +34,7 @@ pub extern "C" fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, siz
         let aligned = (start_search + alignment - 1) & !(alignment - 1);
 
         let original_ptr_location = aligned.saturating_sub(OFFSET_SIZE) as *mut usize;
-        *original_ptr_location = raw as usize;
+        *original_ptr_location = (raw as usize) | 1;
 
         *memptr = aligned as *mut c_void;
 
