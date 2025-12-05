@@ -66,9 +66,10 @@ export LD_PRELOAD=/path/to/liboxidalloc.so
 
 ## Known Issues
 
-* When Firefox/Firefox-based browsers starting, UI not loading correctly
-* Extremely high memory usage when using Rust Analyzer.
+* When Firefox (Only Fedora package) browsers starting, UI not loading correctly
+* High memory usage when using Rust Analyzer. | Working on it.
 * May crash some APPS
+* May crash after a while during AI workloads, because of VA exhaustion but after current update 'VA_MAP' mostly fixed it.
 
 ## License
 
