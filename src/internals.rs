@@ -11,7 +11,7 @@ use libc::{__errno_location, MAP_FAILED, madvise};
 
 use crate::{
     DEFAULT_TRIM_INTERVAL, FLAG_NON, GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, MAP,
-    OxHeader, OxidallocError, PROT, TOTAL_ALLOCATED, thread_local::ThreadLocalEngine,
+    OxHeader, OxidallocError, PROT, thread_local::ThreadLocalEngine,
 };
 
 pub static IS_BOOTSRAP: AtomicBool = AtomicBool::new(false);
@@ -216,7 +216,6 @@ impl AllocationHelper {
             let thread = ThreadLocalEngine::get_or_init();
             thread.push_to_thread_tailed(class, prev, tail);
             thread.usages[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
-            TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
             true
         }

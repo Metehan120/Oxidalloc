@@ -7,7 +7,7 @@ use std::{
 use libc::madvise;
 
 use crate::{
-    FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP, TOTAL_ALLOCATED,
+    FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP,
     global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
     internals::SIZE_CLASSES,
     thread_local::ThreadLocalEngine,
@@ -39,7 +39,6 @@ impl Trim {
                     }
 
                     if time > 2 {
-                        TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
                         cache.usages[class].fetch_sub(1, Ordering::Relaxed);
                         (*cache_mem).life_time = 0;
                         (*cache_mem).flag = FLAG_FREED;
@@ -91,7 +90,6 @@ impl Trim {
                     }
 
                     if time > 2 {
-                        TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
                         (*global_mem).life_time = 0;
                         (*global_mem).flag = FLAG_FREED;
 

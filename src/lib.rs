@@ -29,8 +29,6 @@ pub const DEFAULT_TRIM_INTERVAL: usize = 20000;
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_OPS: AtomicUsize = AtomicUsize::new(0);
-pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_TRIM_INTERVAL: AtomicUsize = AtomicUsize::new(0);
 pub static LOCAL_TRIM_INTERVAL: AtomicUsize = AtomicUsize::new(0);
 

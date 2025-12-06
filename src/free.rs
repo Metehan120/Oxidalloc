@@ -1,13 +1,12 @@
 use std::{
     os::raw::c_void,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use libc::{__errno_location, madvise};
 
 use crate::{
-    GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, OxHeader, OxidallocError,
-    TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
+    GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, OxHeader, OxidallocError, TOTAL_OPS,
     internals::{AllocationHelper, MAGIC, VA_END, VA_MAP, VA_START, align},
     thread_local::ThreadLocalEngine,
     trim::Trim,
@@ -114,43 +113,27 @@ pub extern "C" fn free(ptr: *mut c_void) {
         thread.push_to_thread(class, header);
         thread.usages[class].fetch_add(1, Ordering::Relaxed);
 
-        TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
-
         trim(thread);
     }
 }
 
 static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
+pub static TRIM_INIT: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 pub fn trim(engine: &ThreadLocalEngine) {
     let total = TOTAL_OPS.load(Ordering::Relaxed);
-
-    let total_allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
-    let total_in_use = TOTAL_IN_USE.load(Ordering::Relaxed);
 
     if total % 55000 == 0 {
         let pressure = check_memory_pressure();
         LAST_PRESSURE_CHECK.store(pressure, Ordering::Relaxed);
     }
 
-    let in_use_percentage = if total_allocated > 0 {
-        (total_in_use * 100) / total_allocated
-    } else {
-        0
-    };
-
     let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
 
-    if total % GLOBAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0
-        || pressure > 85
-        || in_use_percentage < 35
-    {
+    if total % GLOBAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0 || pressure > 85 {
         Trim.trim_global();
-    } else if total % LOCAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0
-        || pressure > 75
-        || in_use_percentage < 50
-    {
+    } else if total % LOCAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0 || pressure > 75 {
         Trim.trim(engine);
     }
 }

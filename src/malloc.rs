@@ -4,7 +4,7 @@ use libc::{madvise, size_t};
 
 use crate::{
     FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT,
-    TOTAL_IN_USE, TOTAL_OPS,
+    TOTAL_OPS,
     free::is_ours,
     get_clock,
     global::GlobalHandler,
@@ -86,8 +86,6 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                     (*ptr).magic = MAGIC;
                     (*ptr).in_use.store(1, Ordering::Relaxed);
 
-                    TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
-
                     engine.usages[class].fetch_sub(1, Ordering::Relaxed);
                     return (ptr as *mut u8).add(HEADER_SIZE) as *mut c_void;
                 }
@@ -118,8 +116,6 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
             (*popped).next = null_mut();
             (*popped).magic = MAGIC;
             (*popped).in_use.store(1, Ordering::Relaxed);
-
-            TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
 
             engine.usages[class].fetch_sub(1, Ordering::Relaxed);
             (popped as *mut u8).add(HEADER_SIZE) as *mut c_void
