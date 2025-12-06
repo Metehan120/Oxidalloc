@@ -17,7 +17,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * Thread-local fast paths
 * Cross-thread frees supported
 * Optional debug consistency checks
-* Fast: ~50 cycles malloc+free on modern CPUs (Under trim, its adding ~50 cycles, ~10ns on 4.65ghz)
+* Fast: ~120 cycles malloc+free on modern CPUs (20ns on 4.65ghz) | Haven't started optimizing yet
 
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
@@ -41,8 +41,8 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 
 | Function | Speed (ns) |
 |-----------|--------------|
-| malloc (thread-local path)   |  6 + 10 (trim)           |
-| free   (thread-local path)   |  5           |
+| malloc (thread-local path)   |  20            |
+| free   (thread-local path)   |  20 + 10 (trim)           |
 
 ## Usage
 
