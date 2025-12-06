@@ -10,8 +10,8 @@ use std::{
 use libc::{__errno_location, MAP_FAILED, madvise};
 
 use crate::{
-    FLAG_NON, HEADER_SIZE, MAP, OxHeader, OxidallocError, PROT, TOTAL_ALLOCATED,
-    thread_local::ThreadLocalEngine,
+    DEFAULT_TRIM_INTERVAL, FLAG_NON, GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, MAP,
+    OxHeader, OxidallocError, PROT, TOTAL_ALLOCATED, thread_local::ThreadLocalEngine,
 };
 
 pub static IS_BOOTSRAP: AtomicBool = AtomicBool::new(false);
@@ -65,10 +65,38 @@ pub fn bootstrap() {
 
     IS_BOOTSRAP.store(true, Ordering::Relaxed);
 
+    unsafe {
+        let key = b"OXIDALLOC_TRIM_INTERVAL\0";
+        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+        if !value_ptr.is_null() {
+            let mut val = 0usize;
+            let mut ptr = value_ptr as *const u8;
+
+            while *ptr != 0 {
+                if *ptr >= b'0' && *ptr <= b'9' {
+                    val = val * 10 + (*ptr - b'0') as usize;
+                } else {
+                    break;
+                }
+                ptr = ptr.add(1);
+            }
+
+            if val == 0 || val < 100 {
+                val = DEFAULT_TRIM_INTERVAL;
+            }
+
+            GLOBAL_TRIM_INTERVAL.store(val, Ordering::Relaxed);
+            LOCAL_TRIM_INTERVAL.store(val / 2, Ordering::Relaxed);
+        } else {
+            let val = DEFAULT_TRIM_INTERVAL;
+            GLOBAL_TRIM_INTERVAL.store(val, Ordering::Relaxed);
+            LOCAL_TRIM_INTERVAL.store(val / 2, Ordering::Relaxed);
+        }
+    }
+
     init_va();
-
     ThreadLocalEngine::get_or_init();
-
     let random_start = init_va_offset();
     VA_OFFSET.store(random_start, Ordering::Release);
 }

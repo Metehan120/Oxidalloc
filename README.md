@@ -7,7 +7,8 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
 ## Tested on Fedora
-## IMPORTANT: New update may add More Compatibility but also May Break some of them, please report any issues you encounter.
+## IMPORTANT: Dynamic Pressure Awareness added to the Trim.
+## IMPORTANT: New update may add More Compatibility but also May Break some of them, please report any issues you encounter. (This is update before Dynamic Pressure)
 
 ## Features
 
@@ -63,6 +64,8 @@ echo "/path/to/liboxidalloc.so" | sudo tee /etc/ld.so.preload
 ```bash
 export LD_PRELOAD=/path/to/liboxidalloc.so
 ```
+
+* Update Trim Interval threshold: `OXIDALLOC_TRIM_INTERVAL=20000`
 
 ## Known Issues
 

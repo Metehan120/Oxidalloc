@@ -4,10 +4,12 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use libc::madvise;
+
 use crate::{
     FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP, TOTAL_ALLOCATED,
     global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
-    internals::{ITERATIONS, SIZE_CLASSES},
+    internals::{SIZE_CLASSES, align},
     thread_local::ThreadLocalEngine,
 };
 
@@ -19,8 +21,6 @@ impl Trim {
     pub fn trim(&self, cache: &ThreadLocalEngine) {
         unsafe {
             for class in (0..cache.cache.len()).rev() {
-                let mut count = 0;
-
                 for _ in 0..cache.usages[class].load(Ordering::Relaxed) / 2 {
                     let cache_mem = cache.pop_from_thread(class);
 
@@ -30,8 +30,6 @@ impl Trim {
 
                     (*cache_mem).next = null_mut();
 
-                    count += 1;
-
                     let time = OX_CURRENT_STAMP
                         .load(Ordering::Relaxed)
                         .saturating_sub((*cache_mem).life_time);
@@ -40,21 +38,21 @@ impl Trim {
                         continue;
                     }
 
+                    if time > 2 {
+                        (*cache_mem).flag = FLAG_FREED;
+                        (*cache_mem).life_time = 0;
+
+                        TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
+                        self.release_memory(cache_mem, SIZE_CLASSES[class]);
+
+                        continue;
+                    }
+
                     if time > 1 {
                         cache.usages[class].fetch_sub(1, Ordering::Relaxed);
                         GLOBAL_USAGE[class].fetch_add(1, Ordering::Relaxed);
 
                         (*cache_mem).life_time = 0;
-
-                        if count < ITERATIONS[class] * 2 {
-                            (*cache_mem).flag = FLAG_FREED;
-
-                            TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
-
-                            self.release_memory(cache_mem, SIZE_CLASSES[class]);
-
-                            continue;
-                        }
 
                         GlobalHandler.push_to_global(class, cache_mem, cache_mem);
                         continue;
@@ -76,8 +74,6 @@ impl Trim {
             }
 
             for class in (0..GLOBAL.len()).rev() {
-                let mut count = 0;
-
                 for _ in 0..GLOBAL_USAGE[class].load(Ordering::Relaxed) / 2 {
                     let global_mem = GlobalHandler.pop_batch_from_global(class, 1);
 
@@ -87,8 +83,6 @@ impl Trim {
 
                     (*global_mem).next = null_mut();
 
-                    count += 1;
-
                     let time = OX_CURRENT_STAMP
                         .load(Ordering::Relaxed)
                         .saturating_sub((*global_mem).life_time);
@@ -97,7 +91,7 @@ impl Trim {
                         continue;
                     }
 
-                    if time > 5 && count < ITERATIONS[class] * 4 {
+                    if time > 2 {
                         self.release_memory(global_mem, SIZE_CLASSES[class]);
 
                         TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
@@ -117,25 +111,12 @@ impl Trim {
     #[inline]
     fn release_memory(&self, header_ptr: *mut crate::OxHeader, size: usize) {
         unsafe {
-            let payload_start = (header_ptr as usize) + HEADER_SIZE;
-            let payload_end = payload_start + size;
-            let page_size = 4096;
-            let aligned_start = (payload_start + (page_size - 1)) & !(page_size - 1);
+            const PAGE_SIZE: usize = 4095;
+            let total_size = size + HEADER_SIZE;
+            let aligned_size = align(total_size);
 
-            if aligned_start < payload_end {
-                let length = payload_end - aligned_start;
-
-                if length >= page_size {
-                    let aligned_length = length & !(page_size - 1);
-
-                    if aligned_length > 0 {
-                        libc::madvise(
-                            aligned_start as *mut c_void,
-                            aligned_length,
-                            libc::MADV_DONTNEED,
-                        );
-                    }
-                }
+            if size > PAGE_SIZE {
+                madvise(header_ptr as *mut c_void, aligned_size, libc::MADV_DONTNEED);
             }
         }
     }

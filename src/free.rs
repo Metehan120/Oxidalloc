@@ -1,9 +1,13 @@
-use std::{os::raw::c_void, sync::atomic::Ordering};
+use std::{
+    os::raw::c_void,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use libc::{__errno_location, madvise};
 
 use crate::{
-    HEADER_SIZE, OxHeader, OxidallocError, TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
+    GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, OxHeader, OxidallocError,
+    TOTAL_ALLOCATED, TOTAL_IN_USE, TOTAL_OPS,
     internals::{AllocationHelper, MAGIC, VA_END, VA_MAP, VA_START, align},
     thread_local::ThreadLocalEngine,
     trim::Trim,
@@ -70,6 +74,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 .log_and_abort(header as *mut c_void, "Pointer is tagged as in_use");
         }
 
+        let thread = ThreadLocalEngine::get_or_init();
         let class = match AllocationHelper.match_size_class(size as usize) {
             Some(class) => class,
             None => {
@@ -93,20 +98,18 @@ pub extern "C" fn free(ptr: *mut c_void) {
                         aligned,
                         *__errno_location()
                     );
-
                     return;
                 }
 
                 VA_MAP.free(header as usize, aligned);
 
+                trim(thread);
                 return;
             }
         };
 
         (*header).magic = 0;
         (*header).change_in_use_state(header as *mut c_void);
-
-        let thread = ThreadLocalEngine::get_or_init();
         thread.push_to_thread(class, header);
         thread.usages[class].fetch_add(1, Ordering::Relaxed);
 
@@ -116,6 +119,8 @@ pub extern "C" fn free(ptr: *mut c_void) {
     }
 }
 
+static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
+
 #[inline(always)]
 pub fn trim(engine: &ThreadLocalEngine) {
     let total = TOTAL_OPS.load(Ordering::Relaxed);
@@ -123,15 +128,53 @@ pub fn trim(engine: &ThreadLocalEngine) {
     let total_allocated = TOTAL_ALLOCATED.load(Ordering::Relaxed);
     let total_in_use = TOTAL_IN_USE.load(Ordering::Relaxed);
 
+    if total % 55000 == 0 {
+        let pressure = check_memory_pressure();
+        LAST_PRESSURE_CHECK.store(pressure, Ordering::Relaxed);
+    }
+
     let in_use_percentage = if total_allocated > 0 {
         (total_in_use * 100) / total_allocated
     } else {
         0
     };
 
-    if total % 20000 == 0 || in_use_percentage < 35 {
+    let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+
+    if total % GLOBAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0
+        || pressure > 85
+        || in_use_percentage < 35
+    {
         Trim.trim_global();
-    } else if total % 10000 == 0 || in_use_percentage < 50 {
+    } else if total % LOCAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0
+        || pressure > 75
+        || in_use_percentage < 50
+    {
         Trim.trim(engine);
+    }
+}
+
+fn check_memory_pressure() -> usize {
+    unsafe {
+        let mut info: libc::sysinfo = std::mem::zeroed();
+
+        if libc::sysinfo(&mut info) != 0 {
+            return 50;
+        }
+
+        let total_ram = info.totalram as usize;
+        let free_ram = info.freeram as usize;
+        let total_swap = info.totalswap as usize;
+        let free_swap = info.freeswap as usize;
+
+        let total_available = free_ram + free_swap;
+        let total_memory = total_ram + total_swap;
+
+        if total_memory == 0 {
+            return 50;
+        }
+
+        let used = total_memory.saturating_sub(total_available);
+        (used * 100) / total_memory
     }
 }
