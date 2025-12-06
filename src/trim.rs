@@ -4,10 +4,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use libc::madvise;
-
 use crate::{
-    FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP,
+    FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP, OxidallocError,
     global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
     internals::SIZE_CLASSES,
     thread_local::ThreadLocalEngine,
@@ -35,7 +33,10 @@ impl Trim {
                         .saturating_sub((*cache_mem).life_time);
 
                     if (*cache_mem).in_use.load(Ordering::Relaxed) == 1 {
-                        continue;
+                        OxidallocError::MemoryCorruption.log_and_abort(
+                            cache_mem as *mut c_void,
+                            "In-use block found in free list during trim.",
+                        );
                     }
 
                     if time > 2 {
@@ -86,7 +87,10 @@ impl Trim {
                         .saturating_sub((*global_mem).life_time);
 
                     if (*global_mem).in_use.load(Ordering::Relaxed) == 1 {
-                        continue;
+                        OxidallocError::MemoryCorruption.log_and_abort(
+                            global_mem as *mut c_void,
+                            "In-use block found in free list during trim.",
+                        );
                     }
 
                     if time > 2 {
@@ -109,11 +113,27 @@ impl Trim {
     #[inline]
     fn release_memory(&self, header_ptr: *mut crate::OxHeader, size: usize) {
         unsafe {
-            const PAGE_SIZE: usize = 4096 + HEADER_SIZE;
-            let total_size = size + HEADER_SIZE;
-            if total_size > PAGE_SIZE {
-                let payload = (header_ptr as usize + HEADER_SIZE) as *mut c_void;
-                madvise(payload, total_size, libc::MADV_DONTNEED);
+            let payload_start = (header_ptr as usize) + HEADER_SIZE;
+
+            let payload_end = payload_start + size;
+
+            const PAGE_SIZE: usize = 4096;
+            let aligned_start = (payload_start + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
+
+            if aligned_start < payload_end {
+                let length = payload_end - aligned_start;
+
+                if length >= PAGE_SIZE {
+                    let aligned_length = length & !(PAGE_SIZE - 1);
+
+                    if aligned_length > 0 {
+                        libc::madvise(
+                            aligned_start as *mut c_void,
+                            aligned_length,
+                            libc::MADV_DONTNEED,
+                        );
+                    }
+                }
             }
         }
     }

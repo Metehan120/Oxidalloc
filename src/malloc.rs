@@ -3,8 +3,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use libc::{madvise, size_t};
 
 use crate::{
-    FLAG_FREED, FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT,
-    TOTAL_OPS,
+    FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT, TOTAL_OPS,
     free::is_ours,
     get_clock,
     global::GlobalHandler,
@@ -76,19 +75,17 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
             let global = GlobalHandler.pop_batch_from_global(class, 16);
 
             if !global.is_null() {
-                if (*global).flag != FLAG_FREED {
-                    engine.push_to_thread(class, global);
-                    let ptr = engine.pop_from_thread(class);
-                    engine.usages[class].fetch_add(16, Ordering::Relaxed);
+                engine.push_to_thread(class, global);
+                let ptr = engine.pop_from_thread(class);
+                engine.usages[class].fetch_add(16, Ordering::Relaxed);
 
-                    (*ptr).life_time = current;
-                    (*ptr).next = null_mut();
-                    (*ptr).magic = MAGIC;
-                    (*ptr).in_use.store(1, Ordering::Relaxed);
+                (*ptr).life_time = current;
+                (*ptr).next = null_mut();
+                (*ptr).magic = MAGIC;
+                (*ptr).in_use.store(1, Ordering::Relaxed);
 
-                    engine.usages[class].fetch_sub(1, Ordering::Relaxed);
-                    return (ptr as *mut u8).add(HEADER_SIZE) as *mut c_void;
-                }
+                engine.usages[class].fetch_sub(1, Ordering::Relaxed);
+                return (ptr as *mut u8).add(HEADER_SIZE) as *mut c_void;
             }
 
             for i in 0..3 {
@@ -110,18 +107,14 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
                 .log_and_abort(popped as *mut c_void, "Not able to allocate memory")
         }
 
-        if (*popped).flag != FLAG_FREED {
-            (*popped).flag = FLAG_NON;
-            (*popped).life_time = current;
-            (*popped).next = null_mut();
-            (*popped).magic = MAGIC;
-            (*popped).in_use.store(1, Ordering::Relaxed);
+        (*popped).flag = FLAG_NON;
+        (*popped).life_time = current;
+        (*popped).next = null_mut();
+        (*popped).magic = MAGIC;
+        (*popped).in_use.store(1, Ordering::Relaxed);
 
-            engine.usages[class].fetch_sub(1, Ordering::Relaxed);
-            (popped as *mut u8).add(HEADER_SIZE) as *mut c_void
-        } else {
-            return malloc(size);
-        }
+        engine.usages[class].fetch_sub(1, Ordering::Relaxed);
+        (popped as *mut u8).add(HEADER_SIZE) as *mut c_void
     }
 }
 
