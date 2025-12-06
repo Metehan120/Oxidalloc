@@ -36,7 +36,11 @@ impl Trim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*cache_mem).life_time);
 
-                    if time > 1 && (*cache_mem).in_use.load(Ordering::Relaxed) != 1 {
+                    if (*cache_mem).in_use.load(Ordering::Relaxed) == 1 {
+                        continue;
+                    }
+
+                    if time > 1 {
                         cache.usages[class].fetch_sub(1, Ordering::Relaxed);
                         GLOBAL_USAGE[class].fetch_add(1, Ordering::Relaxed);
 
@@ -89,10 +93,11 @@ impl Trim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*global_mem).life_time);
 
-                    if time > 5
-                        && count < ITERATIONS[class] * 4
-                        && (*global_mem).in_use.load(Ordering::Relaxed) != 1
-                    {
+                    if (*global_mem).in_use.load(Ordering::Relaxed) == 1 {
+                        continue;
+                    }
+
+                    if time > 5 && count < ITERATIONS[class] * 4 {
                         self.release_memory(global_mem, SIZE_CLASSES[class]);
 
                         TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
