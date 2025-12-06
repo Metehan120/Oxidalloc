@@ -9,7 +9,7 @@ use libc::madvise;
 use crate::{
     FLAG_FREED, HEADER_SIZE, OX_CURRENT_STAMP, TOTAL_ALLOCATED,
     global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
-    internals::{SIZE_CLASSES, align},
+    internals::SIZE_CLASSES,
     thread_local::ThreadLocalEngine,
 };
 
@@ -39,19 +39,18 @@ impl Trim {
                     }
 
                     if time > 2 {
-                        (*cache_mem).flag = FLAG_FREED;
-                        (*cache_mem).life_time = 0;
-
                         TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
-                        self.release_memory(cache_mem, SIZE_CLASSES[class]);
+                        cache.usages[class].fetch_sub(1, Ordering::Relaxed);
+                        (*cache_mem).life_time = 0;
+                        (*cache_mem).flag = FLAG_FREED;
 
+                        self.release_memory(cache_mem, SIZE_CLASSES[class]);
                         continue;
                     }
 
                     if time > 1 {
                         cache.usages[class].fetch_sub(1, Ordering::Relaxed);
                         GLOBAL_USAGE[class].fetch_add(1, Ordering::Relaxed);
-
                         (*cache_mem).life_time = 0;
 
                         GlobalHandler.push_to_global(class, cache_mem, cache_mem);
@@ -92,10 +91,11 @@ impl Trim {
                     }
 
                     if time > 2 {
-                        self.release_memory(global_mem, SIZE_CLASSES[class]);
-
                         TOTAL_ALLOCATED.fetch_sub(1, Ordering::Relaxed);
+                        (*global_mem).life_time = 0;
+                        (*global_mem).flag = FLAG_FREED;
 
+                        self.release_memory(global_mem, SIZE_CLASSES[class]);
                         continue;
                     }
 
@@ -111,12 +111,11 @@ impl Trim {
     #[inline]
     fn release_memory(&self, header_ptr: *mut crate::OxHeader, size: usize) {
         unsafe {
-            const PAGE_SIZE: usize = 4095;
+            const PAGE_SIZE: usize = 4096 + HEADER_SIZE;
             let total_size = size + HEADER_SIZE;
-            let aligned_size = align(total_size);
-
-            if size > PAGE_SIZE {
-                madvise(header_ptr as *mut c_void, aligned_size, libc::MADV_DONTNEED);
+            if total_size > PAGE_SIZE {
+                let payload = (header_ptr as usize + HEADER_SIZE) as *mut c_void;
+                madvise(payload, total_size, libc::MADV_DONTNEED);
             }
         }
     }

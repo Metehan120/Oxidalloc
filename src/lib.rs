@@ -24,7 +24,6 @@ pub mod trim;
 pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 pub const FLAG_NON: i32 = 0;
 pub const FLAG_FREED: i32 = 2;
-pub const FLAG_ALIGNED: i32 = 4;
 pub const DEFAULT_TRIM_INTERVAL: usize = 20000;
 
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();

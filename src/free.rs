@@ -63,13 +63,14 @@ pub extern "C" fn free(ptr: *mut c_void) {
 
         let magic_val = std::ptr::read_volatile(&(*header).magic);
         let size = std::ptr::read_volatile(&(*header).size);
+        let in_use = std::ptr::read_volatile(&(*header).in_use);
 
         if magic_val != MAGIC && magic_val != 0 {
             OxidallocError::MemoryCorruption
                 .log_and_abort(header as *mut c_void, "Possibly Double Free");
         }
 
-        if (*header).in_use.load(Ordering::Relaxed) == 0 {
+        if in_use.load(Ordering::Relaxed) == 0 {
             OxidallocError::DoubleFree
                 .log_and_abort(header as *mut c_void, "Pointer is tagged as in_use");
         }

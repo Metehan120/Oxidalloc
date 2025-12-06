@@ -103,7 +103,7 @@ pub fn bootstrap() {
 
 fn init_va() {
     unsafe {
-        const SIZE: usize = 1024 * 1024 * 1024 * 256;
+        const SIZE: usize = 1024 * 1024 * 1024 * 512;
 
         let probe = libc::mmap(
             std::ptr::null_mut(),
@@ -216,8 +216,7 @@ impl AllocationHelper {
             let thread = ThreadLocalEngine::get_or_init();
             thread.push_to_thread_tailed(class, prev, tail);
             thread.usages[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
-
-            TOTAL_ALLOCATED.fetch_add(total, Ordering::Relaxed);
+            TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
             true
         }
