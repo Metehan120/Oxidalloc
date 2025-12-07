@@ -1,3 +1,20 @@
+# IMPORTANT: I am decided to rewrite entire Allocator, because of design limitations and performance issues.
+## Rewriting the Allocator
+This version of Oxidalloc works, but the internal design has reached its practical limits.
+
+After a lot of profiling, testing, and real-world use, it became clear that the current structure is not ideal for long-term performance, fragmentation control, or feature growth.
+
+**I’ve decided to rewrite the allocator from scratch.**
+
+### The new design will focus on:
+- span-based memory ownership
+- less fragmentation
+- faster allocation paths
+- proper physical + virtual page lifecycle
+- cleaner internal invariants
+- easier future extensions
+This rewrite is not a patch.
+
 # Oxidalloc
 
 A pure Rust general-purpose memory allocator designed to be used as a malloc replacement via `LD_PRELOAD`.
@@ -7,8 +24,6 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
 ## Tested on Fedora
-## IMPORTANT: Dynamic Pressure Awareness added to the Trim.
-## IMPORTANT: New update may add More Compatibility but also May Break some of them, please report any issues you encounter. (This is update before Dynamic Pressure)
 
 ## Features
 
