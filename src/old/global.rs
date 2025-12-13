@@ -5,10 +5,12 @@ use std::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
-use crate::{OxHeader, free::is_ours};
+use crate::{OxHeader, free::is_ours, internals::NUM_SIZE_CLASSES};
 
-pub static GLOBAL: [AtomicPtr<OxHeader>; 22] = [const { AtomicPtr::new(null_mut()) }; 22];
-pub static GLOBAL_USAGE: [AtomicUsize; 22] = [const { AtomicUsize::new(0) }; 22];
+pub static GLOBAL: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES] =
+    [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES];
+pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
+    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
 
 pub struct GlobalHandler;
 
@@ -37,6 +39,22 @@ impl GlobalHandler {
 
             if current_head.is_null() {
                 return null_mut();
+            }
+
+            if !is_ours(current_head as *mut c_void) {
+                if GLOBAL[class]
+                    .compare_exchange(
+                        current_head,
+                        null_mut(),
+                        Ordering::Release,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
+                }
+                spin_loop();
+                continue;
             }
 
             let mut tail = current_head;

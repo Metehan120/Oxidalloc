@@ -7,11 +7,11 @@ use std::{
     },
 };
 
-use libc::{__errno_location, MAP_FAILED, madvise};
+use libc::madvise;
 
 use crate::{
-    DEFAULT_TRIM_INTERVAL, FLAG_NON, GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, MAP,
-    OxHeader, OxidallocError, PROT, thread_local::ThreadLocalEngine,
+    DEFAULT_TRIM_INTERVAL, FLAG_NON, GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL,
+    OxHeader, OxidallocError, TOTAL_ALLOCATED, buddy::buddy_alloc, thread_local::ThreadLocalEngine,
 };
 
 pub static IS_BOOTSRAP: AtomicBool = AtomicBool::new(false);
@@ -19,13 +19,15 @@ pub static GLOBAL_LOCK: Mutex<()> = Mutex::new(());
 
 pub const MAGIC: u64 = 0x01B01698BF0BEEF;
 
-pub const SIZE_CLASSES: [usize; 22] = [
+pub const SIZE_CLASSES: [usize; 20] = [
     8, 16, 24, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
-    524288, 1048576, 2097152, 4194304, 8388608,
+    524288, 1048576, 2097152,
 ];
 
+pub const NUM_SIZE_CLASSES: usize = SIZE_CLASSES.len();
+
 // Iterations of each size class, each iteration is a try to allocate a chunk of memory
-pub const ITERATIONS: [usize; 22] = [
+pub const ITERATIONS: [usize; 20] = [
     2048, 1024, 1024, // <=16B   - tons of tiny allocations (strings, small objects)
     1024, // 32B   - very common (pointers, small structs)
     512,  // 64B   - cache-line sized, super common
@@ -44,8 +46,6 @@ pub const ITERATIONS: [usize; 22] = [
     1,    // 512KB - very rare
     1,    // 1MB   - almost never
     1,    // 2MB   - almost never
-    1,    // 4MB   - almost never
-    1,    // 8MB   - almost never
 ];
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
@@ -58,12 +58,13 @@ pub fn bootstrap() {
         return;
     }
 
-    let _lock = GLOBAL_LOCK.lock().expect("[OXIDALLOC] Bootstrap failed");
-    if IS_BOOTSRAP.load(Ordering::Relaxed) {
+    let _lock = match GLOBAL_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if IS_BOOTSRAP.load(Ordering::Acquire) {
         return;
     }
-
-    IS_BOOTSRAP.store(true, Ordering::Relaxed);
 
     unsafe {
         let key = b"OXIDALLOC_TRIM_INTERVAL\0";
@@ -99,32 +100,47 @@ pub fn bootstrap() {
     ThreadLocalEngine::get_or_init();
     let random_start = init_va_offset();
     VA_OFFSET.store(random_start, Ordering::Release);
+    IS_BOOTSRAP.store(true, Ordering::Relaxed);
 }
 
 fn init_va() {
     unsafe {
-        const SIZE: usize = 1024 * 1024 * 1024 * 512;
+        const MIN_RESERVE: usize = 64 * 1024 * 1024;
+        let mut size = BLOCK_SIZE.saturating_mul(BITMAP_LEN).saturating_mul(64);
 
-        let probe = libc::mmap(
-            std::ptr::null_mut(),
-            SIZE,
-            libc::PROT_NONE,
-            libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE,
-            -1,
-            0,
-        );
-
-        if probe == libc::MAP_FAILED {
-            OxidallocError::VAIinitFailed
-                .log_and_abort(probe, "Kernel does not handing virtual memory");
+        if size < MIN_RESERVE {
+            size = MIN_RESERVE;
         }
 
-        let start = probe as usize;
-        let end = start + SIZE;
+        loop {
+            let probe = libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE,
+                -1,
+                0,
+            );
 
-        VA_START.store(start, Ordering::Relaxed);
-        VA_END.store(end, Ordering::Relaxed);
-        VA_OFFSET.store(start, Ordering::Relaxed);
+            if probe != libc::MAP_FAILED {
+                let start = probe as usize;
+                let end = start + size;
+
+                VA_START.store(start, Ordering::Relaxed);
+                VA_END.store(end, Ordering::Relaxed);
+                VA_OFFSET.store(start, Ordering::Relaxed);
+                return;
+            }
+
+            if size <= MIN_RESERVE {
+                OxidallocError::VAIinitFailed.log_and_abort(
+                    probe,
+                    "Failed to reserve virtual address space via mmap(PROT_NONE).",
+                );
+            }
+
+            size /= 2;
+        }
     }
 }
 
@@ -143,8 +159,9 @@ fn init_va_offset() -> usize {
     start + aligned_offset
 }
 
-pub fn align(size: usize) -> usize {
-    (size + 4095) & !4095
+pub fn align_to(size: usize, align: usize) -> usize {
+    let al = align - 1;
+    (size + al) & !al
 }
 
 pub struct AllocationHelper;
@@ -159,36 +176,24 @@ impl AllocationHelper {
         None
     }
 
-    pub fn bulk_allocate(&self, class: usize) -> bool {
+    pub fn bulk_allocate(&self, class: usize, thread: &ThreadLocalEngine) -> bool {
         unsafe {
-            let size = SIZE_CLASSES[class] + HEADER_SIZE;
+            let size = align_to(SIZE_CLASSES[class] + HEADER_SIZE, 16);
             let count = ITERATIONS[class];
-            let total = (size * count) + 4096;
+            let total = align_to((size * count) + 4096, 4096);
 
-            let aligned_size = align(total);
-            let hint = match VA_MAP.alloc(aligned_size) {
-                Some(size) => size,
-                None => {
-                    eprintln!("[LIBOXIDALLOC] Failed to allocate virtual address space");
-                    return false;
-                }
-            };
+            let chunk = match buddy_alloc(total) {
+                Some(chunk) => chunk,
+                None => return false,
+            } as *mut c_void;
 
-            let chunk = libc::mmap(
-                hint as *mut c_void,
-                aligned_size,
-                PROT,
-                MAP | libc::MAP_FIXED,
-                -1,
-                0,
-            );
+            let used_end = (chunk as usize) + (size * count);
+            let page_end = (used_end + 4096 - 1) & !(4096 - 1);
+            let slack = page_end - used_end;
+            let drop_len = slack & !(4096 - 1);
 
-            if chunk == MAP_FAILED {
-                eprintln!(
-                    "[LIBOXIDALLOC] Something went wrong during allocation, errno: {:?}",
-                    *__errno_location()
-                );
-                return false;
+            if drop_len > 0 {
+                libc::madvise(used_end as *mut c_void, drop_len, libc::MADV_DONTNEED);
             }
 
             if class > 14 {
@@ -213,9 +218,9 @@ impl AllocationHelper {
                 tail = (*tail).next;
             }
 
-            let thread = ThreadLocalEngine::get_or_init();
             thread.push_to_thread_tailed(class, prev, tail);
             thread.usages[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
+            TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
             true
         }
@@ -243,8 +248,26 @@ impl VaBitmap {
         }
     }
 
+    #[inline(always)]
+    fn max_bits(&self) -> usize {
+        let start = VA_START.load(Ordering::Relaxed);
+        let end = VA_END.load(Ordering::Relaxed);
+
+        if start == 0 || end <= start {
+            return 0;
+        }
+
+        let bytes = end - start;
+        let blocks = bytes / BLOCK_SIZE;
+        blocks.min(BITMAP_LEN * 64)
+    }
+
     pub fn alloc(&self, size: usize) -> Option<usize> {
-        let needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        if size == 0 {
+            return None;
+        }
+
+        let needed = (size / BLOCK_SIZE) + usize::from(size % BLOCK_SIZE != 0);
 
         if needed == 1 {
             return self.alloc_single();
@@ -253,58 +276,88 @@ impl VaBitmap {
     }
 
     fn alloc_single(&self) -> Option<usize> {
-        let start = self.hint.load(Ordering::Relaxed);
-        for i in start..BITMAP_LEN {
-            let chunk = self.map[i].load(Ordering::Relaxed);
-            if chunk == u64::MAX {
-                continue;
-            }
+        let total_bits = self.max_bits();
+        if total_bits == 0 {
+            return None;
+        }
 
-            let bit = (!chunk).trailing_zeros();
-            let mask = 1u64 << bit;
+        let chunks = (total_bits + 63) / 64;
+        let start_chunk = self.hint.load(Ordering::Relaxed) % chunks;
+        let last_valid_bits = total_bits % 64;
 
-            if (self.map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
-                self.hint.store(i, Ordering::Relaxed);
-                let global_idx = (i * 64) + bit as usize;
-                let addr = VA_START.load(Ordering::Relaxed) + (global_idx * BLOCK_SIZE);
-                return Some(addr);
+        for (range_start, range_end) in [(start_chunk, chunks), (0, start_chunk)] {
+            for i in range_start..range_end {
+                let mut chunk = self.map[i].load(Ordering::Relaxed);
+                if i == chunks - 1 && last_valid_bits != 0 {
+                    chunk |= !((1u64 << last_valid_bits) - 1);
+                }
+
+                if chunk == u64::MAX {
+                    continue;
+                }
+
+                let bit = (!chunk).trailing_zeros();
+                let mask = 1u64 << bit;
+
+                if (self.map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
+                    self.hint.store(i, Ordering::Relaxed);
+                    let global_idx = (i * 64) + bit as usize;
+                    if global_idx >= total_bits {
+                        self.map[i].fetch_and(!mask, Ordering::Release);
+                        continue;
+                    }
+
+                    let addr = VA_START.load(Ordering::Relaxed) + (global_idx * BLOCK_SIZE);
+                    return Some(addr);
+                }
             }
         }
         None
     }
 
     fn alloc_multi(&self, count: usize) -> Option<usize> {
-        let total_bits = BITMAP_LEN * 64;
+        let total_bits = self.max_bits();
+        if total_bits == 0 {
+            return None;
+        }
 
         if count > total_bits {
             return None;
         }
 
         let start_bit = self.hint.load(Ordering::Relaxed) * 64;
-        let mut current_run = 0;
-        let mut run_start = 0;
+        let start_bit = if start_bit >= total_bits {
+            0
+        } else {
+            start_bit
+        };
 
-        for global_bit in start_bit..total_bits {
-            let chunk_idx = global_bit / 64;
-            let bit_in_chunk = global_bit % 64;
+        for (range_start, range_end) in [(start_bit, total_bits), (0, start_bit)] {
+            let mut current_run = 0;
+            let mut run_start = 0;
 
-            let chunk = self.map[chunk_idx].load(Ordering::Relaxed);
+            for global_bit in range_start..range_end {
+                let chunk_idx = global_bit / 64;
+                let bit_in_chunk = global_bit % 64;
 
-            if (chunk & (1u64 << bit_in_chunk)) != 0 {
-                current_run = 0;
-            } else {
-                if current_run == 0 {
-                    run_start = global_bit;
-                }
-                current_run += 1;
+                let chunk = self.map[chunk_idx].load(Ordering::Relaxed);
 
-                if current_run == count {
-                    if self.try_claim(run_start, count) {
-                        self.hint.store(chunk_idx, Ordering::Relaxed);
-                        let addr = VA_START.load(Ordering::Relaxed) + (run_start * BLOCK_SIZE);
-                        return Some(addr);
-                    }
+                if (chunk & (1u64 << bit_in_chunk)) != 0 {
                     current_run = 0;
+                } else {
+                    if current_run == 0 {
+                        run_start = global_bit;
+                    }
+                    current_run += 1;
+
+                    if current_run == count {
+                        if self.try_claim(run_start, count) {
+                            self.hint.store(chunk_idx, Ordering::Relaxed);
+                            let addr = VA_START.load(Ordering::Relaxed) + (run_start * BLOCK_SIZE);
+                            return Some(addr);
+                        }
+                        current_run = 0;
+                    }
                 }
             }
         }
@@ -312,9 +365,17 @@ impl VaBitmap {
     }
 
     fn try_claim(&self, start_idx: usize, count: usize) -> bool {
-        let total_bits = BITMAP_LEN * 64;
+        let total_bits = self.max_bits();
+        if total_bits == 0 {
+            return false;
+        }
 
-        if start_idx >= total_bits || start_idx + count > total_bits {
+        let end = match start_idx.checked_add(count) {
+            Some(end) => end,
+            None => return false,
+        };
+
+        if start_idx >= total_bits || end > total_bits {
             return false;
         }
 
@@ -355,13 +416,26 @@ impl VaBitmap {
 
     pub fn free(&self, addr: usize, size: usize) {
         let start = VA_START.load(Ordering::Relaxed);
-        if addr < start {
+        let end = VA_END.load(Ordering::Relaxed);
+        if addr < start || addr >= end {
+            return;
+        }
+
+        let total_bits = self.max_bits();
+        if total_bits == 0 {
             return;
         }
 
         let offset = addr - start;
         let start_idx = offset / BLOCK_SIZE;
-        let count = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        if start_idx >= total_bits {
+            return;
+        }
+
+        let mut count = (size / BLOCK_SIZE) + usize::from(size % BLOCK_SIZE != 0);
+        if start_idx + count > total_bits {
+            count = total_bits - start_idx;
+        }
 
         self.rollback(start_idx, count);
 

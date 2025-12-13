@@ -1,24 +1,47 @@
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use libc::{madvise, size_t};
+use libc::{madvise, pthread_self, size_t};
 
 use crate::{
-    FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT, TOTAL_OPS,
+    FLAG_NON, HEADER_SIZE, MAP, OX_CURRENT_STAMP, OxHeader, OxidallocError, PROT, TOTAL_IN_USE,
+    TOTAL_OPS,
     free::is_ours,
     get_clock,
     global::GlobalHandler,
     internals::{
-        AllocationHelper, MAGIC, SIZE_CLASSES, VA_END, VA_MAP, VA_START, align, bootstrap,
+        AllocationHelper, MAGIC, SIZE_CLASSES, VA_END, VA_MAP, VA_START, align_to, bootstrap,
     },
     thread_local::ThreadLocalEngine,
 };
+
+#[inline]
+pub fn current_thread_id() -> u32 {
+    unsafe {
+        let tid = pthread_self() as u64;
+        (tid ^ (tid >> 32)) as u32
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
     unsafe {
         bootstrap();
 
-        if size + HEADER_SIZE > VA_END.load(Ordering::Relaxed) - VA_START.load(Ordering::Relaxed) {
+        let size = match size {
+            0 => 1,
+            _ => size,
+        };
+
+        let va_len = VA_END
+            .load(Ordering::Relaxed)
+            .saturating_sub(VA_START.load(Ordering::Relaxed));
+
+        let total_size = match size.checked_add(HEADER_SIZE) {
+            Some(total_size) => total_size,
+            None => return null_mut(),
+        };
+
+        if total_size > va_len {
             return null_mut();
         }
 
@@ -33,9 +56,7 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
         let class = match AllocationHelper.match_size_class(size) {
             Some(class) => class,
             None => {
-                let total = size + HEADER_SIZE;
-
-                let aligned_total = align(total);
+                let aligned_total = align_to(total_size, 4096);
                 let hint = match VA_MAP.alloc(aligned_total) {
                     Some(hint) => hint,
                     None => return null_mut(),
@@ -70,36 +91,47 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
         let engine = ThreadLocalEngine::get_or_init();
         let mut popped = engine.pop_from_thread(class);
         let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+        let mut is_general_ok = false;
 
         if popped.is_null() {
             let global = GlobalHandler.pop_batch_from_global(class, 16);
 
             if !global.is_null() {
-                engine.push_to_thread(class, global);
-                let ptr = engine.pop_from_thread(class);
-                engine.usages[class].fetch_add(16, Ordering::Relaxed);
+                let mut tail = global;
+                let mut real = 1;
+                while real < 16 && !(*tail).next.is_null() && is_ours((*tail).next as *mut c_void) {
+                    tail = (*tail).next;
+                    real += 1;
+                }
+                (*tail).next = null_mut();
+                engine.push_to_thread_tailed(class, global, tail);
+                engine.usages[class].fetch_add(real, Ordering::Relaxed);
+                popped = engine.pop_from_thread(class);
 
-                (*ptr).life_time = current;
-                (*ptr).next = null_mut();
-                (*ptr).magic = MAGIC;
-                (*ptr).in_use.store(1, Ordering::Relaxed);
-
-                engine.usages[class].fetch_sub(1, Ordering::Relaxed);
-                return (ptr as *mut u8).add(HEADER_SIZE) as *mut c_void;
-            }
-
-            for i in 0..3 {
-                if AllocationHelper.bulk_allocate(class) {
-                    break;
+                if popped.is_null() {
+                    OxidallocError::MemoryCorruption.log_and_abort(
+                        global as *mut c_void,
+                        "Global list corrupted after push_to_thread",
+                    );
                 }
 
-                if i == 2 {
-                    return null_mut();
-                }
+                is_general_ok = true;
             }
 
-            let popped_2 = engine.pop_from_thread(class);
-            popped = popped_2;
+            if !is_general_ok {
+                for i in 0..3 {
+                    if AllocationHelper.bulk_allocate(class, engine) {
+                        break;
+                    }
+
+                    if i == 2 {
+                        return null_mut();
+                    }
+                }
+
+                let popped_2 = engine.pop_from_thread(class);
+                popped = popped_2;
+            }
         }
 
         if popped.is_null() {
@@ -112,7 +144,9 @@ pub extern "C" fn malloc(size: size_t) -> *mut c_void {
         (*popped).next = null_mut();
         (*popped).magic = MAGIC;
         (*popped).in_use.store(1, Ordering::Relaxed);
+        (*popped).thread_id = current_thread_id();
 
+        TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
         engine.usages[class].fetch_sub(1, Ordering::Relaxed);
         (popped as *mut u8).add(HEADER_SIZE) as *mut c_void
     }

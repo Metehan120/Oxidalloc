@@ -1,13 +1,14 @@
 use std::{
     os::raw::c_void,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use libc::{__errno_location, madvise};
 
 use crate::{
-    GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, OxHeader, OxidallocError, TOTAL_OPS,
-    internals::{AllocationHelper, MAGIC, VA_END, VA_MAP, VA_START, align},
+    GLOBAL_TRIM_INTERVAL, HEADER_SIZE, LOCAL_TRIM_INTERVAL, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    TOTAL_IN_USE, TOTAL_OPS,
+    internals::{AllocationHelper, MAGIC, VA_END, VA_MAP, VA_START, align_to},
     thread_local::ThreadLocalEngine,
     trim::Trim,
 };
@@ -26,6 +27,7 @@ pub fn is_ours(ptr: *mut c_void) -> bool {
 }
 
 const OFFSET_SIZE: usize = size_of::<usize>();
+const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn free(ptr: *mut c_void) {
@@ -39,11 +41,10 @@ pub extern "C" fn free(ptr: *mut c_void) {
         }
 
         let mut header_search_ptr = ptr;
-        let presumed_original_ptr_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *mut usize;
-        let tagged = *presumed_original_ptr_loc;
-
-        if (tagged & 1) != 0 {
-            let presumed_original_ptr = (tagged & !1) as *mut c_void;
+        let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
             if is_ours(presumed_original_ptr) {
                 header_search_ptr = presumed_original_ptr;
             }
@@ -89,7 +90,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
                 (*header).magic = 0;
                 (*header).change_in_use_state(header as *mut c_void);
 
-                let aligned = align(size as usize + HEADER_SIZE);
+                let aligned = align_to(size as usize + HEADER_SIZE, 4096);
 
                 if madvise(header as *mut c_void, aligned, libc::MADV_DONTNEED) != 0 {
                     eprintln!(
@@ -112,13 +113,13 @@ pub extern "C" fn free(ptr: *mut c_void) {
         (*header).change_in_use_state(header as *mut c_void);
         thread.push_to_thread(class, header);
         thread.usages[class].fetch_add(1, Ordering::Relaxed);
+        TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
 
         trim(thread);
     }
 }
 
 static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
-pub static TRIM_INIT: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
 pub fn trim(engine: &ThreadLocalEngine) {
@@ -130,10 +131,12 @@ pub fn trim(engine: &ThreadLocalEngine) {
     }
 
     let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+    let local = LOCAL_TRIM_INTERVAL.load(Ordering::Relaxed);
+    let global = GLOBAL_TRIM_INTERVAL.load(Ordering::Relaxed);
 
-    if total % GLOBAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0 || pressure > 85 {
+    if total % global == 0 || pressure > 85 {
         Trim.trim_global();
-    } else if total % LOCAL_TRIM_INTERVAL.load(Ordering::Relaxed) == 0 || pressure > 75 {
+    } else if total % local == 0 || pressure > 75 {
         Trim.trim(engine);
     }
 }

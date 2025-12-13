@@ -6,9 +6,6 @@ edition = "2024"
 [dependencies]
 libc = "0.2.178"
 
-[dev-dependencies]
-criterion = { version = "0.8.0", features = ["html_reports"] }
-
 [lib]
 crate-type = ["cdylib"]
 
@@ -39,8 +36,3 @@ debug-assertions = true
 overflow-checks = true
 panic = "abort"
 codegen-units = 1
-
-
-[[bench]]
-name = "bech"
-harness = false

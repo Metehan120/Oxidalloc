@@ -11,16 +11,29 @@ use std::{
 use libc::{pthread_getspecific, pthread_key_t, pthread_setspecific};
 
 use crate::{
-    MAP, OxHeader, PROT,
+    MAP, OX_CURRENT_STAMP, OxHeader, PROT,
     free::is_ours,
     global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
+    internals::NUM_SIZE_CLASSES,
 };
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 
 pub struct ThreadLocalEngine {
-    pub cache: [AtomicPtr<OxHeader>; 22],
-    pub usages: [AtomicUsize; 22],
+    pub cache: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub usages: [AtomicUsize; NUM_SIZE_CLASSES],
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn prefetch(ptr: *const u8) {
+    unsafe { core::arch::x86_64::_mm_prefetch(ptr as *const i8, core::arch::x86_64::_MM_HINT_T0) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub fn prefetch(ptr: *const u8) {
+    unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
 impl ThreadLocalEngine {
@@ -42,8 +55,8 @@ impl ThreadLocalEngine {
                 std::ptr::write(
                     cache,
                     ThreadLocalEngine {
-                        cache: [const { AtomicPtr::new(std::ptr::null_mut()) }; 22],
-                        usages: [const { AtomicUsize::new(0) }; 22],
+                        cache: [const { AtomicPtr::new(std::ptr::null_mut()) }; NUM_SIZE_CLASSES],
+                        usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
                     },
                 );
 
@@ -58,7 +71,6 @@ impl ThreadLocalEngine {
     #[inline(always)]
     pub fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
         unsafe {
-            let mut spin = 0;
             loop {
                 let header = self.cache[class].load(Ordering::Acquire);
 
@@ -71,6 +83,9 @@ impl ThreadLocalEngine {
                 }
 
                 let next = (*header).next;
+                if !next.is_null() {
+                    prefetch(next as *const u8);
+                }
 
                 if self.cache[class]
                     .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
@@ -79,13 +94,7 @@ impl ThreadLocalEngine {
                     return header;
                 }
 
-                spin += 1;
-                if spin > 100 {
-                    std::thread::yield_now();
-                    spin = 0;
-                } else {
-                    spin_loop();
-                }
+                spin_loop();
             }
         }
     }
@@ -142,8 +151,10 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
         let head = (*cache).cache[class].swap(null_mut(), Ordering::AcqRel);
 
         if !head.is_null() {
+            let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
             let mut tail = head;
             while !(*tail).next.is_null() {
+                (*tail).life_time = current;
                 tail = (*tail).next;
             }
 

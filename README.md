@@ -1,4 +1,5 @@
-# IMPORTANT: I am decided to rewrite entire Allocator, because of design limitations and performance issues.
+## Starting Rewrite now, you can see old code via 'old' folder and new code will be in the 'src/' folder.
+
 ## Rewriting the Allocator
 This version of Oxidalloc works, but the internal design has reached its practical limits.
 
@@ -13,6 +14,7 @@ After a lot of profiling, testing, and real-world use, it became clear that the 
 - proper physical + virtual page lifecycle
 - cleaner internal invariants
 - easier future extensions
+
 This rewrite is not a patch.
 
 # Oxidalloc
@@ -84,9 +86,9 @@ export LD_PRELOAD=/path/to/liboxidalloc.so
 
 ## Known Issues
 
-* When Firefox (Only Fedora package) browsers starting, UI not loading correctly
-* High memory usage when using Rust Analyzer. | Working on it.
-* May crash some APPS
+* When Firefox (Only Fedora package) browsers starting, UI not loading correctly, will be fixed in rewrite hopefully.
+* High memory usage when using Rust Analyzer. | Will be tried to fix in rewrite.
+* May crash some APPs
 * May crash after a while during AI workloads, because of VA exhaustion but after current update 'VA_MAP' mostly fixed it.
 
 ## License
@@ -105,9 +107,8 @@ Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTIN
 
 * Special thanks to the developers of the [Rust](https://www.rust-lang.org/) programming language.
 
-
 ## Current code documentation
 
-* There's no documentation yet, but it will be added soon. (This code was initially intended as a prototype but ended up becoming production-ready — surprise.)
+* There will be documentation during the rewrite process.
 
 **Note**: This allocator is experimental. Test thoroughly before production use. Benchmark your specific workload.
