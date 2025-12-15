@@ -17,6 +17,7 @@ use crate::{
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES,
         global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
+        quartine::quarantine,
     },
     va::va_helper::is_ours,
 };
@@ -98,6 +99,8 @@ impl ThreadLocalEngine {
                 }
 
                 if !is_ours(header as usize) {
+                    quarantine(header as usize);
+
                     if GLOBAL[class]
                         .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
                         .is_ok()

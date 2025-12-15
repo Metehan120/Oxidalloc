@@ -26,3 +26,8 @@ pub mod va_helper {
         addr >= start && addr < end
     }
 }
+
+pub fn align_to(size: usize, align: usize) -> usize {
+    let al = align - 1;
+    (size + al) & !al
+}

@@ -6,7 +6,11 @@ use std::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
-use crate::{OxHeader, slab::NUM_SIZE_CLASSES, va::va_helper::is_ours};
+use crate::{
+    OxHeader,
+    slab::{NUM_SIZE_CLASSES, quartine::quarantine},
+    va::va_helper::is_ours,
+};
 
 pub static GLOBAL: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES] =
     [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES];
@@ -46,8 +50,9 @@ impl GlobalHandler {
             if current_head.is_null() {
                 return null_mut();
             }
-
             if !is_ours(current_head as usize) {
+                quarantine(current_head as usize);
+
                 if GLOBAL[class]
                     .compare_exchange(
                         current_head,
@@ -59,7 +64,7 @@ impl GlobalHandler {
                 {
                     GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
                 }
-                spin_loop();
+
                 continue;
             }
 

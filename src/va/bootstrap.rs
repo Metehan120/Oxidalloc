@@ -35,7 +35,7 @@ pub fn boot_strap() {
     va_init();
     ThreadLocalEngine::get_or_init();
 
-    IS_BOOTSTRAP.store(false, Ordering::Release);
+    IS_BOOTSTRAP.store(false, Ordering::Relaxed);
 }
 
 pub fn va_init() {
