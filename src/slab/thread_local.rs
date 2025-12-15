@@ -97,7 +97,7 @@ impl ThreadLocalEngine {
                 if header.is_null() {
                     return null_mut();
                 }
-                
+
                 if !is_ours(header as usize) {
                     quarantine(header as usize);
                     if self.cache[class]

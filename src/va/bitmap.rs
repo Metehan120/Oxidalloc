@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crate::va::bootstrap::{VA_END, VA_START};
 
 pub const BLOCK_SIZE: usize = 64 * 1024;
-pub static BITMAP_LEN: usize = 65_536 * 2;
+pub static BITMAP_LEN: usize = 65_536;
 
 pub static VA_MAP: VaBitmap = VaBitmap::new();
 

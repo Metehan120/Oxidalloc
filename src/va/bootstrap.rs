@@ -38,8 +38,8 @@ pub fn boot_strap() {
 }
 
 pub fn va_init() {
-    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 128;
-    const MAX_SIZE: usize = 1024 * 1024 * 1024 * 512;
+    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 64;
+    const MAX_SIZE: usize = 1024 * 1024 * 1024 * 256;
     let mut size = MAX_SIZE;
 
     if MAX_SIZE < MIN_RESERVE {
@@ -48,7 +48,12 @@ pub fn va_init() {
 
     loop {
         unsafe {
-            let probe = mmap_anonymous(null_mut(), size, ProtFlags::empty(), MapFlags::PRIVATE);
+            let probe = mmap_anonymous(
+                null_mut(),
+                size,
+                ProtFlags::empty(),
+                MapFlags::PRIVATE | MapFlags::NORESERVE,
+            );
 
             match probe {
                 Ok(output) => {
