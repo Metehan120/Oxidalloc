@@ -6,14 +6,14 @@ use std::{
 use crate::OxidallocError;
 
 #[cfg(debug_assertions)]
-pub static MAX_QUARANTINE: usize = 1024 * 1024;
+pub static MAX_QUARANTINE: usize = 1024 * 1024 * 8;
 #[cfg(not(debug_assertions))]
 pub static MAX_QUARANTINE: usize = 1024 * 64;
 
 pub static QUARANTINE: OnceLock<Mutex<Vec<usize>>> = OnceLock::new();
 
 pub fn quarantine(ptr: usize) {
-    let q = QUARANTINE.get_or_init(|| Mutex::new(Vec::with_capacity(MAX_QUARANTINE * 8)));
+    let q = QUARANTINE.get_or_init(|| Mutex::new(Vec::with_capacity(MAX_QUARANTINE)));
     let mut guard = match q.lock() {
         Ok(quartine) => quartine,
         Err(_) => return, // we can ignore it
