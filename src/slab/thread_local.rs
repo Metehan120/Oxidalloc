@@ -97,14 +97,14 @@ impl ThreadLocalEngine {
                 if header.is_null() {
                     return null_mut();
                 }
-
+                
                 if !is_ours(header as usize) {
                     quarantine(header as usize);
-                    if GLOBAL[class]
+                    if self.cache[class]
                         .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
                         .is_ok()
                     {
-                        GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
+                        self.usages[class].store(0, Ordering::Relaxed);
                     }
                     return null_mut();
                 }
