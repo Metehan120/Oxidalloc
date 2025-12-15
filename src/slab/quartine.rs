@@ -6,7 +6,7 @@ use std::{
 use crate::OxidallocError;
 
 #[cfg(debug_assertions)]
-pub static MAX_QUARANTINE: usize = 1024 * 1024 * 8;
+pub static MAX_QUARANTINE: usize = 1024 * 1024;
 #[cfg(not(debug_assertions))]
 pub static MAX_QUARANTINE: usize = 1024 * 64;
 
