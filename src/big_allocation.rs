@@ -41,11 +41,17 @@ pub fn big_free(ptr: *mut c_void) {
 
         match madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed) {
             Ok(_) => VA_MAP.free(header as usize, total_size),
-            Err(_) => eprintln!(
-                "Madvise Failed, memory leaked. size={}, errno={}",
-                total_size,
-                *__errno_location()
-            ),
+            #[cfg(debug_assertions)]
+            Err(_) => match *__errno_location() {
+                0 => (),
+                _ => eprintln!(
+                    "Madvise Failed, memory leaked. size={}, errno={}",
+                    total_size,
+                    *__errno_location()
+                ),
+            },
+            #[cfg(not(debug_assertions))]
+            Err(_) => (),
         };
     }
 }

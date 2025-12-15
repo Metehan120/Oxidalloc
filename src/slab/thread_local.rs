@@ -17,7 +17,7 @@ use crate::{
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES,
         global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
-        quartine::quarantine,
+        quaratine::quarantine,
     },
     va::va_helper::is_ours,
 };

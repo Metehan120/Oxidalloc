@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, quartine::quarantine},
+    slab::{NUM_SIZE_CLASSES, quaratine::quarantine},
     va::va_helper::is_ours,
 };
 
@@ -53,7 +53,6 @@ impl GlobalHandler {
 
             if !is_ours(current_head as usize) {
                 quarantine(current_head as usize);
-
                 if GLOBAL[class]
                     .compare_exchange(
                         current_head,
