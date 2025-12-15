@@ -9,7 +9,7 @@ use std::{os::raw::c_void, ptr::null_mut};
 
 pub fn big_malloc(size: usize) -> *mut c_void {
     unsafe {
-        let aligned_total = align_to(size, 4096);
+        let aligned_total = align_to(size + HEADER_SIZE, 4096);
         let hint = match VA_MAP.alloc(aligned_total) {
             Some(hint) => hint,
             None => return null_mut(),
@@ -25,7 +25,7 @@ pub fn big_malloc(size: usize) -> *mut c_void {
             Err(_) => return null_mut(),
         } as *mut OxHeader;
 
-        (*actual_ptr).size = aligned_total as u64;
+        (*actual_ptr).size = size as u64;
         (*actual_ptr).magic = MAGIC;
         (*actual_ptr).in_use = 1;
 
@@ -36,12 +36,14 @@ pub fn big_malloc(size: usize) -> *mut c_void {
 pub fn big_free(ptr: *mut c_void) {
     unsafe {
         let header = (ptr as *mut OxHeader).sub(1);
-        let size = (*header).size as usize;
-        match madvise(header as *mut c_void, size, Advice::LinuxDontNeed) {
-            Ok(_) => VA_MAP.free(ptr as usize, size),
+        let payload_size = (*header).size as usize;
+        let total_size = align_to(payload_size + HEADER_SIZE, 4096);
+
+        match madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed) {
+            Ok(_) => VA_MAP.free(header as usize, total_size),
             Err(_) => eprintln!(
                 "Madvise Failed, memory leaked. size={}, errno={}",
-                size,
+                total_size,
                 *__errno_location()
             ),
         };

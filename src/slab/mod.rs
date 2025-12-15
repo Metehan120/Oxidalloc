@@ -1,7 +1,7 @@
+pub mod bulk_allocation;
 pub mod global;
 pub mod quartine;
 pub mod thread_local;
-pub mod trim;
 
 pub const SIZE_CLASSES: [usize; 20] = [
     8, 16, 24, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,

@@ -1,9 +1,10 @@
-use crate::malloc::malloc;
 use libc::size_t;
 use std::{
     os::raw::{c_int, c_void},
     ptr::null_mut,
 };
+
+use crate::abi::malloc::malloc;
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;

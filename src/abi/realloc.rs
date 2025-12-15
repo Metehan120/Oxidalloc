@@ -1,26 +1,28 @@
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    OxHeader, TOTAL_OPS,
-    free::{free, is_ours},
-    internals::{AllocationHelper, MAGIC, VA_END, VA_START},
-    malloc::malloc,
+    MAGIC, OxHeader, TOTAL_OPS,
+    abi::{free::free, malloc::malloc},
+    slab::match_size_class,
+    va::{bootstrap::VA_LEN, va_helper::is_ours},
 };
 
 // TODO: mremap logic
 #[unsafe(no_mangle)]
 pub extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+    TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
+
     if ptr.is_null() {
         return malloc(new_size);
     }
 
-    if !is_ours(ptr) {
+    if !is_ours(ptr as usize) {
         return null_mut();
     }
 
     TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    if new_size > VA_END.load(Ordering::Relaxed) - VA_START.load(Ordering::Relaxed) {
+    if new_size > VA_LEN.load(Ordering::Relaxed) {
         return null_mut();
     }
 
@@ -38,8 +40,8 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
 
         let old_size = (*header).size as usize;
 
-        let old_class = AllocationHelper.match_size_class(old_size);
-        let new_class = AllocationHelper.match_size_class(new_size);
+        let old_class = match_size_class(old_size);
+        let new_class = match_size_class(new_size);
 
         if new_class.is_some() && new_class == old_class {
             return ptr;

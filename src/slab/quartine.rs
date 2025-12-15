@@ -1,25 +1,20 @@
 use std::{
     ptr::null_mut,
-    sync::{Mutex, OnceLock},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use crate::OxidallocError;
 
-#[cfg(debug_assertions)]
 pub static MAX_QUARANTINE: usize = 1024 * 1024;
-#[cfg(not(debug_assertions))]
-pub static MAX_QUARANTINE: usize = 1024 * 64;
 
-pub static QUARANTINE: OnceLock<Mutex<Vec<usize>>> = OnceLock::new();
+pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
+pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);
 
 pub fn quarantine(ptr: usize) {
-    let q = QUARANTINE.get_or_init(|| Mutex::new(Vec::with_capacity(MAX_QUARANTINE)));
-    let mut guard = match q.lock() {
-        Ok(quartine) => quartine,
-        Err(_) => return, // we can ignore it
-    };
+    let guard = QUARANTINE.load(Ordering::Relaxed);
+    TOTAL_QUARANTINED.fetch_add(1, Ordering::Relaxed);
 
-    if guard.contains(&ptr) {
+    if guard == ptr {
         OxidallocError::DoubleQuarantine.log_and_abort(
             null_mut(),
             "Double quarantine detected, aborting process",
@@ -27,8 +22,8 @@ pub fn quarantine(ptr: usize) {
         )
     }
 
-    if guard.len() < MAX_QUARANTINE {
-        guard.push(ptr);
+    if TOTAL_QUARANTINED.load(Ordering::Relaxed) < MAX_QUARANTINE {
+        QUARANTINE.swap(ptr, Ordering::AcqRel);
     } else {
         OxidallocError::TooMuchQuarantine.log_and_abort(
             null_mut(),

@@ -1,20 +1,20 @@
-use std::os::raw::c_void;
+use std::{os::raw::c_void, ptr::null_mut};
 
 use libc::size_t;
 
-use crate::{HEADER_SIZE, OxHeader, TOTAL_OPS, internals::MAGIC, malloc::malloc};
+use crate::{HEADER_SIZE, MAGIC, OxHeader, TOTAL_OPS, abi::malloc::malloc};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
-    let total_size = match nmemb.checked_mul(size) {
-        Some(s) => s,
-        None => return std::ptr::null_mut(),
-    };
-
     TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+    let total_size = match nmemb.checked_mul(size) {
+        Some(s) => s,
+        None => return null_mut(),
+    };
+
     if total_size == 0 {
-        return std::ptr::null_mut();
+        return null_mut();
     }
 
     let ptr = malloc(total_size);

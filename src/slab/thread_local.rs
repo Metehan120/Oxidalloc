@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use libc::{pthread_getspecific, pthread_key_t, pthread_setspecific};
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
+use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
     hint::spin_loop,
     os::raw::c_void,
@@ -100,15 +100,13 @@ impl ThreadLocalEngine {
 
                 if !is_ours(header as usize) {
                     quarantine(header as usize);
-
                     if GLOBAL[class]
                         .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
                         .is_ok()
                     {
                         GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
                     }
-                    spin_loop();
-                    continue;
+                    return null_mut();
                 }
 
                 let next = (*header).next;
@@ -172,7 +170,14 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
+    if let Some(key) = THREAD_KEY.get() {
+        libc::pthread_setspecific(*key, core::ptr::null_mut());
+    }
+
     let cache = cache_ptr as *mut ThreadLocalEngine;
+    if cache.is_null() {
+        return;
+    }
 
     // Move all blocks to global
     for class in 0..GLOBAL.len() {
@@ -191,6 +196,5 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
         }
     }
 
-    // Free the cache itself
-    libc::munmap(cache_ptr, std::mem::size_of::<ThreadLocalEngine>());
+    let _ = munmap(cache_ptr, size_of::<ThreadLocalEngine>());
 }

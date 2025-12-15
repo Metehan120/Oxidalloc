@@ -1,5 +1,3 @@
-## Starting Rewrite now, you can see old code via 'old' folder and new code will be in the 'src/' folder.
-
 ## Rewriting the Allocator
 This version of Oxidalloc works, but the internal design has reached its practical limits.
 
@@ -8,7 +6,6 @@ After a lot of profiling, testing, and real-world use, it became clear that the 
 **I’ve decided to rewrite the allocator from scratch.**
 
 ### The new design will focus on:
-- span-based memory ownership
 - less fragmentation
 - faster allocation paths
 - proper physical + virtual page lifecycle
@@ -16,6 +13,9 @@ After a lot of profiling, testing, and real-world use, it became clear that the 
 - easier future extensions
 
 This rewrite is not a patch.
+
+## **Current Rewrite Status**: Mostly complete. The rewrite reuses core logic from the previous version, but is significantly simplified, safer, and more efficient.
+## **Current goal on Rewrite**: Figure out how to implement Trim on rewritten version and add documentation meanwhile.
 
 # Oxidalloc
 
@@ -31,36 +31,22 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 
 * Pure Rust implementation
 * Works under `LD_PRELOAD`
-* System-wide compatible (systemd, KDE Plasma, GTK apps, browsers, Wine/Proton, etc.)
 * Thread-local fast paths
 * Cross-thread frees supported
 * Optional debug consistency checks
-* Fast: ~120 cycles malloc+free on modern CPUs (20ns on 4.65ghz) | Haven't started optimizing yet
+* Fast: ~60 cycles malloc+free on modern CPUs (10ns on 4.65ghz) 
 
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
-* Incompatible with Fedora Firefox for now, use Flatpak Firefox if possible (if you are on another distro, use the official Firefox package). This appears to be due to Fedora-specific patches/build configuration in their Firefox package that conflicts with LD_PRELOAD allocators.
+* Incompatible with Firefox for now.
 * Under some certain conditions, it may cause fragmentation.
-
-## Architecture
-
-* `malloc.rs` – core allocation logic
-* `free.rs` – deallocation path and metadata validation
-* `realloc.rs` – resizing logic
-* `calloc.rs` – zero-initialized allocation
-* `align.rs` – alignment-specific allocators
-* `thread_local.rs` – per-thread caches
-* `global.rs` – global allocator paths and fallbacks
-* `internals.rs` – metadata, size classes, constants, va reservation
-* `trim.rs` – memory trimming and page returns
-* `lib.rs` – exported C ABI symbols
 
 ## Benchmarks:
 
 | Function | Speed (ns) |
 |-----------|--------------|
-| malloc (thread-local path)   |  20            |
-| free   (thread-local path)   |  20 + 10 (trim)           |
+| malloc (thread-local path)   |  10            |
+| free   (thread-local path)   |  10            |
 
 ## Usage
 
@@ -70,26 +56,18 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 cargo build --release
 ```
 
-### System-wide preload **(example, do not attempt may cause system instability, but mostly works fine)**
-
-```bash
-echo "/path/to/liboxidalloc.so" | sudo tee /etc/ld.so.preload
-```
-
 ### Session-only preload
 
 ```bash
 export LD_PRELOAD=/path/to/liboxidalloc.so
 ```
 
-* Update Trim Interval threshold: `OXIDALLOC_TRIM_INTERVAL=20000`
-
 ## Known Issues
 
-* When Firefox (Only Fedora package) browsers starting, UI not loading correctly, will be fixed in rewrite hopefully.
-* High memory usage when using Rust Analyzer. | Will be tried to fix in rewrite.
+* Not compatible with Firefox.
+* High memory usage when using Rust Analyzer. | No trim yet, thats why.
 * May crash some APPs
-* May crash after a while during AI workloads, because of VA exhaustion but after current update 'VA_MAP' mostly fixed it.
+* May crash after a while during AI workloads.
 
 ## License
 

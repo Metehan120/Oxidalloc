@@ -1,15 +1,5 @@
-use crate::va::bootstrap::{VA_END, VA_START};
-use libc::size_t;
-use std::sync::atomic::Ordering;
-
 pub mod bitmap;
 pub mod bootstrap;
-
-#[unsafe(no_mangle)]
-#[allow(non_snake_case)]
-pub extern "C" fn vaReserveSize() -> size_t {
-    VA_END.load(Ordering::Relaxed) - VA_START.load(Ordering::Relaxed)
-}
 
 pub mod va_helper {
     use std::sync::atomic::Ordering;

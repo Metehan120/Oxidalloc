@@ -50,6 +50,7 @@ impl GlobalHandler {
             if current_head.is_null() {
                 return null_mut();
             }
+
             if !is_ours(current_head as usize) {
                 quarantine(current_head as usize);
 
@@ -64,8 +65,7 @@ impl GlobalHandler {
                 {
                     GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
                 }
-
-                continue;
+                return null_mut();
             }
 
             let mut tail = current_head;

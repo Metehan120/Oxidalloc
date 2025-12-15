@@ -13,7 +13,7 @@ use crate::{OxidallocError, slab::thread_local::ThreadLocalEngine};
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
 pub static VA_END: AtomicUsize = AtomicUsize::new(0);
-pub static VA_OFFSET: AtomicUsize = AtomicUsize::new(0);
+pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
@@ -27,8 +27,7 @@ pub fn boot_strap() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-
-    if IS_BOOTSTRAP.load(Ordering::Acquire) {
+    if !IS_BOOTSTRAP.load(Ordering::Acquire) {
         return;
     }
 
@@ -55,7 +54,7 @@ pub fn va_init() {
                 Ok(output) => {
                     VA_START.store(output as usize, Ordering::Relaxed);
                     VA_END.store((output as usize) + size, Ordering::Relaxed);
-                    VA_OFFSET.store(0, Ordering::Relaxed);
+                    VA_LEN.store(size, Ordering::Relaxed);
                     return;
                 }
                 Err(err) => {
