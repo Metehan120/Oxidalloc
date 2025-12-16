@@ -117,7 +117,7 @@ impl ThreadLocalEngine {
                     continue;
                 }
 
-                if !is_ours(header as usize) && header.is_null() {
+                if !is_ours(header as usize) || header.is_null() {
                     return null_mut();
                 }
 
