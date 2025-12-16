@@ -27,7 +27,10 @@ pub fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
             MapFlags::PRIVATE | MapFlags::FIXED,
         ) {
             Ok(mem) => mem,
-            Err(_) => return Err(Err::OutOfMemory),
+            Err(_) => {
+                VA_MAP.free(hint, total);
+                return Err(Err::OutOfMemory);
+            }
         };
 
         let used_end = (mem as usize) + (block_size * ITERATIONS[class]);

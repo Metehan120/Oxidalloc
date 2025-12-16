@@ -22,7 +22,10 @@ pub fn big_malloc(size: usize) -> *mut c_void {
             MapFlags::PRIVATE | MapFlags::FIXED,
         ) {
             Ok(ptr) => ptr,
-            Err(_) => return null_mut(),
+            Err(_) => {
+                VA_MAP.free(hint, aligned_total);
+                return null_mut();
+            }
         } as *mut OxHeader;
 
         (*actual_ptr).size = size as u64;
