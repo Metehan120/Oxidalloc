@@ -59,7 +59,7 @@ pub extern "C" fn free(ptr: *mut c_void) {
         let class = match match_size_class(size) {
             Some(class) => class,
             None => {
-                big_free(ptr);
+                big_free(header_search_ptr);
                 return;
             }
         };
