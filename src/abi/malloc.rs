@@ -3,7 +3,8 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use libc::size_t;
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_IN_USE, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    TOTAL_IN_USE, TOTAL_OPS,
     big_allocation::big_malloc,
     get_clock,
     slab::{
@@ -15,6 +16,9 @@ use crate::{
         va_helper::is_ours,
     },
 };
+
+const OFFSET_SIZE: usize = size_of::<usize>();
+const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn malloc(size: size_t) -> *mut c_void {
@@ -98,22 +102,30 @@ pub extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
             return 0;
         }
 
-        let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut OxHeader;
+        let mut raw_ptr = ptr;
+        let mut offset: usize = 0;
+        let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+
+        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+            if is_ours(presumed_original_ptr as usize) {
+                raw_ptr = presumed_original_ptr;
+                offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
+            }
+        }
+
+        let header = (raw_ptr as *mut u8).sub(HEADER_SIZE) as *mut OxHeader;
 
         if !is_ours(header as usize) {
             return 0;
         }
 
-        let magic = std::ptr::read_volatile(&(*header).magic);
-
-        if magic == MAGIC {
-            let size = (*header).size as usize;
-            match match_size_class(size) {
-                Some(idx) => SIZE_CLASSES[idx],
-                None => size,
-            }
-        } else {
-            (*header).size as usize
-        }
+        let size = (*header).size as usize;
+        let raw_usable = match match_size_class(size) {
+            Some(idx) => SIZE_CLASSES[idx],
+            None => size,
+        };
+        raw_usable.saturating_sub(offset) as size_t
     }
 }
