@@ -15,6 +15,10 @@ pub extern "C" fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, siz
         return libc::EINVAL;
     }
 
+    if alignment == 0 || alignment % size_of::<usize>() != 0 || (alignment & (alignment - 1)) != 0 {
+        return libc::EINVAL;
+    }
+
     unsafe {
         let total_requested = match size
             .checked_add(alignment)
