@@ -61,7 +61,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 1- Blender on CachyOS:
 - Returning LLVM ERROR: out of memory | meaning: Blender wants memory but allocator returns null pointer so needs investigation
 2- Firefox on CachyOS:
-- Its deadlocking or something like that, needs investigation \ Probably easy to fix
+- Its deadlocking or something like that, needs investigation \ Probably easy to fix (no its not easy, probably because of the way kernel acts)
 
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
