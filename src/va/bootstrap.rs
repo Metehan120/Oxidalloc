@@ -22,7 +22,7 @@ pub fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-
+    ThreadLocalEngine::get_or_init();
     let _lock = match BOOTSTRAP_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -30,10 +30,8 @@ pub fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Acquire) {
         return;
     }
-
     va_init();
-    ThreadLocalEngine::get_or_init();
-    IS_BOOTSTRAP.store(false, Ordering::Relaxed);
+    IS_BOOTSTRAP.store(false, Ordering::Release);
 }
 
 pub fn va_init() {

@@ -174,3 +174,35 @@ fn bootstrap_sets_va_len() {
     boot_strap();
     assert!(VA_LEN.load(Ordering::Relaxed) > 0);
 }
+
+#[test]
+fn realloc_handles_posix_memalign_pointer() {
+    use crate::abi::{
+        align::posix_memalign, free::free, malloc::malloc_usable_size, realloc::realloc,
+    };
+
+    unsafe {
+        let mut ptr: *mut libc::c_void = std::ptr::null_mut();
+        assert_eq!(posix_memalign(&mut ptr, 64, 100), 0);
+        assert!(!ptr.is_null());
+        assert_eq!((ptr as usize) % 64, 0);
+
+        let initial = std::slice::from_raw_parts_mut(ptr as *mut u8, 100);
+        for (i, byte) in initial.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(3).wrapping_add(1);
+        }
+
+        let old_usable = malloc_usable_size(ptr) as usize;
+        assert!(old_usable >= 100);
+
+        let new_ptr = realloc(ptr, old_usable + 32);
+        assert!(!new_ptr.is_null());
+
+        let after = std::slice::from_raw_parts(new_ptr as *const u8, 100);
+        for i in 0..100 {
+            assert_eq!(after[i], (i as u8).wrapping_mul(3).wrapping_add(1));
+        }
+
+        free(new_ptr);
+    }
+}
