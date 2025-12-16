@@ -15,7 +15,8 @@ After a lot of profiling, testing, and real-world use, it became clear that the 
 This rewrite is not a patch.
 
 ## **Current Rewrite Status**: Mostly complete. The rewrite reuses core logic from the previous version, but is significantly simplified, safer, and more efficient.
-## **Current goal on Rewrite**: Figure out how to implement Trim on rewritten version and add documentation meanwhile.
+## **Current goal on Rewrite**: Figure out how to implement Trim and add documentation meanwhile.
+
 ## ***Important***: This allocator have a new experimental mode called "Self Healing", which is still in development and may not be stable or even may security risk. The code is provided as-is, without any guarantees.
 
 # Oxidalloc
@@ -35,12 +36,38 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * Thread-local fast paths
 * Cross-thread frees supported
 * Optional debug consistency checks
-* Fast: ~60 cycles malloc+free on modern CPUs (10ns on 4.65ghz) 
+* Fast: ~60 cycles malloc+free on modern CPUs (10ns on 4.65ghz)
+
+# Compatibility
+* Almost completely compatible with Pop!_OS-24.04 (completly compatible with COSMIC Desktop Environment)
+* Almost completely compatible with KDE on CachyOS \ Boots and logins in Without any on CachyOS \ *Probably* also compatible with KDE on Fedora
+* Compatible with Chromium on most tested OS
+* Compatible with Firefox on Pop!_OS-24.04 \ Means should work fine with Ubuntu
+* Compatible with Python, ROCm, Torch, most runtimes
+* Compatbile with tools like Zapret
+* Compatible with Pipewire
+* Compatible with newer Kernels
+* Compatible with Proton/Wine on most cases \ Test still needed but should work fine
+
+## Tests Needed:
+* Blender 5.0
+* Fedora
+* Gnome
+* Arch
+* CachyOS on some Parts
+* Proton/Wine
+
+## Problems:
+1- Blender on CachyOS:
+- Returning LLVM ERROR: out of memory | meaning: Blender wants memory but allocator returns null pointer so needs investigation
+2- Firefox on CachyOS:
+- Its deadlocking or something like that, needs investigation \ Probably easy to fix
 
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
-* Incompatible with Firefox for now.
-* Under some certain conditions, it may cause fragmentation.
+* Incompatible with Firefox on CachyOS (haven't tested on Fedora or Arch yet, but probably will work on Fedora).
+* Incompatible with Blender 5.0 or CachyOS only \ Tests needed.
+* Under some certain conditions, it may cause fragmentation \ No real trim yet.
 
 ## Benchmarks:
 
