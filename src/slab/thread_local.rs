@@ -27,6 +27,8 @@ static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 pub struct ThreadLocalEngine {
     pub cache: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
     pub usages: [AtomicUsize; NUM_SIZE_CLASSES],
+    pub latest_usages: [AtomicUsize; NUM_SIZE_CLASSES],
+    pub latest_popped_next: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -70,6 +72,9 @@ impl ThreadLocalEngine {
                                 cache: [const { AtomicPtr::new(std::ptr::null_mut()) };
                                     NUM_SIZE_CLASSES],
                                 usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+                                latest_usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+                                latest_popped_next: [const { AtomicPtr::new(std::ptr::null_mut()) };
+                                    NUM_SIZE_CLASSES],
                             },
                         );
 
@@ -94,18 +99,25 @@ impl ThreadLocalEngine {
             loop {
                 let header = self.cache[class].load(Ordering::Acquire);
 
-                if header.is_null() {
-                    return null_mut();
+                if !is_ours(header as usize) && !header.is_null() {
+                    if !quarantine(Some(self), header as usize, class) {
+                        if self.cache[class]
+                            .compare_exchange(
+                                header,
+                                null_mut(),
+                                Ordering::Release,
+                                Ordering::Acquire,
+                            )
+                            .is_ok()
+                        {
+                            self.usages[class].store(0, Ordering::Relaxed);
+                        }
+                        return null_mut();
+                    };
+                    continue;
                 }
 
-                if !is_ours(header as usize) {
-                    quarantine(header as usize);
-                    if self.cache[class]
-                        .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
-                        .is_ok()
-                    {
-                        self.usages[class].store(0, Ordering::Relaxed);
-                    }
+                if !is_ours(header as usize) && header.is_null() {
                     return null_mut();
                 }
 
@@ -118,7 +130,10 @@ impl ThreadLocalEngine {
                     .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
                     .is_ok()
                 {
-                    self.usages[class].fetch_sub(1, Ordering::Relaxed);
+                    // Relaxed is safe here because we are updating after CAS loop
+                    self.latest_popped_next[class].store(next, Ordering::Relaxed);
+                    let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
+                    self.latest_usages[class].store(usage, Ordering::Relaxed);
                     return header;
                 }
 
@@ -184,11 +199,19 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
         let usage = (*cache).usages[class].load(Ordering::Relaxed);
         let head = (*cache).cache[class].swap(null_mut(), Ordering::AcqRel);
 
+        if !is_ours(head as usize) {
+            continue;
+        }
+
         if !head.is_null() {
             let mut tail = head;
             while !(*tail).next.is_null() {
+                let next = (*tail).next;
+                if !is_ours(next as usize) {
+                    break;
+                }
                 (*tail).life_time = 0;
-                tail = (*tail).next;
+                tail = next;
             }
 
             GlobalHandler.push_to_global(class, head, tail, usage);

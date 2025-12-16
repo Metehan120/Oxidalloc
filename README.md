@@ -16,6 +16,7 @@ This rewrite is not a patch.
 
 ## **Current Rewrite Status**: Mostly complete. The rewrite reuses core logic from the previous version, but is significantly simplified, safer, and more efficient.
 ## **Current goal on Rewrite**: Figure out how to implement Trim on rewritten version and add documentation meanwhile.
+## ***Important***: This allocator have a new experimental mode called "Self Healing", which is still in development and may not be stable or even may security risk. The code is provided as-is, without any guarantees.
 
 # Oxidalloc
 

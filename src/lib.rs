@@ -17,6 +17,7 @@ pub enum Err {
     OutOfMemory,
 }
 
+pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
 pub const MAGIC: u64 = 0x01B01698BF0BEEF;
 pub static TOTAL_OPS: AtomicUsize = AtomicUsize::new(0);

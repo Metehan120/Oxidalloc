@@ -52,7 +52,7 @@ impl GlobalHandler {
             }
 
             if !is_ours(current_head as usize) {
-                quarantine(current_head as usize);
+                quarantine(None, current_head as usize, class);
                 if GLOBAL[class]
                     .compare_exchange(
                         current_head,
