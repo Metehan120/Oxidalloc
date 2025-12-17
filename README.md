@@ -27,8 +27,6 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
-## Tested on Fedora
-
 ## Features
 
 * Pure Rust implementation
