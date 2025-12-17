@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::{
     os::raw::c_void,
     ptr::null_mut,
@@ -18,7 +19,7 @@ pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn boot_strap() {
+pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
@@ -34,7 +35,7 @@ pub fn boot_strap() {
     IS_BOOTSTRAP.store(false, Ordering::Release);
 }
 
-pub fn va_init() {
+pub unsafe fn va_init() {
     const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 64;
     const MAX_SIZE: usize = 1024 * 1024 * 1024 * 256;
     let mut size = MAX_SIZE;
@@ -44,32 +45,30 @@ pub fn va_init() {
     }
 
     loop {
-        unsafe {
-            let probe = mmap_anonymous(
-                null_mut(),
-                size,
-                ProtFlags::empty(),
-                MapFlags::PRIVATE | MapFlags::NORESERVE,
-            );
+        let probe = mmap_anonymous(
+            null_mut(),
+            size,
+            ProtFlags::empty(),
+            MapFlags::PRIVATE | MapFlags::NORESERVE,
+        );
 
-            match probe {
-                Ok(output) => {
-                    VA_START.store(output as usize, Ordering::Relaxed);
-                    VA_END.store((output as usize) + size, Ordering::Relaxed);
-                    VA_LEN.store(size, Ordering::Relaxed);
-                    return;
+        match probe {
+            Ok(output) => {
+                VA_START.store(output as usize, Ordering::Relaxed);
+                VA_END.store((output as usize) + size, Ordering::Relaxed);
+                VA_LEN.store(size, Ordering::Relaxed);
+                return;
+            }
+            Err(err) => {
+                if size <= MIN_RESERVE {
+                    OxidallocError::VAIinitFailed.log_and_abort(
+                        0 as *mut c_void,
+                        "Init failed during BOOTSTRAP: No available VA reserve",
+                        Some(err),
+                    )
                 }
-                Err(err) => {
-                    if size <= MIN_RESERVE {
-                        OxidallocError::VAIinitFailed.log_and_abort(
-                            0 as *mut c_void,
-                            "Init failed during BOOTSTRAP: No available VA reserve",
-                            Some(err),
-                        )
-                    }
 
-                    size /= 2;
-                }
+                size /= 2;
             }
         }
     }

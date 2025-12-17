@@ -45,100 +45,91 @@ pub fn prefetch(ptr: *const u8) {
 
 impl ThreadLocalEngine {
     #[inline(always)]
-    pub fn get_or_init() -> &'static ThreadLocalEngine {
-        unsafe {
-            let key = THREAD_KEY.get_or_init(|| {
-                let mut key = 0;
-                libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-                key
-            });
+    pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
+        let key = THREAD_KEY.get_or_init(|| {
+            let mut key = 0;
+            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+            key
+        });
 
-            let cache_ptr = pthread_getspecific(*key) as *mut ThreadLocalEngine;
+        let cache_ptr = pthread_getspecific(*key) as *mut ThreadLocalEngine;
 
-            if cache_ptr.is_null() {
-                let cache = mmap_anonymous(
-                    null_mut(),
-                    size_of::<ThreadLocalEngine>(),
-                    ProtFlags::READ | ProtFlags::WRITE,
-                    MapFlags::PRIVATE,
-                );
+        if cache_ptr.is_null() {
+            let cache = mmap_anonymous(
+                null_mut(),
+                size_of::<ThreadLocalEngine>(),
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE,
+            );
 
-                match cache {
-                    Ok(cache) => {
-                        let cache = cache as *mut ThreadLocalEngine;
-                        std::ptr::write(
-                            cache,
-                            ThreadLocalEngine {
-                                cache: [const { AtomicPtr::new(std::ptr::null_mut()) };
-                                    NUM_SIZE_CLASSES],
-                                usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
-                                latest_usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
-                                latest_popped_next: [const { AtomicPtr::new(std::ptr::null_mut()) };
-                                    NUM_SIZE_CLASSES],
-                            },
-                        );
+            match cache {
+                Ok(cache) => {
+                    let cache = cache as *mut ThreadLocalEngine;
+                    std::ptr::write(
+                        cache,
+                        ThreadLocalEngine {
+                            cache: [const { AtomicPtr::new(std::ptr::null_mut()) };
+                                NUM_SIZE_CLASSES],
+                            usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+                            latest_usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+                            latest_popped_next: [const { AtomicPtr::new(std::ptr::null_mut()) };
+                                NUM_SIZE_CLASSES],
+                        },
+                    );
 
-                        pthread_setspecific(*key, cache as *mut c_void);
-                        return &*cache;
-                    }
-                    Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
-                        0 as *mut c_void,
-                        "PThread cache creation failed: errno({})",
-                        Some(err),
-                    ),
+                    pthread_setspecific(*key, cache as *mut c_void);
+                    return &*cache;
                 }
+                Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
+                    0 as *mut c_void,
+                    "PThread cache creation failed: errno({})",
+                    Some(err),
+                ),
             }
-
-            return &*cache_ptr;
         }
+
+        return &*cache_ptr;
     }
 
     #[inline(always)]
-    pub fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
-        unsafe {
-            loop {
-                let header = self.cache[class].load(Ordering::Acquire);
+    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
+        loop {
+            let header = self.cache[class].load(Ordering::Acquire);
 
-                if !is_ours(header as usize) && !header.is_null() {
-                    if !quarantine(Some(self), header as usize, class) {
-                        if self.cache[class]
-                            .compare_exchange(
-                                header,
-                                null_mut(),
-                                Ordering::Release,
-                                Ordering::Acquire,
-                            )
-                            .is_ok()
-                        {
-                            self.usages[class].store(0, Ordering::Relaxed);
-                        }
-                        return null_mut();
-                    };
-                    continue;
-                }
-
-                if !is_ours(header as usize) || header.is_null() {
+            if !is_ours(header as usize) && !header.is_null() {
+                if !quarantine(Some(self), header as usize, class) {
+                    if self.cache[class]
+                        .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
+                        .is_ok()
+                    {
+                        self.usages[class].store(0, Ordering::Relaxed);
+                    }
                     return null_mut();
-                }
-
-                let next = (*header).next;
-                if !next.is_null() {
-                    prefetch(next as *const u8);
-                }
-
-                if self.cache[class]
-                    .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
-                    .is_ok()
-                {
-                    // Relaxed is safe here because we are updating after CAS loop
-                    self.latest_popped_next[class].store(next, Ordering::Relaxed);
-                    let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
-                    self.latest_usages[class].store(usage, Ordering::Relaxed);
-                    return header;
-                }
-
-                spin_loop();
+                };
+                continue;
             }
+
+            if !is_ours(header as usize) || header.is_null() {
+                return null_mut();
+            }
+
+            let next = (*header).next;
+            if !next.is_null() {
+                prefetch(next as *const u8);
+            }
+
+            if self.cache[class]
+                .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
+                .is_ok()
+            {
+                // Relaxed is safe here because we are updating after CAS loop
+                self.latest_popped_next[class].store(next, Ordering::Relaxed);
+                let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
+                self.latest_usages[class].store(usage, Ordering::Relaxed);
+                return header;
+            }
+
+            spin_loop();
         }
     }
 

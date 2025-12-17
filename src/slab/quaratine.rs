@@ -1,9 +1,9 @@
 use std::{
-    ptr::null_mut,
+    ptr::{null_mut, read_volatile},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::{OxidallocError, slab::thread_local::ThreadLocalEngine, va::va_helper::is_ours};
+use crate::{MAGIC, OxidallocError, slab::thread_local::ThreadLocalEngine, va::va_helper::is_ours};
 
 pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 
@@ -25,6 +25,13 @@ pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: u
         if !candidate.is_null() && is_ours(candidate as usize) {
             let latest_usage = healing_cache.latest_usages[class].load(Ordering::Acquire);
             loop {
+                unsafe {
+                    let magic = read_volatile(&(*candidate).magic);
+                    if magic != MAGIC && magic != 0 {
+                        break;
+                    }
+                }
+
                 let current = healing_cache.cache[class].load(Ordering::Relaxed);
 
                 // CAS so ABA wont happen

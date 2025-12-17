@@ -13,6 +13,9 @@ pub mod va_helper {
         if start == 0 || end == 0 || start >= end {
             return false;
         }
+        if addr % 8 != 0 {
+            return false;
+        }
         addr >= start && addr < end
     }
 }
