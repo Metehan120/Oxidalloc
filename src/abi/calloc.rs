@@ -21,7 +21,6 @@ pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
 
     let ptr = malloc(effective_size);
     if ptr.is_null() {
-        unsafe { *__errno_location() = ENOMEM };
         return null_mut();
     }
 
