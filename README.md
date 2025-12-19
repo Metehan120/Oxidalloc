@@ -58,13 +58,10 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 ## Problems:
 1- Blender on CachyOS:
 - Returning LLVM ERROR: out of memory | meaning: Blender wants memory but allocator returns null pointer so needs investigation
-2- Firefox on CachyOS:
-- Its deadlocking or something like that, needs investigation \ Probably easy to fix (no its not easy, probably because of the way kernel acts)
 
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
 * Due to kernel issues incompatible with some parts of CachyOS
-* Incompatible with Firefox on CachyOS (haven't tested on Fedora or Arch yet, but probably will work on Fedora).
 * Incompatible with Blender 5.0 or CachyOS only \ Tests needed.
 * Under some certain conditions, it may cause fragmentation \ No real trim yet.
 
@@ -91,7 +88,6 @@ export LD_PRELOAD=/path/to/liboxidalloc.so
 
 ## Known Issues
 
-* Not compatible with Firefox.
 * High memory usage when using Rust Analyzer. | No trim yet, thats why.
 * May crash some APPs
 * May crash after a while during AI workloads.
