@@ -36,7 +36,7 @@ pub unsafe fn boot_strap() {
 }
 
 pub unsafe fn va_init() {
-    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 64;
+    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 4;
     const MAX_SIZE: usize = 1024 * 1024 * 1024 * 256;
     let mut size = MAX_SIZE;
 
