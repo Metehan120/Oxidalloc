@@ -7,11 +7,12 @@ use rustix::mm::{Advice, madvise};
 use crate::{
     HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
-        NUM_SIZE_CLASSES, SIZE_CLASSES,
+        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
+        match_size_class,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
-    va::{bitmap::VA_MAP, bootstrap::SHUTDOWN},
+    va::{align_to, bitmap::VA_MAP, bootstrap::SHUTDOWN},
 };
 
 pub struct PTrim;
@@ -156,11 +157,17 @@ impl PTrim {
             }
 
             let length = page_end - page_start;
+
             let is_trim_ok =
                 madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
 
-            if is_trim_ok && length > 1024 * 64 {
-                VA_MAP.free(page_start, length);
+            let class = match_size_class(size).unwrap();
+            if ITERATIONS[class] == 1 {
+                let payload_size = SIZE_CLASSES[class];
+                let block_size = align_to(payload_size + HEADER_SIZE, 16);
+                let total = align_to(block_size + 4096, 4096);
+
+                VA_MAP.free(header_ptr as usize, total);
             }
 
             is_trim_ok
