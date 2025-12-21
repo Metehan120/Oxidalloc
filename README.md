@@ -1,19 +1,3 @@
-## Rewriting the Allocator
-This version of Oxidalloc works, but the internal design has reached its practical limits.
-
-After a lot of profiling, testing, and real-world use, it became clear that the current structure is not ideal for long-term performance, fragmentation control, or feature growth.
-
-**I’ve decided to rewrite the allocator from scratch.**
-
-### The new design will focus on:
-- less fragmentation
-- faster allocation paths
-- proper physical + virtual page lifecycle
-- cleaner internal invariants
-- easier future extensions
-
-This rewrite is not a patch.
-
 ## **Current Rewrite Status**: Mostly complete. The rewrite reuses core logic from the previous version, but is significantly simplified, safer, and more efficient.
 ## **Current goal on Rewrite**: Figure out how to implement Trim and add documentation meanwhile.
 
