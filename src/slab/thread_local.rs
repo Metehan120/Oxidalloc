@@ -8,7 +8,7 @@ use std::{
     ptr::null_mut,
     sync::{
         OnceLock,
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
     },
 };
 
@@ -25,6 +25,7 @@ use crate::{
 pub struct ThreadNode {
     pub engine: AtomicPtr<ThreadLocalEngine>,
     pub next: AtomicPtr<ThreadNode>,
+    pub is_trimming: AtomicBool,
 }
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
@@ -47,6 +48,7 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
 
     (*node).engine = AtomicPtr::new(ptr);
     (*node).next = AtomicPtr::new(null_mut());
+    (*node).is_trimming = AtomicBool::new(false);
 
     loop {
         let head = THREAD_REGISTER.load(Ordering::Acquire);
@@ -147,6 +149,10 @@ impl ThreadLocalEngine {
             let header = self.cache[class].load(Ordering::Acquire);
 
             if header.is_null() {
+                return null_mut();
+            }
+
+            if (*self.node).is_trimming.load(Ordering::Relaxed) {
                 return null_mut();
             }
 
