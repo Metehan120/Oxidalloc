@@ -70,24 +70,20 @@ impl PTrim {
         }
     }
 
-    pub unsafe fn trim(&self) -> bool {
+    pub unsafe fn trim(&self) {
         if SHUTDOWN.load(Ordering::Relaxed) {
-            return false;
+            return;
         }
 
         let mut node = THREAD_REGISTER.load(Ordering::Acquire);
         if node.is_null() {
-            return false;
+            return;
         }
-
-        let mut did_work = false;
 
         while !node.is_null() {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                did_work = true;
-
                 for class in 0..NUM_SIZE_CLASSES {
                     let mut to_trim: *mut OxHeader = null_mut();
 
@@ -135,8 +131,6 @@ impl PTrim {
 
             node = (*node).next.load(Ordering::Acquire);
         }
-
-        did_work
     }
 
     #[inline]
