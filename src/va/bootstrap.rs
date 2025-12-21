@@ -21,6 +21,18 @@ pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 
+pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn allocator_shutdown() {
+    SHUTDOWN.store(true, Ordering::Release);
+}
+
+pub fn register_shutdown() {
+    unsafe {
+        libc::atexit(allocator_shutdown);
+    }
+}
+
 pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
@@ -40,6 +52,7 @@ pub unsafe fn boot_strap() {
         return;
     }
 
+    register_shutdown();
     spawn_trim_thread();
 }
 

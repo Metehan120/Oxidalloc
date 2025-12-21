@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{TOTAL_ALLOCATED, TOTAL_IN_USE, trim::trim_pthread::PTrim};
+use crate::{TOTAL_ALLOCATED, TOTAL_IN_USE, trim::trim_pthread::PTrim, va::bootstrap::SHUTDOWN};
 
 static TOTAL_TIME: AtomicUsize = AtomicUsize::new(0);
 
@@ -55,7 +55,7 @@ unsafe fn check_memory_pressure() -> usize {
 
 pub unsafe fn spawn_trim_thread() {
     std::thread::spawn(|| {
-        loop {
+        while !SHUTDOWN.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(100));
             TOTAL_TIME.fetch_add(100, Ordering::Relaxed);
 

@@ -11,7 +11,7 @@ use crate::{
         global::GlobalHandler,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
-    va::bitmap::VA_MAP,
+    va::{bitmap::VA_MAP, bootstrap::SHUTDOWN},
 };
 
 pub struct PTrim;
@@ -70,6 +70,10 @@ impl PTrim {
     }
 
     pub unsafe fn trim(&self) -> bool {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            return false;
+        }
+
         let mut node = THREAD_REGISTER.load(Ordering::Acquire);
         if node.is_null() {
             return false;
@@ -79,51 +83,52 @@ impl PTrim {
 
         while !node.is_null() {
             let engine = (*node).engine.load(Ordering::Acquire);
+
             if !engine.is_null() {
                 did_work = true;
-            }
 
-            for class in 0..NUM_SIZE_CLASSES {
-                let mut to_trim: *mut OxHeader = null_mut();
+                for class in 0..NUM_SIZE_CLASSES {
+                    let mut to_trim: *mut OxHeader = null_mut();
 
-                let (usage, is_ok) = self.get_usage(engine, class);
-                if !is_ok {
-                    break;
-                }
-
-                for _ in 0..usage {
-                    let (cache, is_ok) = self.pop_from_thread(engine, class);
-                    if !is_ok || cache.is_null() {
+                    let (usage, is_ok) = self.get_usage(engine, class);
+                    if !is_ok {
                         break;
                     }
 
-                    let life_time = OX_CURRENT_STAMP
-                        .load(Ordering::Relaxed)
-                        .saturating_sub((*cache).life_time);
+                    for _ in 0..usage {
+                        let (cache, is_ok) = self.pop_from_thread(engine, class);
+                        if !is_ok || cache.is_null() {
+                            break;
+                        }
 
-                    if life_time > 10 {
-                        (*cache).next = to_trim;
-                        to_trim = cache;
-                        continue;
-                    }
+                        let life_time = OX_CURRENT_STAMP
+                            .load(Ordering::Relaxed)
+                            .saturating_sub((*cache).life_time);
 
-                    let push = self.push_to_thread(engine, class, cache);
-                    if !push {
-                        GlobalHandler.push_to_global(class, cache, cache, 1);
-                        break;
-                    }
-                }
+                        if life_time > 10 {
+                            (*cache).next = to_trim;
+                            to_trim = cache;
+                            continue;
+                        }
 
-                while !to_trim.is_null() {
-                    let next = (*to_trim).next;
-
-                    if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
-                        if !self.push_to_thread(engine, class, to_trim) {
-                            GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                        let push = self.push_to_thread(engine, class, cache);
+                        if !push {
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            break;
                         }
                     }
 
-                    to_trim = next;
+                    while !to_trim.is_null() {
+                        let next = (*to_trim).next;
+
+                        if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
+                            if !self.push_to_thread(engine, class, to_trim) {
+                                GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                            }
+                        }
+
+                        to_trim = next;
+                    }
                 }
             }
 
