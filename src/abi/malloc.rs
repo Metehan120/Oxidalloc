@@ -7,7 +7,7 @@ use libc::{__errno_location, ENOMEM, size_t};
 use crate::{
     Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     TOTAL_IN_USE, TOTAL_OPS,
-    big_allocation::{OX_BIG_CR_STAMP, big_malloc, get_big_clock},
+    big_allocation::big_malloc,
     get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
@@ -34,8 +34,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
         stamp = OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
-        let time = get_big_clock().elapsed().as_micros();
-        OX_BIG_CR_STAMP.store(time as usize, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
