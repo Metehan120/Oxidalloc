@@ -1,14 +1,64 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::{
-    hint::spin_loop,
-    ptr::null_mut,
-    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::{hint::spin_loop, ptr::null_mut};
+
+#[cfg(feature = "loom")]
+fn make_node() -> *mut OxHeader {
+    use crate::MAGIC;
+    Box::leak(Box::new(OxHeader {
+        next: null_mut(),
+        magic: MAGIC,
+        in_use: 0,
+        life_time: 0,
+        size: 0,
+        flag: 0,
+    }))
+}
+
+#[cfg(feature = "loom")]
+#[test]
+fn global_usage_race() {
+    loom::model(|| {
+        use loom::sync::atomic::Ordering;
+        use loom::thread;
+
+        GLOBAL[0].store(std::ptr::null_mut(), Ordering::Relaxed);
+        GLOBAL_USAGE[0].store(0, Ordering::Relaxed);
+
+        let node = make_node();
+
+        let t1 = thread::spawn(move || unsafe {
+            GlobalHandler.push_to_global(0, node, node, 1);
+        });
+
+        let t2 = thread::spawn(move || unsafe {
+            let _ = GlobalHandler.pop_batch_from_global(0, 1);
+        });
+
+        let node = make_node();
+
+        let t3 = thread::spawn(move || unsafe {
+            GlobalHandler.push_to_global(0, node, node, 1);
+        });
+
+        let t4 = thread::spawn(move || unsafe {
+            let _ = GlobalHandler.pop_batch_from_global(0, 1);
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+        t3.join().unwrap();
+        t4.join().unwrap();
+
+        let usage = GLOBAL_USAGE[0].load(Ordering::Relaxed);
+        assert!(usage == 0 || usage == 1);
+    });
+}
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, quaratine::quarantine},
+    slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
     va::va_helper::is_ours,
 };
 
@@ -52,6 +102,7 @@ impl GlobalHandler {
             }
 
             if !is_ours(current_head as usize) {
+                // Quarantine the header
                 quarantine(None, current_head as usize, class);
                 if GLOBAL[class]
                     .compare_exchange(
@@ -67,8 +118,13 @@ impl GlobalHandler {
                 return null_mut();
             }
 
+            if current_head.is_null() {
+                continue;
+            }
+
             let mut tail = current_head;
             let mut count = 1;
+            // Loop through the list until we reach the end or the batch size is reached
             while count < batch_size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
                 tail = (*tail).next;
                 count += 1;
@@ -81,6 +137,7 @@ impl GlobalHandler {
                 .is_ok()
             {
                 GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
+                // Set next pointer to null to avoid inconsistency
                 (*tail).next = null_mut();
                 return current_head;
             }

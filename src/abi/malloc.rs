@@ -1,17 +1,17 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{alloc::Layout, os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use libc::size_t;
+use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
     Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     TOTAL_IN_USE, TOTAL_OPS,
-    big_allocation::big_malloc,
+    big_allocation::{OX_BIG_CR_STAMP, big_malloc, get_big_clock},
     get_clock,
     slab::{
-        SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler, match_size_class,
-        thread_local::ThreadLocalEngine,
+        ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
+        match_size_class, thread_local::ThreadLocalEngine,
     },
     va::{
         bootstrap::{VA_LEN, boot_strap},
@@ -22,9 +22,11 @@ use crate::{
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
+#[inline(always)]
+// Separated allocation function for better scalability in future
+unsafe fn allocate(layout: Layout) -> *mut u8 {
     boot_strap();
+    let size = layout.size();
 
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -32,9 +34,12 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
         stamp = OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
+        let time = get_big_clock().elapsed().as_micros();
+        OX_BIG_CR_STAMP.store(time as usize, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
+        *__errno_location() = ENOMEM;
         return null_mut();
     }
 
@@ -46,18 +51,35 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     let thread = ThreadLocalEngine::get_or_init();
     let mut cache = thread.pop_from_thread(class);
 
+    // Check if cache is null
     if cache.is_null() {
-        let global_cache = GlobalHandler.pop_batch_from_global(class, 1);
+        // Check global cache if its allocated then pop batch from global cache
+        let size = if class > 10 { ITERATIONS[class] } else { 16 };
+        let global_cache = GlobalHandler.pop_batch_from_global(class, size);
 
         if !global_cache.is_null() {
-            cache = global_cache;
+            let mut tail = global_cache;
+            let mut real = 1;
+
+            // Loop through cache and found the last header and set linked list to null
+            while real < size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+                tail = (*tail).next;
+                real += 1;
+            }
+            (*tail).next = null_mut();
+
+            thread.push_to_thread_tailed(class, global_cache, tail, size);
+            cache = thread.pop_from_thread(class);
         } else {
             for i in 0..3 {
+                // Global is null, try to fill thread cache
                 match bulk_fill(thread, class) {
+                    // If fill succeeds, pop from thread cache
                     Ok(_) => {
                         cache = thread.pop_from_thread(class);
                         break;
                     }
+                    // If fill fails, check error if VA exhausted abort
                     Err(error) => {
                         match error {
                             Err::OutOfMemory => (),
@@ -88,7 +110,15 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     (*cache).life_time = stamp;
 
     TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
-    (cache as *mut u8).add(HEADER_SIZE) as *mut c_void
+    (cache as *mut u8).add(HEADER_SIZE)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
+    match Layout::array::<u8>(size) {
+        Ok(layout) => allocate(layout) as *mut c_void,
+        Err(_) => null_mut(),
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -7,14 +7,14 @@ use crate::{
     slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
-use std::mem::align_of;
 
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
-    let block_size = align_to(payload_size + HEADER_SIZE, align_of::<OxHeader>());
+    let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let total = align_to((block_size * ITERATIONS[class]) + 4096, 4096);
 
+    // First reserve virtual space
     let hint = match VA_MAP.alloc(total) {
         Some(size) => size,
         None => return Err(Err::OutOfReservation),
@@ -33,19 +33,8 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         }
     };
 
-    let used_end = (mem as usize) + (block_size * ITERATIONS[class]);
-    let page_end = (used_end + 4096 - 1) & !(4096 - 1);
-    let slack = page_end - used_end;
-    let drop_len = slack & !(4096 - 1);
-
-    if drop_len > 0 {
-        match madvise(mem, drop_len, Advice::LinuxDontNeed) {
-            Ok(_) => (),
-            Err(_) => (),
-        };
-    }
-
-    if class > 14 {
+    // For 2MB size class use THP which uses 2MB pages
+    if class == 19 {
         match madvise(mem, total, Advice::LinuxHugepage) {
             Ok(_) => (),
             Err(_) => (),
@@ -67,7 +56,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         tail = (*tail).next;
     }
 
-    thread.push_to_thread_tailed(class, prev, tail);
+    thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class]);
     TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
     Ok(())

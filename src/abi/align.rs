@@ -21,7 +21,8 @@ pub unsafe extern "C" fn posix_memalign(
         return libc::EINVAL;
     }
 
-    if alignment == 0 || alignment % size_of::<usize>() != 0 || (alignment & (alignment - 1)) != 0 {
+    let min = size_of::<*mut c_void>();
+    if alignment < min || !alignment.is_power_of_two() {
         return libc::EINVAL;
     }
 
@@ -33,9 +34,14 @@ pub unsafe extern "C" fn posix_memalign(
         None => return libc::ENOMEM,
     };
 
-    let raw = malloc(total_requested);
+    let mut raw = malloc(total_requested);
     if raw.is_null() {
-        return libc::ENOMEM;
+        let malloc = malloc(total_requested);
+        if !malloc.is_null() {
+            raw = malloc;
+        } else {
+            return libc::ENOMEM;
+        };
     }
 
     let addr = raw as usize;
@@ -57,7 +63,13 @@ pub unsafe extern "C" fn posix_memalign(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memalign(alignment: size_t, size: size_t) -> *mut c_void {
     let mut ptr: *mut c_void = null_mut();
-    if posix_memalign(&mut ptr, alignment, size) == 0 {
+    let adjusted_alignment = if alignment < 8 { 8 } else { alignment };
+
+    if !adjusted_alignment.is_power_of_two() {
+        return null_mut();
+    }
+
+    if posix_memalign(&mut ptr, adjusted_alignment, size) == 0 {
         ptr
     } else {
         null_mut()
@@ -66,7 +78,7 @@ pub unsafe extern "C" fn memalign(alignment: size_t, size: size_t) -> *mut c_voi
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aligned_alloc(alignment: size_t, size: size_t) -> *mut c_void {
-    if alignment == 0 || (alignment & (alignment - 1)) != 0 || size % alignment != 0 {
+    if alignment == 0 || !alignment.is_power_of_two() {
         return null_mut();
     }
     memalign(alignment, size)

@@ -1,3 +1,5 @@
+#![warn(clippy::nursery, clippy::pedantic)]
+
 use rustix::io::Errno;
 use std::{
     fmt::Debug,
@@ -17,6 +19,7 @@ pub enum Err {
     OutOfMemory,
 }
 
+pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
 pub const MAGIC: u64 = 0x01B01698BF0BEEF;
@@ -81,7 +84,10 @@ impl OxidallocError {
         if let Some(errno) = errno {
             eprintln!(
                 "[OXIDALLOC FATAL] {:?} at ptr={:p} | {} | errno({})",
-                self, ptr, extra, errno
+                self,
+                ptr,
+                extra,
+                errno.raw_os_error()
             );
         } else {
             eprintln!("[OXIDALLOC FATAL] {:?} at ptr={:p} | {}", self, ptr, extra);
@@ -90,6 +96,7 @@ impl OxidallocError {
     }
 }
 
+#[cfg(not(feature = "loom"))]
 #[test]
 fn bench_allocator() {
     unsafe {
@@ -146,6 +153,7 @@ fn bench_allocator() {
     }
 }
 
+#[cfg(not(feature = "loom"))]
 #[test]
 fn smoke_global_reuse() {
     unsafe {
@@ -170,6 +178,7 @@ fn smoke_global_reuse() {
     }
 }
 
+#[cfg(not(feature = "loom"))]
 #[test]
 fn bootstrap_sets_va_len() {
     use crate::va::bootstrap::{VA_LEN, boot_strap};
@@ -179,6 +188,7 @@ fn bootstrap_sets_va_len() {
     assert!(VA_LEN.load(Ordering::Relaxed) > 0);
 }
 
+#[cfg(not(feature = "loom"))]
 #[test]
 fn realloc_handles_posix_memalign_pointer() {
     use crate::abi::{

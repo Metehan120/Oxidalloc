@@ -1,17 +1,18 @@
-use std::{os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
-    MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError, TOTAL_IN_USE, TOTAL_OPS,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError, TOTAL_IN_USE, TOTAL_OPS,
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::va_helper::is_ours,
 };
+use std::{os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
-#[allow(unsafe_op_in_unsafe_fn)]
 #[unsafe(no_mangle)]
+// If we seperate free nothing will change much, free can stay naked for now
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
 
@@ -33,7 +34,8 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         }
     }
 
-    let header = (header_search_ptr as *mut OxHeader).sub(1);
+    let header_addr = (header_search_ptr as usize).wrapping_sub(HEADER_SIZE);
+    let header = header_addr as *mut OxHeader;
     let magic = read_volatile(&(*header).magic);
     let in_use = read_volatile(&(*header).in_use);
 

@@ -1,6 +1,7 @@
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use libc::size_t;
+use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
     MAGIC, OX_ALIGN_TAG, OxHeader, TOTAL_OPS,
@@ -11,8 +12,8 @@ use crate::{
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
-// TODO: mremap logic
-#[allow(unsafe_op_in_unsafe_fn)]
+// TODO: Better realloc implementation
+#[cold]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
@@ -36,15 +37,12 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         return malloc(1);
     }
 
-    if new_size > VA_LEN.load(Ordering::Relaxed) {
-        return null_mut();
-    }
-
     let mut raw_ptr = ptr;
     let mut offset: usize = 0;
     let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
     let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
 
+    // Found offset so we can calculate the original pointer
     if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
         let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
         if is_ours(presumed_original_ptr as usize) {

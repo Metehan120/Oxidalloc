@@ -3,12 +3,19 @@ name = "oxidalloc"
 version = "0.2.0"
 edition = "2024"
 
+[features]
+loom = []
+
 [dependencies]
-libc = "0.2.178"
 rustix = { version = "1.1.2", features = ["mm"] }
+libc = "0.2.178"
+
+[dev-dependencies]
+loom = "0.7"
 
 [lib]
-crate-type = ["cdylib"]
+name = "oxidalloc"
+crate-type = ["cdylib", "rlib"]
 
 [profile.dev]
 opt-level = 3

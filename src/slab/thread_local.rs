@@ -15,12 +15,57 @@ use std::{
 use crate::{
     OxHeader, OxidallocError,
     slab::{
-        ITERATIONS, NUM_SIZE_CLASSES,
-        global::{GLOBAL, GLOBAL_USAGE, GlobalHandler},
-        quaratine::quarantine,
+        NUM_SIZE_CLASSES,
+        global::{GLOBAL, GlobalHandler},
+        quarantine::quarantine,
     },
     va::va_helper::is_ours,
 };
+
+pub struct ThreadNode {
+    pub engine: AtomicPtr<ThreadLocalEngine>,
+    pub next: AtomicPtr<ThreadNode>,
+}
+
+pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
+
+// Register a new thread node with the given && TODO: Handle NUMA later
+unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
+    let node = match mmap_anonymous(
+        null_mut(),
+        size_of::<ThreadNode>(),
+        ProtFlags::READ | ProtFlags::WRITE,
+        MapFlags::PRIVATE,
+    ) {
+        Ok(mem) => mem,
+        Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
+            0 as *mut c_void,
+            "PThread cache creation failed, cannot create thread node: errno({})",
+            Some(err),
+        ),
+    } as *mut ThreadNode;
+
+    (*node).engine = AtomicPtr::new(ptr);
+    (*node).next = AtomicPtr::new(null_mut());
+
+    loop {
+        let head = THREAD_REGISTER.load(Ordering::Acquire);
+        (*node).next.store(head, Ordering::Relaxed);
+
+        if THREAD_REGISTER
+            .compare_exchange(head, node, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+        {
+            break;
+        }
+    }
+
+    node
+}
+
+unsafe fn destroy_node(node: *mut ThreadNode) {
+    (*node).engine.store(null_mut(), Ordering::Release);
+}
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 
@@ -29,6 +74,7 @@ pub struct ThreadLocalEngine {
     pub usages: [AtomicUsize; NUM_SIZE_CLASSES],
     pub latest_usages: [AtomicUsize; NUM_SIZE_CLASSES],
     pub latest_popped_next: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub node: *mut ThreadNode,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -74,8 +120,12 @@ impl ThreadLocalEngine {
                             latest_usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
                             latest_popped_next: [const { AtomicPtr::new(std::ptr::null_mut()) };
                                 NUM_SIZE_CLASSES],
+                            node: null_mut(),
                         },
                     );
+                    unsafe {
+                        (*cache).node = register_node(cache);
+                    };
 
                     pthread_setspecific(*key, cache as *mut c_void);
                     return &*cache;
@@ -96,7 +146,13 @@ impl ThreadLocalEngine {
         loop {
             let header = self.cache[class].load(Ordering::Acquire);
 
-            if !is_ours(header as usize) && !header.is_null() {
+            if header.is_null() {
+                return null_mut();
+            }
+
+            // Check if the header is ours
+            if !is_ours(header as usize) {
+                // Try to recover, if fails return null
                 if !quarantine(Some(self), header as usize, class) {
                     if self.cache[class]
                         .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
@@ -104,13 +160,15 @@ impl ThreadLocalEngine {
                     {
                         self.usages[class].store(0, Ordering::Relaxed);
                     }
+                    // Return null, freelist is nulled
                     return null_mut();
                 };
                 continue;
             }
 
-            if !is_ours(header as usize) || header.is_null() {
-                return null_mut();
+            // Check if data is still valid
+            if header.is_null() {
+                continue;
             }
 
             let next = (*header).next;
@@ -157,6 +215,7 @@ impl ThreadLocalEngine {
         class: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
+        batch_size: usize,
     ) {
         loop {
             let current_head = self.cache[class].load(Ordering::Acquire);
@@ -166,7 +225,7 @@ impl ThreadLocalEngine {
                 .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
                 .is_ok()
             {
-                self.usages[class].fetch_add(ITERATIONS[class], Ordering::Relaxed);
+                self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
                 return;
             }
 
@@ -176,14 +235,11 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
-    if let Some(key) = THREAD_KEY.get() {
-        libc::pthread_setspecific(*key, core::ptr::null_mut());
-    }
-
     let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;
     }
+    destroy_node((*cache).node);
 
     // Move all blocks to global
     for class in 0..GLOBAL.len() {
@@ -206,7 +262,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             }
 
             GlobalHandler.push_to_global(class, head, tail, usage);
-            GLOBAL_USAGE[class].fetch_add(usage, Ordering::Relaxed);
         }
     }
 

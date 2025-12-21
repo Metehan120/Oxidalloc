@@ -40,29 +40,24 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 * Almost completely compatible with Pop!_OS-24.04 (completly compatible with COSMIC Desktop Environment)
 * Almost completely compatible with KDE on CachyOS \ Boots and logins in Without any on CachyOS \ *Probably* also compatible with KDE on Fedora
 * Compatible with Chromium on most tested OS
-* Compatible with Firefox on Pop!_OS-24.04 \ Means should work fine with Ubuntu
+* Compatible with Firefox on Pop!_OS-24.04/CachyOS (Tested OSes) \ Means should work fine with Ubuntu and Arch
 * Compatible with Python, ROCm, Torch, most runtimes
 * Compatbile with tools like Zapret
 * Compatible with Pipewire
 * Compatible with newer Kernels
 * Compatible with Proton/Wine on most cases \ Test still needed but should work fine
+* Compatible with Blender as of now
 
 ## Tests Needed:
-* Blender 5.0
 * Fedora
-* Gnome
+* Gnome / Should work fine but tests needed either way
 * Arch
 * CachyOS on some Parts
 * Proton/Wine
 
-## Problems:
-1- Blender on CachyOS:
-- Returning LLVM ERROR: out of memory | meaning: Blender wants memory but allocator returns null pointer so needs investigation
-
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
 * Due to kernel issues incompatible with some parts of CachyOS
-* Incompatible with Blender 5.0 or CachyOS only \ Tests needed.
 * Under some certain conditions, it may cause fragmentation \ No real trim yet.
 
 ## Benchmarks:
