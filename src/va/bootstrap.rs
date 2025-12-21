@@ -10,7 +10,9 @@ use std::{
 
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
-use crate::{OxidallocError, slab::thread_local::ThreadLocalEngine};
+use crate::{
+    OxidallocError, slab::thread_local::ThreadLocalEngine, trim::thread::spawn_trim_thread,
+};
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
 pub static VA_END: AtomicUsize = AtomicUsize::new(0);
@@ -33,6 +35,12 @@ pub unsafe fn boot_strap() {
     }
     va_init();
     IS_BOOTSTRAP.store(false, Ordering::Release);
+
+    if IS_BOOTSTRAP.load(Ordering::Relaxed) {
+        return;
+    }
+
+    spawn_trim_thread();
 }
 
 pub unsafe fn va_init() {

@@ -4,7 +4,7 @@ use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
     Err, HEADER_SIZE, MAGIC, OxHeader, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, SIZE_CLASSES, global::GlobalHandler, thread_local::ThreadLocalEngine},
+    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
 
@@ -41,59 +41,23 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         };
     }
 
-    if class <= 16 {
-        let mut prev = null_mut();
-        for i in (0..(ITERATIONS[class] / 2)).rev() {
-            let current_header = (mem as usize + i * block_size) as *mut OxHeader;
-            (*current_header).next = prev;
-            (*current_header).size = payload_size as u64;
-            (*current_header).magic = MAGIC;
-            (*current_header).in_use = 0;
-            prev = current_header;
-        }
-
-        let mut prev2 = null_mut();
-        for i in ((ITERATIONS[class] / 2)..ITERATIONS[class]).rev() {
-            let current_header = (mem as usize + i * block_size) as *mut OxHeader;
-            (*current_header).next = prev2;
-            (*current_header).size = payload_size as u64;
-            (*current_header).magic = MAGIC;
-            (*current_header).in_use = 0;
-            prev2 = current_header;
-        }
-
-        let mut tail = prev;
-        for _ in 0..(ITERATIONS[class] / 2) - 1 {
-            tail = (*tail).next;
-        }
-
-        let mut tail2 = prev2;
-        for _ in 0..(ITERATIONS[class] / 2) - 1 {
-            tail2 = (*tail2).next;
-        }
-
-        GlobalHandler.push_to_global(class, prev2, tail2, ITERATIONS[class] / 2);
-        thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class] / 2);
-        TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
-    } else {
-        let mut prev = null_mut();
-        for i in (0..ITERATIONS[class]).rev() {
-            let current_header = (mem as usize + i * block_size) as *mut OxHeader;
-            (*current_header).next = prev;
-            (*current_header).size = payload_size as u64;
-            (*current_header).magic = MAGIC;
-            (*current_header).in_use = 0;
-            prev = current_header;
-        }
-
-        let mut tail = prev;
-        for _ in 0..ITERATIONS[class] - 1 {
-            tail = (*tail).next;
-        }
-
-        thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class]);
-        TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
+    let mut prev = null_mut();
+    for i in (0..ITERATIONS[class]).rev() {
+        let current_header = (mem as usize + i * block_size) as *mut OxHeader;
+        (*current_header).next = prev;
+        (*current_header).size = payload_size as u64;
+        (*current_header).magic = MAGIC;
+        (*current_header).in_use = 0;
+        prev = current_header;
     }
+
+    let mut tail = prev;
+    for _ in 0..ITERATIONS[class] - 1 {
+        tail = (*tail).next;
+    }
+
+    thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class]);
+    TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
 
     Ok(())
 }

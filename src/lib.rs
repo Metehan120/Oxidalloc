@@ -12,6 +12,7 @@ use std::{
 pub mod abi;
 pub mod big_allocation;
 pub mod slab;
+pub mod trim;
 pub mod va;
 
 pub enum Err {
