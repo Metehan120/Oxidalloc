@@ -80,7 +80,7 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                for class in 0..NUM_SIZE_CLASSES {
+                for class in 10..NUM_SIZE_CLASSES {
                     let mut to_trim: *mut OxHeader = null_mut();
 
                     let (usage, is_ok) = self.get_usage(engine, class);
@@ -90,12 +90,8 @@ impl PTrim {
 
                     for _ in 0..usage {
                         let (cache, is_ok) = self.pop_from_thread(engine, class);
-                        if !is_ok {
+                        if !is_ok || cache.is_null() {
                             break;
-                        }
-
-                        if cache.is_null() {
-                            continue;
                         }
 
                         let life_time = OX_CURRENT_STAMP
