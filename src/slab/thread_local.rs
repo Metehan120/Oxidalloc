@@ -239,13 +239,6 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
-    let key = THREAD_KEY.get_or_init(|| {
-        let mut key = 0;
-        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-        key
-    });
-    pthread_setspecific(*key, null_mut());
-
     let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;
@@ -269,6 +262,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
                     break;
                 }
                 (*tail).life_time = 0;
+                (*tail).next = null_mut();
                 tail = next;
             }
 

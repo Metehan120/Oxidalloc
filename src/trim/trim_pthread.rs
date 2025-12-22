@@ -102,7 +102,7 @@ impl PTrim {
                             .load(Ordering::Relaxed)
                             .saturating_sub((*cache).life_time);
 
-                        if life_time > 10 {
+                        if life_time > 10000 {
                             (*cache).next = to_trim;
                             to_trim = cache;
                             continue;
@@ -155,7 +155,7 @@ impl PTrim {
 
             let payload_size = SIZE_CLASSES[class];
             let block_size = align_to(payload_size + HEADER_SIZE, 16);
-            let total = align_to(block_size + 4096, 4096);
+            let total = align_to(block_size, 4096);
             let is_big = ITERATIONS[class] == 1;
 
             let is_trim_ok = if is_big {
