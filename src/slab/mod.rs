@@ -24,7 +24,7 @@ pub const ITERATIONS: [usize; 20] = [
     8,    // 8KB   - still fairly common
     4,    // 16KB  - less common
     2,    // 32KB  - getting rare
-    1,    // 64KB  - rare
+    2,    // 64KB  - rare
     1,    // 128KB - rare
     1,    // 256KB - very rare
     1,    // 512KB - very rare

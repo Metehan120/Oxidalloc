@@ -247,7 +247,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
     // Move all blocks to global
     for class in 0..GLOBAL.len() {
-        let usage = (*cache).usages[class].load(Ordering::Relaxed);
         let head = (*cache).cache[class].swap(null_mut(), Ordering::AcqRel);
 
         if !is_ours(head as usize) {
@@ -256,17 +255,22 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
         if !head.is_null() {
             let mut tail = head;
-            while !(*tail).next.is_null() {
+            let mut count = 1;
+            loop {
                 let next = (*tail).next;
-                if !is_ours(next as usize) {
+                (*tail).life_time = 0;
+                if next.is_null() {
                     break;
                 }
-                (*tail).life_time = 0;
-                (*tail).next = null_mut();
+                if !is_ours(next as usize) {
+                    (*tail).next = null_mut();
+                    break;
+                }
                 tail = next;
+                count += 1;
             }
 
-            GlobalHandler.push_to_global(class, head, tail, usage);
+            GlobalHandler.push_to_global(class, head, tail, count);
         }
     }
 

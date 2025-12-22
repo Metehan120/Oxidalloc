@@ -65,13 +65,7 @@ pub unsafe fn big_free(ptr: *mut c_void) {
     );
 
     if remap_result.is_err() {
-        match madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed) {
-            Ok(_) => (),
-            Err(errno) => match errno.raw_os_error() {
-                0 => (),
-                _ => return,
-            },
-        };
+        let _ = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
     }
 
     VA_MAP.free(header as usize, total_size);

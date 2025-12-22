@@ -52,21 +52,21 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     // Check if cache is null
     if cache.is_null() {
         // Check global cache if its allocated then pop batch from global cache
-        let size = if class > 10 { ITERATIONS[class] } else { 16 };
-        let global_cache = GlobalHandler.pop_batch_from_global(class, size);
+        let batch = if class > 10 { ITERATIONS[class] } else { 16 };
+        let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
 
         if !global_cache.is_null() {
             let mut tail = global_cache;
             let mut real = 1;
 
             // Loop through cache and found the last header and set linked list to null
-            while real < size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
                 tail = (*tail).next;
                 real += 1;
             }
             (*tail).next = null_mut();
 
-            thread.push_to_thread_tailed(class, global_cache, tail, size);
+            thread.push_to_thread_tailed(class, global_cache, tail, real);
             cache = thread.pop_from_thread(class);
         } else {
             for i in 0..3 {

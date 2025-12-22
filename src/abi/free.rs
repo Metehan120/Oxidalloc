@@ -62,6 +62,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let class = match match_size_class(size) {
         Some(class) => class,
         None => {
+            TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
             big_free(header_search_ptr);
             return;
         }
