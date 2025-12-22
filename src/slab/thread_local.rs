@@ -8,7 +8,7 @@ use std::{
     ptr::null_mut,
     sync::{
         OnceLock,
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
     },
 };
 
@@ -25,6 +25,7 @@ use crate::{
 pub struct ThreadNode {
     pub engine: AtomicPtr<ThreadLocalEngine>,
     pub next: AtomicPtr<ThreadNode>,
+    pub is_trimming: AtomicBool,
 }
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
@@ -235,6 +236,13 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
+    let key = THREAD_KEY.get_or_init(|| {
+        let mut key = 0;
+        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+        key
+    });
+    pthread_setspecific(*key, null_mut());
+
     let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;

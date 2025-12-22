@@ -38,12 +38,12 @@ pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
 pub struct OxHeader {
-    next: *mut OxHeader,
-    size: u64,
-    magic: u64,
-    flag: i32,
-    life_time: usize,
-    in_use: u8,
+    pub next: *mut OxHeader,
+    pub size: u64,
+    pub magic: u64,
+    pub flag: i32,
+    pub life_time: usize,
+    pub in_use: u8,
 }
 
 #[repr(u32)]
@@ -97,7 +97,6 @@ impl OxidallocError {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn bench_allocator() {
     unsafe {
@@ -154,7 +153,6 @@ fn bench_allocator() {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn smoke_global_reuse() {
     unsafe {
@@ -179,7 +177,6 @@ fn smoke_global_reuse() {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn bootstrap_sets_va_len() {
     use crate::va::bootstrap::{VA_LEN, boot_strap};
@@ -189,7 +186,6 @@ fn bootstrap_sets_va_len() {
     assert!(VA_LEN.load(Ordering::Relaxed) > 0);
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn realloc_handles_posix_memalign_pointer() {
     use crate::abi::{

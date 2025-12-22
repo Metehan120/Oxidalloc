@@ -3,9 +3,6 @@ name = "oxidalloc"
 version = "0.2.0"
 edition = "2024"
 
-[features]
-loom = []
-
 [dependencies]
 rustix = { version = "1.1.2", features = ["mm"] }
 libc = "0.2.178"
