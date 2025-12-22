@@ -5,7 +5,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
@@ -36,11 +36,7 @@ impl PTrim {
         (*cache_mem).next = null_mut();
 
         if (*cache_mem).in_use == 1 {
-            OxidallocError::MemoryCorruption.log_and_abort(
-                cache_mem as *mut c_void,
-                "In-use block found in free list during trim.",
-                None,
-            );
+            return (null_mut(), true);
         }
 
         (cache_mem, true)
@@ -94,8 +90,12 @@ impl PTrim {
 
                     for _ in 0..usage {
                         let (cache, is_ok) = self.pop_from_thread(engine, class);
-                        if !is_ok || cache.is_null() {
+                        if !is_ok {
                             break;
+                        }
+
+                        if cache.is_null() {
+                            continue;
                         }
 
                         let life_time = OX_CURRENT_STAMP
@@ -151,16 +151,19 @@ impl PTrim {
             }
 
             let length = page_end - page_start;
-
-            let is_trim_ok =
-                madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
-
             let class = match_size_class(size).unwrap();
-            if ITERATIONS[class] == 1 {
-                let payload_size = SIZE_CLASSES[class];
-                let block_size = align_to(payload_size + HEADER_SIZE, 16);
-                let total = align_to(block_size + 4096, 4096);
 
+            let payload_size = SIZE_CLASSES[class];
+            let block_size = align_to(payload_size + HEADER_SIZE, 16);
+            let total = align_to(block_size + 4096, 4096);
+
+            let is_trim_ok = if ITERATIONS[class] == 1 {
+                madvise(header_ptr as *mut c_void, total, Advice::LinuxDontNeed).is_ok()
+            } else {
+                madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok()
+            };
+
+            if ITERATIONS[class] == 1 {
                 VA_MAP.free(header_ptr as usize, total);
             }
 
