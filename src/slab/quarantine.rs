@@ -20,28 +20,21 @@ pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: u
     // Better trying to recover header from old popped head, if available
     // If not recoverable than then leak it
     if let Some(healing_cache) = thread_cache {
-        let candidate = healing_cache.latest_popped_next[class].load(Ordering::Acquire);
+        healing_cache.lock(class);
+        let candidate = healing_cache.latest_popped_next[class].load(Ordering::Relaxed);
 
         if !candidate.is_null() && is_ours(candidate as usize) {
-            let latest_usage = healing_cache.latest_usages[class].load(Ordering::Acquire);
-            loop {
-                unsafe {
-                    let magic = read_volatile(&(*candidate).magic);
-                    if magic != MAGIC && magic != 0 {
-                        break;
-                    }
-                }
+            let latest_usage = healing_cache.latest_usages[class].load(Ordering::Relaxed);
 
-                let current = healing_cache.cache[class].load(Ordering::Relaxed);
-
-                // CAS so ABA wont happen
-                if healing_cache.cache[class]
-                    .compare_exchange(current, candidate, Ordering::Release, Ordering::Acquire)
-                    .is_ok()
-                {
-                    healing_cache.usages[class].store(latest_usage, Ordering::Release);
+            unsafe {
+                let magic = read_volatile(&(*candidate).magic);
+                if magic == MAGIC || magic == 0 {
+                    healing_cache.cache[class].store(candidate, Ordering::Relaxed);
+                    healing_cache.usages[class].store(latest_usage, Ordering::Relaxed);
+                    healing_cache.unlock(class);
                     return true;
                 }
+                healing_cache.unlock(class);
             }
         }
     }
