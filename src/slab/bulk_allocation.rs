@@ -1,11 +1,11 @@
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
+use rustix::mm::{madvise, mmap_anonymous, Advice, MapFlags, ProtFlags};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OxHeader, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
+    slab::{thread_local::ThreadLocalEngine, ITERATIONS, SIZE_CLASSES},
     va::{align_to, bitmap::VA_MAP},
+    Err, OxHeader, HEADER_SIZE, MAGIC, TOTAL_ALLOCATED,
 };
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -41,8 +41,9 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         };
     }
 
+    let total = total / block_size;
     let mut prev = null_mut();
-    for i in (0..ITERATIONS[class]).rev() {
+    for i in (0..total).rev() {
         let current_header = (mem as usize + i * block_size) as *mut OxHeader;
         (*current_header).next = prev;
         (*current_header).size = payload_size as u64;
@@ -52,12 +53,12 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     }
 
     let mut tail = prev;
-    for _ in 0..ITERATIONS[class] - 1 {
+    for _ in 0..total - 1 {
         tail = (*tail).next;
     }
 
-    thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class]);
-    TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
+    thread.push_to_thread_tailed(class, prev, tail, total);
+    TOTAL_ALLOCATED.fetch_add(total, Ordering::Relaxed);
 
     Ok(())
 }

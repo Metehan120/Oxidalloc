@@ -79,7 +79,7 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                for class in 10..NUM_SIZE_CLASSES {
+                for class in 9..NUM_SIZE_CLASSES {
                     let mut to_trim: *mut OxHeader = null_mut();
 
                     let (usage, is_ok) = self.get_usage(engine, class);

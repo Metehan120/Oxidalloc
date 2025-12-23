@@ -7,8 +7,6 @@ use std::{
     time::Instant,
 };
 
-// TODO: Add documentation to the entire codebase, will be added in ~3 days
-
 pub mod abi;
 pub mod big_allocation;
 pub mod slab;
