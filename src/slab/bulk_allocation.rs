@@ -12,7 +12,7 @@ use crate::{
 pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
-    let total = align_to(block_size * ITERATIONS[class] + 4096, 4096);
+    let total = align_to(block_size * ITERATIONS[class], 4096);
 
     // First reserve virtual space
     let hint = match VA_MAP.alloc(total) {
