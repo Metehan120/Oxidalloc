@@ -13,6 +13,7 @@ use crate::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
         match_size_class, thread_local::ThreadLocalEngine,
     },
+    trim::thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     va::{
         bootstrap::{VA_LEN, boot_strap},
         va_helper::is_ours,
@@ -29,6 +30,12 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     let size = layout.size();
 
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    if total == 10000 {
+        spawn_ptrim_thread();
+    } else if total == 25000 {
+        spawn_gtrim_thread();
+    }
 
     let mut stamp: usize = 0;
     if total > 0 && total % 1500 == 0 {

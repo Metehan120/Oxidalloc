@@ -10,7 +10,12 @@ pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);
 
-pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: usize) -> bool {
+pub fn quarantine(
+    thread_cache: Option<&ThreadLocalEngine>,
+    ptr: usize,
+    class: usize,
+    already_locked: bool,
+) -> bool {
     // Try recovering header from old popped head, if available
     //
     // How is this works:
@@ -20,7 +25,10 @@ pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: u
     // Better trying to recover header from old popped head, if available
     // If not recoverable than then leak it
     if let Some(healing_cache) = thread_cache {
-        healing_cache.lock(class);
+        if !already_locked {
+            healing_cache.lock(class);
+        }
+        let mut recovered = false;
         let candidate = healing_cache.latest_popped_next[class].load(Ordering::Relaxed);
 
         if !candidate.is_null() && is_ours(candidate as usize) {
@@ -31,11 +39,17 @@ pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: u
                 if magic == MAGIC || magic == 0 {
                     healing_cache.cache[class].store(candidate, Ordering::Relaxed);
                     healing_cache.usages[class].store(latest_usage, Ordering::Relaxed);
-                    healing_cache.unlock(class);
-                    return true;
+                    recovered = true;
                 }
-                healing_cache.unlock(class);
             }
+        }
+
+        if !already_locked {
+            healing_cache.unlock(class);
+        }
+
+        if recovered {
+            return true;
         }
     }
 

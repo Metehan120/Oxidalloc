@@ -1,2 +1,3 @@
+pub mod gtrim;
+pub mod ptrim;
 pub mod thread;
-pub mod trim_pthread;

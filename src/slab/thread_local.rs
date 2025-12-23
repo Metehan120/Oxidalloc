@@ -25,12 +25,11 @@ use crate::{
 pub struct ThreadNode {
     pub engine: AtomicPtr<ThreadLocalEngine>,
     pub next: AtomicPtr<ThreadNode>,
-    pub is_trimming: AtomicBool,
 }
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
 
-// Register a new thread node with the given && TODO: Handle NUMA later
+// Register a new thread node with the given, need for trimming
 unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
     let node = match mmap_anonymous(
         null_mut(),
@@ -46,8 +45,13 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
         ),
     } as *mut ThreadNode;
 
-    (*node).engine = AtomicPtr::new(ptr);
-    (*node).next = AtomicPtr::new(null_mut());
+    std::ptr::write(
+        node,
+        ThreadNode {
+            engine: AtomicPtr::new(ptr),
+            next: AtomicPtr::new(null_mut()),
+        },
+    );
 
     loop {
         let head = THREAD_REGISTER.load(Ordering::Acquire);
@@ -65,7 +69,7 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
 }
 
 unsafe fn destroy_node(node: *mut ThreadNode) {
-    (*node).engine.store(null_mut(), Ordering::Release);
+    (*node).engine.swap(null_mut(), Ordering::AcqRel);
 }
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
@@ -133,6 +137,7 @@ impl ThreadLocalEngine {
                     pthread_setspecific(*key, cache as *mut c_void);
                     return &*cache;
                 }
+
                 Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
                     0 as *mut c_void,
                     "PThread cache creation failed: errno({})",
@@ -147,7 +152,7 @@ impl ThreadLocalEngine {
     #[inline(always)]
     pub fn lock(&self, class: usize) {
         while self.locks[class]
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             spin_loop();
@@ -172,7 +177,7 @@ impl ThreadLocalEngine {
         // Check if the header is ours
         if !is_ours(header as usize) {
             // Try to recover, if fails return null
-            if !quarantine(Some(self), header as usize, class) {
+            if !quarantine(Some(self), header as usize, class, true) {
                 self.cache[class].store(null_mut(), Ordering::Relaxed);
                 self.usages[class].store(0, Ordering::Relaxed);
                 self.unlock(class);

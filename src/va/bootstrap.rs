@@ -11,7 +11,8 @@ use std::{
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
 use crate::{
-    OxidallocError, slab::thread_local::ThreadLocalEngine, trim::thread::spawn_trim_thread,
+    OxidallocError,
+    slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
@@ -37,7 +38,6 @@ pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-    ThreadLocalEngine::get_or_init();
     let _lock = match BOOTSTRAP_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -45,15 +45,15 @@ pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Acquire) {
         return;
     }
-    va_init();
+    THREAD_REGISTER.store(null_mut(), Ordering::Relaxed);
     IS_BOOTSTRAP.store(false, Ordering::Release);
-
     if IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-
+    SHUTDOWN.store(false, Ordering::Relaxed);
+    ThreadLocalEngine::get_or_init();
+    va_init();
     register_shutdown();
-    spawn_trim_thread();
 }
 
 pub unsafe fn va_init() {

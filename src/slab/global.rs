@@ -20,7 +20,7 @@ impl GlobalHandler {
     #[inline(always)]
     fn lock(&self, class: usize) {
         while GLOBAL_LOCKS[class]
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             spin_loop();
@@ -63,7 +63,7 @@ impl GlobalHandler {
 
         if !is_ours(current_head as usize) {
             // Quarantine the header
-            quarantine(None, current_head as usize, class);
+            quarantine(None, current_head as usize, class, false);
             GLOBAL[class].store(null_mut(), Ordering::Relaxed);
             GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
             self.unlock(class);
@@ -79,6 +79,7 @@ impl GlobalHandler {
         }
 
         let new_head = (*tail).next;
+        (*tail).next = null_mut();
         GLOBAL[class].store(new_head, Ordering::Relaxed);
         GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
 
