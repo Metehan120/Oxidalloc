@@ -42,8 +42,8 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     if total >= 10000 {
-        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
-            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+        if !THREAD_SPAWNED.load(Ordering::Acquire) {
+            THREAD_SPAWNED.store(true, Ordering::Release);
             ONCE.call_once(|| {
                 spawn_ptrim_thread();
                 spawn_gtrim_thread();
