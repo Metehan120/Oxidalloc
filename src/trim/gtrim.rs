@@ -63,7 +63,7 @@ impl GTrim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*block).life_time);
 
-                    if life_time > 25000 {
+                    if life_time > 10000 {
                         (*block).next = to_trim;
                         to_trim = block;
                     } else {

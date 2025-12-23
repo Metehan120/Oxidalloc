@@ -101,6 +101,11 @@ impl PTrim {
                             (*cache).next = to_trim;
                             to_trim = cache;
                             continue;
+                        } else if life_time > 5000 {
+                            let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+                            (*cache).life_time = current;
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            continue;
                         }
 
                         let push = self.push_to_thread(engine, class, cache);
