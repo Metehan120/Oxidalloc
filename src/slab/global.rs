@@ -1,38 +1,25 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use libc::sched_getcpu;
-
 use crate::{
     OxHeader,
     slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
     va::va_helper::is_ours,
 };
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::{hint::spin_loop, ptr::null_mut};
 
-// NOTE: best-effort CPU sharding, not true NUMA topology
-pub const MAX_NUMA_NODES: usize = 12;
-pub unsafe fn current_numa_node() -> usize {
-    (sched_getcpu() as usize) % MAX_NUMA_NODES
-}
-thread_local! {
-    static NUMA_NODE: usize = unsafe { current_numa_node() };
-}
-
-pub static GLOBAL: [[AtomicUsize; NUM_SIZE_CLASSES]; MAX_NUMA_NODES] =
-    [const { [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES] }; MAX_NUMA_NODES];
-pub static GLOBAL_USAGE: [[AtomicUsize; NUM_SIZE_CLASSES]; MAX_NUMA_NODES] =
-    [const { [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES] }; MAX_NUMA_NODES];
-pub static GLOBAL_LOCKS: [[AtomicBool; NUM_SIZE_CLASSES]; MAX_NUMA_NODES] =
-    [const { [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES] }; MAX_NUMA_NODES];
+pub static GLOBAL: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES] =
+    [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES];
+pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
+    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
+pub static GLOBAL_LOCKS: [AtomicBool; 20] = [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES];
 
 pub struct GlobalHandler;
 
 impl GlobalHandler {
     #[inline(always)]
     fn lock(&self, class: usize) {
-        let node = NUMA_NODE.with(|node| *node);
-        while GLOBAL_LOCKS[node][class]
+        while GLOBAL_LOCKS[class]
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
@@ -42,8 +29,7 @@ impl GlobalHandler {
 
     #[inline(always)]
     fn unlock(&self, class: usize) {
-        let node = NUMA_NODE.with(|node| *node);
-        GLOBAL_LOCKS[node][class].store(false, Ordering::Release);
+        GLOBAL_LOCKS[class].store(false, Ordering::Release);
     }
 
     #[allow(unsafe_op_in_unsafe_fn)]
@@ -55,21 +41,21 @@ impl GlobalHandler {
         batch_size: usize,
     ) {
         self.lock(class);
-        let node = NUMA_NODE.with(|node| *node);
-        let current_head = GLOBAL[node][class].load(Ordering::Relaxed) as *mut OxHeader;
+
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
 
         (*tail).next = current_head;
-        GLOBAL[node][class].store(head as usize, Ordering::Relaxed);
-        GLOBAL_USAGE[node][class].fetch_add(batch_size, Ordering::Relaxed);
+        GLOBAL[class].store(head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
 
         self.unlock(class);
     }
 
     pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
         self.lock(class);
-        let node = NUMA_NODE.with(|node| *node);
 
-        let current_head = GLOBAL[node][class].load(Ordering::Relaxed) as *mut OxHeader;
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
+
         if current_head.is_null() {
             self.unlock(class);
             return null_mut();
@@ -78,8 +64,8 @@ impl GlobalHandler {
         if !is_ours(current_head as usize) {
             // Quarantine the header
             quarantine(None, current_head as usize, class, false);
-            GLOBAL[node][class].store(null_mut() as *mut OxHeader as usize, Ordering::Relaxed);
-            GLOBAL_USAGE[node][class].store(0, Ordering::Relaxed);
+            GLOBAL[class].store(null_mut(), Ordering::Relaxed);
+            GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
             self.unlock(class);
             return null_mut();
         }
@@ -94,8 +80,8 @@ impl GlobalHandler {
 
         let new_head = (*tail).next;
         (*tail).next = null_mut();
-        GLOBAL[node][class].store(new_head as usize, Ordering::Relaxed);
-        GLOBAL_USAGE[node][class].fetch_sub(count, Ordering::Relaxed);
+        GLOBAL[class].store(new_head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
 
         self.unlock(class);
 

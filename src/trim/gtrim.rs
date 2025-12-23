@@ -8,7 +8,7 @@ use crate::{
     HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
         ITERATIONS, SIZE_CLASSES,
-        global::{GLOBAL_USAGE, GlobalHandler, MAX_NUMA_NODES},
+        global::{GLOBAL_USAGE, GlobalHandler},
     },
     va::va_helper::is_ours,
 };
@@ -44,62 +44,60 @@ impl GTrim {
     }
 
     pub unsafe fn trim(&self) {
-        for numa in 0..MAX_NUMA_NODES {
-            for class in 0..ITERATIONS.len() {
-                let class_usage = GLOBAL_USAGE[numa][class].load(Ordering::Relaxed);
-                let mut to_trim = null_mut();
+        for class in 0..ITERATIONS.len() {
+            let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
+            let mut to_trim = null_mut();
 
-                for _ in 0..class_usage / 16 {
-                    let (cache, size) = self.pop_from_global(class);
-                    if cache.is_null() {
-                        break;
-                    }
-
-                    let mut block = cache;
-                    let mut to_push = null_mut();
-
-                    for _ in 9..size {
-                        let next = (*block).next;
-                        let life_time = OX_CURRENT_STAMP
-                            .load(Ordering::Relaxed)
-                            .saturating_sub((*block).life_time);
-
-                        if life_time > 10000 {
-                            (*block).next = to_trim;
-                            to_trim = block;
-                        } else {
-                            (*block).next = to_push;
-                            to_push = block;
-                        }
-
-                        block = next;
-                    }
-
-                    if to_push.is_null() {
-                        continue;
-                    }
-
-                    let mut block = to_push;
-                    let mut real = 1;
-
-                    while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-                        block = (*block).next;
-                        real += 1;
-                    }
-                    (*block).next = null_mut();
-
-                    GlobalHandler.push_to_global(class, to_push, block, real);
+            for _ in 0..class_usage / 16 {
+                let (cache, size) = self.pop_from_global(class);
+                if cache.is_null() {
+                    break;
                 }
 
-                while !to_trim.is_null() {
-                    let next = (*to_trim).next;
+                let mut block = cache;
+                let mut to_push = null_mut();
 
-                    if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
-                        GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                for _ in 9..size {
+                    let next = (*block).next;
+                    let life_time = OX_CURRENT_STAMP
+                        .load(Ordering::Relaxed)
+                        .saturating_sub((*block).life_time);
+
+                    if life_time > 10000 {
+                        (*block).next = to_trim;
+                        to_trim = block;
+                    } else {
+                        (*block).next = to_push;
+                        to_push = block;
                     }
 
-                    to_trim = next;
+                    block = next;
                 }
+
+                if to_push.is_null() {
+                    continue;
+                }
+
+                let mut block = to_push;
+                let mut real = 1;
+
+                while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
+                    block = (*block).next;
+                    real += 1;
+                }
+                (*block).next = null_mut();
+
+                GlobalHandler.push_to_global(class, to_push, block, real);
+            }
+
+            while !to_trim.is_null() {
+                let next = (*to_trim).next;
+
+                if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
+                    GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                }
+
+                to_trim = next;
             }
         }
     }
