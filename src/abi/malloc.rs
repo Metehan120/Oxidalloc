@@ -4,7 +4,10 @@ use std::{
     alloc::Layout,
     os::raw::c_void,
     ptr::null_mut,
-    sync::{Once, atomic::Ordering},
+    sync::{
+        Once,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use libc::{__errno_location, ENOMEM, size_t};
@@ -25,6 +28,7 @@ use crate::{
     },
 };
 
+static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
@@ -37,11 +41,14 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    if total == 10000 {
-        ONCE.call_once(|| {
-            spawn_ptrim_thread();
-            spawn_gtrim_thread();
-        });
+    if total >= 10000 {
+        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
+            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+            ONCE.call_once(|| {
+                spawn_ptrim_thread();
+                spawn_gtrim_thread();
+            });
+        }
     }
 
     let mut stamp: usize = 0;
