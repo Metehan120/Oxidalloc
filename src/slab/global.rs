@@ -10,6 +10,7 @@ use crate::{
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{hint::spin_loop, ptr::null_mut};
 
+// NOTE: best-effort CPU sharding, not true NUMA topology
 pub const MAX_NUMA_NODES: usize = 12;
 pub unsafe fn current_numa_node() -> usize {
     (sched_getcpu() as usize) % MAX_NUMA_NODES
