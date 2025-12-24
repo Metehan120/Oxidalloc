@@ -12,7 +12,8 @@ pub static GLOBAL: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES] =
     [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES];
 pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
     [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
-pub static GLOBAL_LOCKS: [AtomicBool; 20] = [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES];
+pub static GLOBAL_LOCKS: [AtomicBool; NUM_SIZE_CLASSES] =
+    [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES];
 
 pub struct GlobalHandler;
 
