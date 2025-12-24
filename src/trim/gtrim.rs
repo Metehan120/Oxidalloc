@@ -126,7 +126,7 @@ impl GTrim {
             if ITERATIONS[class] == 1 {
                 let payload_size = SIZE_CLASSES[class];
                 let block_size = align_to(payload_size + HEADER_SIZE, 16);
-                let total = align_to(block_size * ITERATIONS[class], 4096);
+                let total = block_size * ITERATIONS[class];
 
                 let is_ok =
                     madvise(header_ptr as *mut c_void, total, Advice::LinuxDontNeed).is_ok();
