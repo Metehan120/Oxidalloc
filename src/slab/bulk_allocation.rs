@@ -1,11 +1,11 @@
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use rustix::mm::{madvise, mmap_anonymous, Advice, MapFlags, ProtFlags};
+use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    slab::{thread_local::ThreadLocalEngine, ITERATIONS, SIZE_CLASSES},
+    Err, HEADER_SIZE, MAGIC, OxHeader, TOTAL_ALLOCATED,
+    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
-    Err, OxHeader, HEADER_SIZE, MAGIC, TOTAL_ALLOCATED,
 };
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -42,6 +42,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     }
 
     let total = total / block_size;
+    let total = if total == 0 { 1 } else { total };
     let mut prev = null_mut();
     for i in (0..total).rev() {
         let current_header = (mem as usize + i * block_size) as *mut OxHeader;
