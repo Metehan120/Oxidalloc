@@ -3,7 +3,7 @@
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_IN_USE,
     TOTAL_OPS,
-    big_allocation::big_free,
+    big_allocations::allocations::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::va_helper::is_ours,
 };

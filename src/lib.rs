@@ -17,7 +17,7 @@ use std::{
 use crate::va::bitmap::VA_MAP;
 
 pub mod abi;
-pub mod big_allocation;
+pub mod big_allocations;
 pub mod slab;
 pub mod trim;
 pub mod va;

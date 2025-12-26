@@ -15,7 +15,7 @@ use libc::{__errno_location, ENOMEM, size_t};
 use crate::{
     Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     TOTAL_IN_USE, TOTAL_OPS,
-    big_allocation::big_malloc,
+    big_allocations::allocations::big_malloc,
     get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
