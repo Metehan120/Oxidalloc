@@ -5,7 +5,7 @@ use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError, release_block,
     slab::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
@@ -58,7 +58,7 @@ impl GTrim {
                 let mut block = cache;
                 let mut to_push = null_mut();
 
-                for _ in 9..size {
+                for _ in 0..size {
                     let next = (*block).next;
                     let life_time = OX_CURRENT_STAMP
                         .load(Ordering::Relaxed)
@@ -119,7 +119,6 @@ impl GTrim {
             if page_start >= page_end {
                 return false;
             }
-
             let length = page_end - page_start;
             let class = match_size_class(size).unwrap();
 
@@ -136,9 +135,12 @@ impl GTrim {
                 }
 
                 return is_ok;
+            } else {
+                if release_block(header_ptr) {
+                    return true;
+                }
+                return madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
             }
-
-            madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok()
         }
     }
 }

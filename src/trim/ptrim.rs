@@ -5,7 +5,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
+    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, release_block,
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
@@ -166,9 +166,12 @@ impl PTrim {
                 }
 
                 return is_ok;
+            } else {
+                if release_block(header_ptr) {
+                    return true;
+                }
+                return madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
             }
-
-            madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok()
         }
     }
 }

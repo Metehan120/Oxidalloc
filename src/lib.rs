@@ -1,11 +1,20 @@
 #![warn(clippy::nursery, clippy::pedantic)]
 
-use rustix::io::Errno;
+use rustix::{
+    io::Errno,
+    mm::{Advice, madvise},
+};
 use std::{
     fmt::Debug,
-    sync::{OnceLock, atomic::AtomicUsize},
+    os::raw::c_void,
+    sync::{
+        OnceLock,
+        atomic::{AtomicU32, AtomicUsize, Ordering},
+    },
     time::Instant,
 };
+
+use crate::va::bitmap::VA_MAP;
 
 pub mod abi;
 pub mod big_allocation;
@@ -35,6 +44,31 @@ pub fn get_clock() -> &'static Instant {
 pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
+pub struct SlabMetadata {
+    pub ref_count: AtomicU32,
+    pub total_size: u32,
+    pub start_addr: usize,
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn release_block(header: *mut OxHeader) -> bool {
+    let meta = (*header).slab_metadata;
+    let remaining = (*meta).ref_count.fetch_sub(1, Ordering::AcqRel);
+
+    if remaining == 1 {
+        let addr = (*meta).start_addr;
+        let size = (*meta).total_size;
+
+        if madvise(addr as *mut c_void, size as usize, Advice::LinuxDontNeed).is_ok() {
+            VA_MAP.free(addr, size as usize);
+            return true;
+        };
+    }
+
+    false
+}
+
+#[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
     pub size: u64,
@@ -42,6 +76,7 @@ pub struct OxHeader {
     pub flag: i32,
     pub life_time: usize,
     pub in_use: u8,
+    pub slab_metadata: *mut SlabMetadata,
 }
 
 #[repr(u32)]

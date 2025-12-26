@@ -51,10 +51,9 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
         }
     }
 
-    let mut stamp: usize = 0;
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
-        stamp = OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
+        OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
@@ -126,7 +125,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
-    (*cache).life_time = stamp;
 
     TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
     (cache as *mut u8).add(HEADER_SIZE)
