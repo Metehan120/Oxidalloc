@@ -53,7 +53,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
-        OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
+        OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {

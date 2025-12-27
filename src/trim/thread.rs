@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    TOTAL_ALLOCATED, TOTAL_IN_USE,
+    OX_CURRENT_STAMP, TOTAL_ALLOCATED, TOTAL_IN_USE, get_clock,
     trim::{gtrim::GTrim, ptrim::PTrim},
     va::bootstrap::SHUTDOWN,
 };
@@ -56,6 +56,9 @@ pub unsafe fn spawn_ptrim_thread() {
             std::thread::sleep(Duration::from_millis(100));
             TOTAL_TIME.fetch_add(100, Ordering::Relaxed);
 
+            let time = get_clock().elapsed().as_millis() as usize;
+            OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
+
             if decide_pthread() {
                 PTrim.trim();
             }
@@ -68,6 +71,9 @@ pub unsafe fn spawn_gtrim_thread() {
         while !SHUTDOWN.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(100));
             TOTAL_TIME_GLOBAL.fetch_add(100, Ordering::Relaxed);
+
+            let time = get_clock().elapsed().as_millis() as usize;
+            OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
 
             if decide_global() {
                 GTrim.trim();

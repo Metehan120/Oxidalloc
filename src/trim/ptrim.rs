@@ -7,12 +7,11 @@ use rustix::mm::{Advice, madvise};
 use crate::{
     HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, release_block,
     slab::{
-        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES,
+        NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
-        match_size_class,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
-    va::{align_to, bitmap::VA_MAP, bootstrap::SHUTDOWN},
+    va::bootstrap::SHUTDOWN,
 };
 
 pub struct PTrim;
@@ -80,7 +79,7 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                for class in 9..NUM_SIZE_CLASSES {
+                for class in 0..NUM_SIZE_CLASSES {
                     let mut to_trim: *mut OxHeader = null_mut();
 
                     let (usage, is_ok) = self.get_usage(engine, class);
@@ -98,11 +97,16 @@ impl PTrim {
                             .load(Ordering::Relaxed)
                             .saturating_sub((*cache).life_time);
 
-                        if life_time > 10000 {
+                        if life_time > 10000 && class < 9 {
+                            release_block(cache);
+                            continue;
+                        }
+
+                        if life_time > 10000 && class > 9 {
                             (*cache).next = to_trim;
                             to_trim = cache;
                             continue;
-                        } else if life_time > 5000 {
+                        } else if life_time > 5000 && class > 9 {
                             let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                             (*cache).life_time = current;
                             GlobalHandler.push_to_global(class, cache, cache, 1);
@@ -151,27 +155,10 @@ impl PTrim {
                 return false;
             }
             let length = page_end - page_start;
-            let class = match_size_class(size).unwrap();
-
-            if ITERATIONS[class] == 1 {
-                let payload_size = SIZE_CLASSES[class];
-                let block_size = align_to(payload_size + HEADER_SIZE, 16);
-                let total = block_size * ITERATIONS[class];
-
-                let is_ok =
-                    madvise(header_ptr as *mut c_void, total, Advice::LinuxDontNeed).is_ok();
-
-                if is_ok {
-                    VA_MAP.free(header_ptr as usize, total);
-                }
-
-                return is_ok;
-            } else {
-                if release_block(header_ptr) {
-                    return true;
-                }
-                return madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
+            if release_block(header_ptr) {
+                return true;
             }
+            madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok()
         }
     }
 }

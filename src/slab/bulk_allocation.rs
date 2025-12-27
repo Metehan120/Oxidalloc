@@ -9,7 +9,10 @@ use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 use crate::{
     Err, HEADER_SIZE, MAGIC, OxHeader, SlabMetadata, TOTAL_ALLOCATED,
     slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
-    va::{align_to, bitmap::VA_MAP},
+    va::{
+        align_to,
+        bitmap::{BLOCK_SIZE, VA_MAP},
+    },
 };
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -19,16 +22,17 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let meta_size = size_of::<SlabMetadata>();
     let num_blocks = ITERATIONS[class];
     let total = meta_size + (block_size * num_blocks);
+    let map_size = align_to(total, BLOCK_SIZE);
 
-    let hint = VA_MAP.alloc(total).ok_or(Err::OutOfReservation)?;
+    let hint = VA_MAP.alloc(map_size).ok_or(Err::OutOfReservation)?;
     let mem = mmap_anonymous(
         hint as *mut c_void,
-        total,
+        map_size,
         ProtFlags::WRITE | ProtFlags::READ,
         MapFlags::PRIVATE | MapFlags::FIXED,
     )
     .map_err(|_| {
-        VA_MAP.free(hint, total);
+        VA_MAP.free(hint, map_size);
         Err::OutOfMemory
     })?;
 
@@ -37,7 +41,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         meta_ptr,
         SlabMetadata {
             ref_count: AtomicU32::new(num_blocks as u32),
-            total_size: align_to(total, 1024 * 64) as u32,
+            total_size: map_size as u32,
             start_addr: mem as usize,
         },
     );
