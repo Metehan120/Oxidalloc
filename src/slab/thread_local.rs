@@ -8,7 +8,7 @@ use std::{
     ptr::null_mut,
     sync::{
         OnceLock,
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
     },
 };
 
@@ -29,7 +29,7 @@ pub struct ThreadNode {
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
 
-// Register a new thread node with the given && TODO: Handle NUMA later
+// Register a new thread node with the given, need for trimming
 unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
     let node = match mmap_anonymous(
         null_mut(),
@@ -45,8 +45,13 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
         ),
     } as *mut ThreadNode;
 
-    (*node).engine = AtomicPtr::new(ptr);
-    (*node).next = AtomicPtr::new(null_mut());
+    std::ptr::write(
+        node,
+        ThreadNode {
+            engine: AtomicPtr::new(ptr),
+            next: AtomicPtr::new(null_mut()),
+        },
+    );
 
     loop {
         let head = THREAD_REGISTER.load(Ordering::Acquire);
@@ -64,7 +69,7 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
 }
 
 unsafe fn destroy_node(node: *mut ThreadNode) {
-    (*node).engine.store(null_mut(), Ordering::Release);
+    (*node).engine.swap(null_mut(), Ordering::AcqRel);
 }
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
@@ -74,6 +79,7 @@ pub struct ThreadLocalEngine {
     pub usages: [AtomicUsize; NUM_SIZE_CLASSES],
     pub latest_usages: [AtomicUsize; NUM_SIZE_CLASSES],
     pub latest_popped_next: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub locks: [AtomicBool; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
 }
 
@@ -120,6 +126,7 @@ impl ThreadLocalEngine {
                             latest_usages: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
                             latest_popped_next: [const { AtomicPtr::new(std::ptr::null_mut()) };
                                 NUM_SIZE_CLASSES],
+                            locks: [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES],
                             node: null_mut(),
                         },
                     );
@@ -130,6 +137,7 @@ impl ThreadLocalEngine {
                     pthread_setspecific(*key, cache as *mut c_void);
                     return &*cache;
                 }
+
                 Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
                     0 as *mut c_void,
                     "PThread cache creation failed: errno({})",
@@ -142,71 +150,77 @@ impl ThreadLocalEngine {
     }
 
     #[inline(always)]
-    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
-        loop {
-            let header = self.cache[class].load(Ordering::Acquire);
-
-            if header.is_null() {
-                return null_mut();
-            }
-
-            // Check if the header is ours
-            if !is_ours(header as usize) {
-                // Try to recover, if fails return null
-                if !quarantine(Some(self), header as usize, class) {
-                    if self.cache[class]
-                        .compare_exchange(header, null_mut(), Ordering::Release, Ordering::Acquire)
-                        .is_ok()
-                    {
-                        self.usages[class].store(0, Ordering::Relaxed);
-                    }
-                    // Return null, freelist is nulled
-                    return null_mut();
-                };
-                continue;
-            }
-
-            // Check if data is still valid
-            if header.is_null() {
-                continue;
-            }
-
-            let next = (*header).next;
-            if !next.is_null() {
-                prefetch(next as *const u8);
-            }
-
-            if self.cache[class]
-                .compare_exchange(header, next, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                // Relaxed is safe here because we are updating after CAS loop
-                self.latest_popped_next[class].store(next, Ordering::Relaxed);
-                let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
-                self.latest_usages[class].store(usage, Ordering::Relaxed);
-                return header;
-            }
-
+    pub fn lock(&self, class: usize) {
+        while self.locks[class]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             spin_loop();
         }
     }
 
     #[inline(always)]
-    pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
-        loop {
-            let current_head = self.cache[class].load(Ordering::Acquire);
-            (*head).next = current_head;
+    pub fn unlock(&self, class: usize) {
+        self.locks[class].store(false, Ordering::Release);
+    }
 
-            if self.cache[class]
-                .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                self.usages[class].fetch_add(1, Ordering::Relaxed);
-                return;
-            }
+    #[inline(always)]
+    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
+        self.lock(class);
+        let mut header = self.cache[class].load(Ordering::Relaxed);
 
-            spin_loop();
+        if header.is_null() {
+            self.unlock(class);
+            return null_mut();
         }
+
+        // Check if the header is ours
+        if !is_ours(header as usize) {
+            // Try to recover, if fails return null
+            if !quarantine(Some(self), header as usize, class, true) {
+                self.cache[class].store(null_mut(), Ordering::Relaxed);
+                self.usages[class].store(0, Ordering::Relaxed);
+                self.unlock(class);
+
+                // Return null, freelist is nulled
+                return null_mut();
+            };
+            let cur_header = self.cache[class].load(Ordering::Relaxed);
+            header = cur_header;
+        }
+
+        // Check if data is still valid
+        if header.is_null() || !is_ours(header as usize) {
+            self.unlock(class);
+            return null_mut();
+        }
+
+        let next = (*header).next;
+        if !next.is_null() {
+            prefetch(next as *const u8);
+        }
+
+        self.cache[class].store(next, Ordering::Relaxed);
+        self.latest_popped_next[class].store(next, Ordering::Relaxed);
+        let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
+        self.latest_usages[class].store(usage, Ordering::Relaxed);
+
+        self.unlock(class);
+
+        header
+    }
+
+    #[inline(always)]
+    pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
+        self.lock(class);
+
+        let current_header = self.cache[class].load(Ordering::Relaxed);
+        (*head).next = current_header;
+
+        self.cache[class].store(head, Ordering::Relaxed);
+        self.usages[class].fetch_add(1, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 
     #[inline(always)]
@@ -217,20 +231,15 @@ impl ThreadLocalEngine {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        loop {
-            let current_head = self.cache[class].load(Ordering::Acquire);
-            (*tail).next = current_head;
+        self.lock(class);
 
-            if self.cache[class]
-                .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
-                return;
-            }
+        let current_header = self.cache[class].load(Ordering::Relaxed);
+        (*tail).next = current_header;
 
-            spin_loop();
-        }
+        self.cache[class].store(head, Ordering::Relaxed);
+        self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 }
 
@@ -243,7 +252,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
     // Move all blocks to global
     for class in 0..GLOBAL.len() {
-        let usage = (*cache).usages[class].load(Ordering::Relaxed);
         let head = (*cache).cache[class].swap(null_mut(), Ordering::AcqRel);
 
         if !is_ours(head as usize) {
@@ -252,16 +260,22 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
         if !head.is_null() {
             let mut tail = head;
-            while !(*tail).next.is_null() {
+            let mut count = 1;
+            loop {
                 let next = (*tail).next;
-                if !is_ours(next as usize) {
+                (*tail).life_time = 0;
+                if next.is_null() {
                     break;
                 }
-                (*tail).life_time = 0;
+                if !is_ours(next as usize) {
+                    (*tail).next = null_mut();
+                    break;
+                }
                 tail = next;
+                count += 1;
             }
 
-            GlobalHandler.push_to_global(class, head, tail, usage);
+            GlobalHandler.push_to_global(class, head, tail, count);
         }
     }
 

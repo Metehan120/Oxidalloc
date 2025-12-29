@@ -1,24 +1,38 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::{alloc::Layout, os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{
+    alloc::Layout,
+    os::raw::{c_int, c_void},
+    ptr::null_mut,
+    sync::{
+        Once,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    TOTAL_IN_USE, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
     big_allocation::big_malloc,
     get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
         match_size_class, thread_local::ThreadLocalEngine,
     },
+    trim::{
+        gtrim::GTrim,
+        ptrim::PTrim,
+        thread::{spawn_gtrim_thread, spawn_ptrim_thread},
+    },
     va::{
-        bootstrap::{VA_LEN, boot_strap},
+        bootstrap::{SHUTDOWN, VA_LEN, boot_strap},
         va_helper::is_ours,
     },
 };
 
+static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
+static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
@@ -30,10 +44,19 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let mut stamp: usize = 0;
+    if total >= 10000 {
+        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
+            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+            ONCE.call_once(|| {
+                spawn_ptrim_thread();
+                spawn_gtrim_thread();
+            });
+        }
+    }
+
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
-        stamp = OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
+        OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
@@ -52,21 +75,21 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     // Check if cache is null
     if cache.is_null() {
         // Check global cache if its allocated then pop batch from global cache
-        let size = if class > 10 { ITERATIONS[class] } else { 16 };
-        let global_cache = GlobalHandler.pop_batch_from_global(class, size);
+        let batch = if class > 10 { ITERATIONS[class] } else { 16 };
+        let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
 
         if !global_cache.is_null() {
             let mut tail = global_cache;
             let mut real = 1;
 
             // Loop through cache and found the last header and set linked list to null
-            while real < size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
                 tail = (*tail).next;
                 real += 1;
             }
             (*tail).next = null_mut();
 
-            thread.push_to_thread_tailed(class, global_cache, tail, size);
+            thread.push_to_thread_tailed(class, global_cache, tail, real);
             cache = thread.pop_from_thread(class);
         } else {
             for i in 0..3 {
@@ -105,9 +128,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
-    (*cache).life_time = stamp;
 
-    TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
     (cache as *mut u8).add(HEADER_SIZE)
 }
 
@@ -154,4 +175,24 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
         None => size,
     };
     raw_usable.saturating_sub(offset) as size_t
+}
+
+pub unsafe extern "C" fn malloc_trim(pad: size_t) -> c_int {
+    let is_ok_p = PTrim.trim(pad);
+    let is_ok_g = if is_ok_p.0 == 0 {
+        let gtrim = GTrim.trim(pad);
+        if gtrim.0 == 0 {
+            if (is_ok_p.1 + gtrim.1) >= pad { 1 } else { 0 }
+        } else {
+            1
+        }
+    } else {
+        1
+    };
+
+    if !SHUTDOWN.load(Ordering::Relaxed) && pad == 0 {
+        1
+    } else {
+        is_ok_g | is_ok_p.0
+    }
 }

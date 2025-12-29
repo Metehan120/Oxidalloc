@@ -1,75 +1,39 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::{hint::spin_loop, ptr::null_mut};
-
-#[cfg(feature = "loom")]
-fn make_node() -> *mut OxHeader {
-    use crate::MAGIC;
-    Box::leak(Box::new(OxHeader {
-        next: null_mut(),
-        magic: MAGIC,
-        in_use: 0,
-        life_time: 0,
-        size: 0,
-        flag: 0,
-    }))
-}
-
-#[cfg(feature = "loom")]
-#[test]
-fn global_usage_race() {
-    loom::model(|| {
-        use loom::sync::atomic::Ordering;
-        use loom::thread;
-
-        GLOBAL[0].store(std::ptr::null_mut(), Ordering::Relaxed);
-        GLOBAL_USAGE[0].store(0, Ordering::Relaxed);
-
-        let node = make_node();
-
-        let t1 = thread::spawn(move || unsafe {
-            GlobalHandler.push_to_global(0, node, node, 1);
-        });
-
-        let t2 = thread::spawn(move || unsafe {
-            let _ = GlobalHandler.pop_batch_from_global(0, 1);
-        });
-
-        let node = make_node();
-
-        let t3 = thread::spawn(move || unsafe {
-            GlobalHandler.push_to_global(0, node, node, 1);
-        });
-
-        let t4 = thread::spawn(move || unsafe {
-            let _ = GlobalHandler.pop_batch_from_global(0, 1);
-        });
-
-        t1.join().unwrap();
-        t2.join().unwrap();
-        t3.join().unwrap();
-        t4.join().unwrap();
-
-        let usage = GLOBAL_USAGE[0].load(Ordering::Relaxed);
-        assert!(usage == 0 || usage == 1);
-    });
-}
-
 use crate::{
     OxHeader,
     slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
     va::va_helper::is_ours,
 };
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::{hint::spin_loop, ptr::null_mut};
 
 pub static GLOBAL: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES] =
     [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES];
 pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
     [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
+pub static GLOBAL_LOCKS: [AtomicBool; NUM_SIZE_CLASSES] =
+    [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES];
 
 pub struct GlobalHandler;
 
 impl GlobalHandler {
+    #[inline(always)]
+    fn lock(&self, class: usize) {
+        while GLOBAL_LOCKS[class]
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            spin_loop();
+        }
+    }
+
+    #[inline(always)]
+    fn unlock(&self, class: usize) {
+        GLOBAL_LOCKS[class].store(false, Ordering::Release);
+    }
+
+    #[allow(unsafe_op_in_unsafe_fn)]
     pub unsafe fn push_to_global(
         &self,
         class: usize,
@@ -77,72 +41,51 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        loop {
-            let current_head = GLOBAL[class].load(Ordering::Acquire);
-            (*tail).next = current_head;
+        self.lock(class);
 
-            if GLOBAL[class]
-                .compare_exchange(current_head, head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
-                return;
-            }
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
 
-            spin_loop();
-        }
+        (*tail).next = current_head;
+        GLOBAL[class].store(head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 
     pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
-        loop {
-            let current_head = GLOBAL[class].load(Ordering::Acquire);
+        self.lock(class);
 
-            if current_head.is_null() {
-                return null_mut();
-            }
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
 
-            if !is_ours(current_head as usize) {
-                // Quarantine the header
-                quarantine(None, current_head as usize, class);
-                if GLOBAL[class]
-                    .compare_exchange(
-                        current_head,
-                        null_mut(),
-                        Ordering::Release,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-                {
-                    GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
-                }
-                return null_mut();
-            }
-
-            if current_head.is_null() {
-                continue;
-            }
-
-            let mut tail = current_head;
-            let mut count = 1;
-            // Loop through the list until we reach the end or the batch size is reached
-            while count < batch_size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-                tail = (*tail).next;
-                count += 1;
-            }
-
-            let new_head = (*tail).next;
-
-            if GLOBAL[class]
-                .compare_exchange(current_head, new_head, Ordering::Release, Ordering::Acquire)
-                .is_ok()
-            {
-                GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
-                // Set next pointer to null to avoid inconsistency
-                (*tail).next = null_mut();
-                return current_head;
-            }
-
-            spin_loop();
+        if current_head.is_null() {
+            self.unlock(class);
+            return null_mut();
         }
+
+        if !is_ours(current_head as usize) {
+            // Quarantine the header
+            quarantine(None, current_head as usize, class, false);
+            GLOBAL[class].store(null_mut(), Ordering::Relaxed);
+            GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
+            self.unlock(class);
+            return null_mut();
+        }
+
+        let mut tail = current_head;
+        let mut count = 1;
+        // Loop through the list until we reach the end or the batch size is reached
+        while count < batch_size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+            tail = (*tail).next;
+            count += 1;
+        }
+
+        let new_head = (*tail).next;
+        (*tail).next = null_mut();
+        GLOBAL[class].store(new_head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
+
+        self.unlock(class);
+
+        current_head
     }
 }

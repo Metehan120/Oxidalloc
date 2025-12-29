@@ -1,15 +1,15 @@
-## **Current Rewrite Status**: Mostly complete. The rewrite reuses core logic from the previous version, but is significantly simplified, safer, and more efficient.
-## **Current goal on Rewrite**: Figure out how to implement Trim and add documentation meanwhile.
-
-## ***Important***: This allocator have a new experimental mode called "Self Healing", which is still in development and may not be stable or even may security risk. The code is provided as-is, without any guarantees.
-
 # Oxidalloc
 
 A pure Rust general-purpose memory allocator designed to be used as a malloc replacement via `LD_PRELOAD`.
 
+## **Huge Update**: Oxidalloc now supports Trim for size classes >4096 (4kb), but still in development if there are any problems please report them.
+### Note: Oxidalloc still in development and experimental.
+
 ## Overview
 
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
+
+## ***Important***: This allocator have a new experimental mode called "Self Healing", which is still in development and may not be stable or even may security risk. The code is provided as-is, without any guarantees.
 
 ## Features
 
@@ -42,7 +42,7 @@ Oxidalloc is a high-performance allocator written entirely in Rust. It is design
 ## Incompatibilities
 * WARNING: Design only working on 64-BIT systems, incompatible with 32-BIT.
 * Due to kernel issues incompatible with some parts of CachyOS
-* Under some certain conditions, it may cause fragmentation \ No real trim yet.
+* Under some certain conditions, it may cause fragmentation especially on small allocation storm Apps.
 
 ## Benchmarks:
 
@@ -67,7 +67,7 @@ export LD_PRELOAD=/path/to/liboxidalloc.so
 
 ## Known Issues
 
-* High memory usage when using Rust Analyzer. | No trim yet, thats why.
+* Rust-analyzer may cause high memory usage.
 * May crash some APPs
 * May crash after a while during AI workloads.
 

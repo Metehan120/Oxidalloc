@@ -7,11 +7,10 @@ use std::{
     time::Instant,
 };
 
-// TODO: Add documentation to the entire codebase, will be added in ~3 days
-
 pub mod abi;
 pub mod big_allocation;
 pub mod slab;
+pub mod trim;
 pub mod va;
 
 pub enum Err {
@@ -28,6 +27,9 @@ pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
+pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
+pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
+pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
@@ -37,12 +39,12 @@ pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
 pub struct OxHeader {
-    next: *mut OxHeader,
-    size: u64,
-    magic: u64,
-    flag: i32,
-    life_time: usize,
-    in_use: u8,
+    pub next: *mut OxHeader,
+    pub size: u64,
+    pub magic: u64,
+    pub flag: i32,
+    pub life_time: usize,
+    pub in_use: u8,
 }
 
 #[repr(u32)]
@@ -96,7 +98,6 @@ impl OxidallocError {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn bench_allocator() {
     unsafe {
@@ -153,7 +154,6 @@ fn bench_allocator() {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn smoke_global_reuse() {
     unsafe {
@@ -178,7 +178,6 @@ fn smoke_global_reuse() {
     }
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn bootstrap_sets_va_len() {
     use crate::va::bootstrap::{VA_LEN, boot_strap};
@@ -188,7 +187,6 @@ fn bootstrap_sets_va_len() {
     assert!(VA_LEN.load(Ordering::Relaxed) > 0);
 }
 
-#[cfg(not(feature = "loom"))]
 #[test]
 fn realloc_handles_posix_memalign_pointer() {
     use crate::abi::{

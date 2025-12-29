@@ -10,7 +10,10 @@ use std::{
 
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
-use crate::{OxidallocError, slab::thread_local::ThreadLocalEngine};
+use crate::{
+    OX_TRIM_THRESHOLD, OxidallocError,
+    slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+};
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
 pub static VA_END: AtomicUsize = AtomicUsize::new(0);
@@ -19,11 +22,50 @@ pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 
+pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn allocator_shutdown() {
+    SHUTDOWN.store(true, Ordering::Release);
+}
+
+pub fn register_shutdown() {
+    unsafe {
+        libc::atexit(allocator_shutdown);
+    }
+}
+
+pub fn init_threshold() {
+    unsafe {
+        let key = b"OX_TRIM_THRESHOLD\0";
+        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+        if !value_ptr.is_null() {
+            let mut val = 0usize;
+            let mut ptr = value_ptr as *const u8;
+
+            while *ptr != 0 {
+                if *ptr >= b'0' && *ptr <= b'9' {
+                    val = val * 10 + (*ptr - b'0') as usize;
+                } else {
+                    break;
+                }
+                ptr = ptr.add(1);
+            }
+
+            if val == 0 || val < 1024 * 1024 {
+                val = 1024 * 1024;
+            }
+            OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
+        } else {
+            OX_TRIM_THRESHOLD.store(1024 * 1024 * 10, Ordering::Relaxed);
+        }
+    }
+}
+
 pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-    ThreadLocalEngine::get_or_init();
     let _lock = match BOOTSTRAP_LOCK.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
@@ -31,8 +73,16 @@ pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Acquire) {
         return;
     }
-    va_init();
+    THREAD_REGISTER.store(null_mut(), Ordering::Relaxed);
     IS_BOOTSTRAP.store(false, Ordering::Release);
+    if IS_BOOTSTRAP.load(Ordering::Relaxed) {
+        return;
+    }
+    SHUTDOWN.store(false, Ordering::Relaxed);
+    ThreadLocalEngine::get_or_init();
+    va_init();
+    register_shutdown();
+    init_threshold();
 }
 
 pub unsafe fn va_init() {

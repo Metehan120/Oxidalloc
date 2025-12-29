@@ -12,29 +12,23 @@ use crate::{
 pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
-    let total = align_to((block_size * ITERATIONS[class]) + 4096, 4096);
+    let num_blocks = ITERATIONS[class];
+    let total = block_size * num_blocks;
 
-    // First reserve virtual space
-    let hint = match VA_MAP.alloc(total) {
-        Some(size) => size,
-        None => return Err(Err::OutOfReservation),
-    };
-
-    let mem = match mmap_anonymous(
+    let hint = VA_MAP.alloc(total).ok_or(Err::OutOfReservation)?;
+    let mem = mmap_anonymous(
         hint as *mut c_void,
         total,
         ProtFlags::WRITE | ProtFlags::READ,
         MapFlags::PRIVATE | MapFlags::FIXED,
-    ) {
-        Ok(mem) => mem,
-        Err(_) => {
-            VA_MAP.free(hint, total);
-            return Err(Err::OutOfMemory);
-        }
-    };
+    )
+    .map_err(|_| {
+        VA_MAP.free(hint, total);
+        Err::OutOfMemory
+    })?;
 
     // For 2MB size class use THP which uses 2MB pages
-    if class == 19 {
+    if class == 17 {
         match madvise(mem, total, Advice::LinuxHugepage) {
             Ok(_) => (),
             Err(_) => (),
@@ -42,22 +36,25 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     }
 
     let mut prev = null_mut();
-    for i in (0..ITERATIONS[class]).rev() {
-        let current_header = (mem as usize + i * block_size) as *mut OxHeader;
+    for i in (0..num_blocks).rev() {
+        let offset = i * block_size;
+        let current_header = (mem as usize + offset) as *mut OxHeader;
+
         (*current_header).next = prev;
         (*current_header).size = payload_size as u64;
         (*current_header).magic = MAGIC;
         (*current_header).in_use = 0;
+
         prev = current_header;
     }
 
     let mut tail = prev;
-    for _ in 0..ITERATIONS[class] - 1 {
+    for _ in 0..num_blocks - 1 {
         tail = (*tail).next;
     }
 
-    thread.push_to_thread_tailed(class, prev, tail, ITERATIONS[class]);
-    TOTAL_ALLOCATED.fetch_add(ITERATIONS[class], Ordering::Relaxed);
+    thread.push_to_thread_tailed(class, prev, tail, num_blocks);
+    TOTAL_ALLOCATED.fetch_add(num_blocks, Ordering::Relaxed);
 
     Ok(())
 }
