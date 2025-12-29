@@ -10,7 +10,7 @@ use crate::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
     },
-    va::va_helper::is_ours,
+    va::{bootstrap::SHUTDOWN, va_helper::is_ours},
 };
 
 pub struct GTrim;
@@ -43,12 +43,21 @@ impl GTrim {
         (global_cache, real)
     }
 
-    pub unsafe fn trim(&self) {
+    pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            return (0, 0);
+        }
+
         let mut avg = 0;
         let mut total = 0;
+        let mut total_freed = 0;
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
 
         for class in 9..ITERATIONS.len() {
+            if total_freed >= pad && pad != 0 {
+                return (1, total_freed);
+            }
+
             let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
             let mut to_trim = null_mut();
 
@@ -102,7 +111,11 @@ impl GTrim {
             while !to_trim.is_null() {
                 let next = (*to_trim).next;
 
-                self.release_memory(to_trim, SIZE_CLASSES[class]);
+                if total_freed <= pad || pad == 0 {
+                    self.release_memory(to_trim, SIZE_CLASSES[class]);
+                    total_freed += SIZE_CLASSES[class];
+                }
+
                 GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
 
                 to_trim = next;
@@ -111,6 +124,12 @@ impl GTrim {
 
         if total > 0 {
             AVERAGE_BLOCK_TIMES_GLOBAL.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+        }
+
+        if total_freed >= pad {
+            (1, total_freed)
+        } else {
+            (0, total_freed)
         }
     }
 

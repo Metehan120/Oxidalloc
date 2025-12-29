@@ -65,18 +65,20 @@ impl PTrim {
         }
     }
 
-    pub unsafe fn trim(&self) {
+    pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
         if SHUTDOWN.load(Ordering::Relaxed) {
-            return;
+            return (0, 0);
         }
 
         let mut node = THREAD_REGISTER.load(Ordering::Acquire);
         if node.is_null() {
-            return;
+            return (0, 0);
         }
 
         let mut avg = 0;
         let mut total = 0;
+        let mut total_freed = 0;
+
         let timing = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
         let half_timing = if timing / 2 == 0 { 1 } else { timing / 2 };
 
@@ -85,6 +87,10 @@ impl PTrim {
 
             if !engine.is_null() {
                 for class in 9..NUM_SIZE_CLASSES {
+                    if total_freed >= pad && pad != 0 {
+                        return (1, total_freed);
+                    }
+
                     let mut to_trim: *mut OxHeader = null_mut();
 
                     let (usage, is_ok) = self.get_usage(engine, class);
@@ -128,7 +134,11 @@ impl PTrim {
                     while !to_trim.is_null() {
                         let next = (*to_trim).next;
 
-                        self.release_memory(to_trim, SIZE_CLASSES[class]);
+                        if total_freed <= pad || pad == 0 {
+                            self.release_memory(to_trim, SIZE_CLASSES[class]);
+                            total_freed += SIZE_CLASSES[class];
+                        }
+
                         if !self.push_to_thread(engine, class, to_trim) {
                             GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
                         }
@@ -143,6 +153,12 @@ impl PTrim {
 
         if total > 0 {
             AVERAGE_BLOCK_TIMES_PTHREAD.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+        }
+
+        if total_freed >= pad {
+            (1, total_freed)
+        } else {
+            (0, total_freed)
         }
     }
 

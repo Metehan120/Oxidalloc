@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, AVERAGE_BLOCK_TIMES_PTHREAD, OX_CURRENT_STAMP, TOTAL_ALLOCATED,
-    get_clock,
+    AVERAGE_BLOCK_TIMES_GLOBAL, AVERAGE_BLOCK_TIMES_PTHREAD, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD,
+    TOTAL_ALLOCATED, get_clock,
     trim::{gtrim::GTrim, ptrim::PTrim},
     va::bootstrap::SHUTDOWN,
 };
@@ -79,7 +79,7 @@ pub unsafe fn spawn_ptrim_thread() {
             OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
 
             if decide_pthread() {
-                PTrim.trim();
+                PTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));
             }
         }
     });
@@ -95,7 +95,7 @@ pub unsafe fn spawn_gtrim_thread() {
             OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
 
             if decide_global() {
-                GTrim.trim();
+                GTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));
             }
         }
     });
