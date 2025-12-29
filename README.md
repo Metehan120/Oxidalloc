@@ -2,6 +2,8 @@
 
 A pure Rust general-purpose memory allocator designed to be used as a malloc replacement via `LD_PRELOAD`.
 
+## **Huge Update**: Oxidalloc now supports Trim for size classes >4096 (4kb), but still in development if there are any problems please report them.
+
 ## Overview
 
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
