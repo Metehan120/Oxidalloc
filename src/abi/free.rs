@@ -1,8 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_IN_USE,
-    TOTAL_OPS,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::va_helper::is_ours,
@@ -62,7 +61,6 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let class = match match_size_class(size) {
         Some(class) => class,
         None => {
-            TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
             big_free(header_search_ptr);
             return;
         }
@@ -74,6 +72,5 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).magic = 0;
     (*header).life_time = stamp;
 
-    TOTAL_IN_USE.fetch_sub(1, Ordering::Relaxed);
     thread.push_to_thread(class, header);
 }

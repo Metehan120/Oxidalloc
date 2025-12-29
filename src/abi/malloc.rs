@@ -13,8 +13,7 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    TOTAL_IN_USE, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
     big_allocation::big_malloc,
     get_clock,
     slab::{
@@ -126,7 +125,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
 
-    TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
     (cache as *mut u8).add(HEADER_SIZE)
 }
 

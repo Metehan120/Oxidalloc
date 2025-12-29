@@ -5,7 +5,7 @@ use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError, release_block,
+    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
@@ -44,7 +44,11 @@ impl GTrim {
     }
 
     pub unsafe fn trim(&self) {
-        for class in 0..ITERATIONS.len() {
+        let mut avg = 0;
+        let mut total = 0;
+        let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
+
+        for class in 9..ITERATIONS.len() {
             let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
             let mut to_trim = null_mut();
 
@@ -63,7 +67,12 @@ impl GTrim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*block).life_time);
 
-                    if life_time > 10000 {
+                    if life_time != 0 {
+                        avg += life_time;
+                        total += 1;
+                    }
+
+                    if life_time > timing {
                         (*block).next = to_trim;
                         to_trim = block;
                     } else {
@@ -93,17 +102,20 @@ impl GTrim {
             while !to_trim.is_null() {
                 let next = (*to_trim).next;
 
-                if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
-                    GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
-                }
+                self.release_memory(to_trim, SIZE_CLASSES[class]);
+                GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
 
                 to_trim = next;
             }
         }
+
+        if total > 0 {
+            AVERAGE_BLOCK_TIMES_GLOBAL.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+        }
     }
 
     #[inline]
-    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) -> bool {
+    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) {
         unsafe {
             const PAGE_SIZE: usize = 4096;
             const PAGE_MASK: usize = !(PAGE_SIZE - 1);
@@ -116,13 +128,11 @@ impl GTrim {
             let page_end = user_end & PAGE_MASK;
 
             if page_start >= page_end {
-                return false;
+                return;
             }
             let length = page_end - page_start;
-            if release_block(header_ptr) {
-                return true;
-            }
-            madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok()
+
+            let _ = madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed);
         }
     }
 }

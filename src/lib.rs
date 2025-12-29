@@ -1,20 +1,11 @@
 #![warn(clippy::nursery, clippy::pedantic)]
 
-use rustix::{
-    io::Errno,
-    mm::{Advice, madvise},
-};
+use rustix::io::Errno;
 use std::{
     fmt::Debug,
-    os::raw::c_void,
-    sync::{
-        OnceLock,
-        atomic::{AtomicU32, AtomicUsize, Ordering},
-    },
+    sync::{OnceLock, atomic::AtomicUsize},
     time::Instant,
 };
-
-use crate::va::bitmap::VA_MAP;
 
 pub mod abi;
 pub mod big_allocation;
@@ -36,37 +27,14 @@ pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
+pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
+pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
 }
 
 pub const HEADER_SIZE: usize = size_of::<OxHeader>();
-
-#[repr(C, align(16))]
-pub struct SlabMetadata {
-    pub ref_count: AtomicU32,
-    pub total_size: u32,
-    pub start_addr: usize,
-}
-
-#[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn release_block(header: *mut OxHeader) -> bool {
-    let meta = (*header).slab_metadata;
-    let remaining = (*meta).ref_count.fetch_sub(1, Ordering::AcqRel);
-
-    if remaining == 1 {
-        let addr = (*meta).start_addr;
-        let size = (*meta).total_size;
-
-        if madvise(addr as *mut c_void, size as usize, Advice::LinuxDontNeed).is_ok() {
-            VA_MAP.free(addr, size as usize);
-            return true;
-        };
-    }
-
-    false
-}
 
 #[repr(C, align(16))]
 pub struct OxHeader {
@@ -76,7 +44,6 @@ pub struct OxHeader {
     pub flag: i32,
     pub life_time: usize,
     pub in_use: u8,
-    pub slab_metadata: *mut SlabMetadata,
 }
 
 #[repr(u32)]
