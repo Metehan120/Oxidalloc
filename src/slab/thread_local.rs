@@ -176,7 +176,7 @@ impl ThreadLocalEngine {
 
         // Check if the header is ours
         if !is_ours(header as usize) {
-            // Try to recover, if fails return null
+            // Try to recover, if fails return null (A.K.A Self Healing)
             if !quarantine(Some(self), header as usize, class, true) {
                 self.cache[class].store(null_mut(), Ordering::Relaxed);
                 self.usages[class].store(0, Ordering::Relaxed);
