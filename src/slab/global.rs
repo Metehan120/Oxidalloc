@@ -51,7 +51,7 @@ impl GlobalHandler {
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
+                    GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::AcqRel);
                     break;
                 }
                 Err(new) => current = new,
