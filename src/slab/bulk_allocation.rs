@@ -4,8 +4,8 @@ use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
     Err, HEADER_SIZE, MAGIC, OxHeader, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine, unpack_header},
-    va::{align_to, bitmap::VA_MAP, bootstrap::GLOBAL_RANDOM},
+    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
+    va::{align_to, bitmap::VA_MAP},
 };
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -40,7 +40,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let offset = i * block_size;
         let current_header = (mem as usize + offset) as *mut OxHeader;
 
-        (*current_header).next = (prev as usize) ^ GLOBAL_RANDOM;
+        (*current_header).next = prev;
         (*current_header).size = payload_size as u64;
         (*current_header).magic = MAGIC;
         (*current_header).in_use = 0;
@@ -50,7 +50,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
 
     let mut tail = prev;
     for _ in 0..num_blocks - 1 {
-        tail = unpack_header((*tail).next, GLOBAL_RANDOM);
+        tail = (*tail).next;
     }
 
     thread.push_to_thread_tailed(class, prev, tail, num_blocks);

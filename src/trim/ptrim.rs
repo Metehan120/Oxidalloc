@@ -9,11 +9,9 @@ use crate::{
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
-        pack_header,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
-        unpack_header,
     },
-    va::bootstrap::{GLOBAL_RANDOM, SHUTDOWN},
+    va::bootstrap::SHUTDOWN,
 };
 
 pub struct PTrim;
@@ -34,7 +32,7 @@ impl PTrim {
             return (null_mut(), true);
         }
 
-        (*cache_mem).next = pack_header(null_mut(), GLOBAL_RANDOM);
+        (*cache_mem).next = null_mut();
 
         if (*cache_mem).in_use == 1 {
             return (null_mut(), true);
@@ -116,7 +114,7 @@ impl PTrim {
                         }
 
                         if life_time > timing {
-                            (*cache).next = pack_header(to_trim, GLOBAL_RANDOM);
+                            (*cache).next = to_trim;
                             to_trim = cache;
                             continue;
                         } else if life_time > half_timing {
@@ -134,7 +132,7 @@ impl PTrim {
                     }
 
                     while !to_trim.is_null() {
-                        let next = unpack_header((*to_trim).next, GLOBAL_RANDOM);
+                        let next = (*to_trim).next;
 
                         if total_freed <= pad || pad == 0 {
                             self.release_memory(to_trim, SIZE_CLASSES[class]);

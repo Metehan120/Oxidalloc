@@ -13,15 +13,13 @@ use std::{
 };
 
 use crate::{
-    OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES,
         global::{GLOBAL, GlobalHandler},
-        pack_header,
         quarantine::quarantine,
-        unpack_header,
     },
-    va::{bootstrap::GLOBAL_RANDOM, va_helper::is_ours},
+    va::va_helper::is_ours,
 };
 
 pub struct ThreadNode {
@@ -178,7 +176,7 @@ impl ThreadLocalEngine {
 
         // Check if the header is ours
         if !is_ours(header as usize) {
-            // Try to recover, if fails return null (A.K.A Self Healing)
+            // Try to recover, if fails return null
             if !quarantine(Some(self), header as usize, class, true) {
                 self.cache[class].store(null_mut(), Ordering::Relaxed);
                 self.usages[class].store(0, Ordering::Relaxed);
@@ -197,13 +195,12 @@ impl ThreadLocalEngine {
             return null_mut();
         }
 
-        let next = unpack_header((*header).next, GLOBAL_RANDOM);
+        let next = (*header).next;
         if !next.is_null() {
             prefetch(next as *const u8);
         }
 
         self.cache[class].store(next, Ordering::Relaxed);
-
         self.latest_popped_next[class].store(next, Ordering::Relaxed);
         let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
         self.latest_usages[class].store(usage, Ordering::Relaxed);
@@ -218,7 +215,7 @@ impl ThreadLocalEngine {
         self.lock(class);
 
         let current_header = self.cache[class].load(Ordering::Relaxed);
-        (*head).next = pack_header(current_header, GLOBAL_RANDOM);
+        (*head).next = current_header;
 
         self.cache[class].store(head, Ordering::Relaxed);
         self.usages[class].fetch_add(1, Ordering::Relaxed);
@@ -237,7 +234,7 @@ impl ThreadLocalEngine {
         self.lock(class);
 
         let current_header = self.cache[class].load(Ordering::Relaxed);
-        (*tail).next = pack_header(current_header, GLOBAL_RANDOM);
+        (*tail).next = current_header;
 
         self.cache[class].store(head, Ordering::Relaxed);
         self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
@@ -265,20 +262,15 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             let mut tail = head;
             let mut count = 1;
             loop {
-                let next = unpack_header((*tail).next, GLOBAL_RANDOM);
-
+                let next = (*tail).next;
+                (*tail).life_time = 0;
                 if next.is_null() {
                     break;
                 }
-
                 if !is_ours(next as usize) {
-                    (*tail).next = pack_header(null_mut(), GLOBAL_RANDOM);
+                    (*tail).next = null_mut();
                     break;
                 }
-
-                let lif_time = OX_CURRENT_STAMP.load(Ordering::Relaxed);
-                (*tail).life_time = lif_time;
-
                 tail = next;
                 count += 1;
             }
