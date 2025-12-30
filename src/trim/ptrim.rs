@@ -5,14 +5,13 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, release_block,
+    AVERAGE_BLOCK_TIMES_PTHREAD, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     slab::{
-        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES,
+        NUM_SIZE_CLASSES, SIZE_CLASSES,
         global::GlobalHandler,
-        match_size_class,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
-    va::{align_to, bitmap::VA_MAP, bootstrap::SHUTDOWN},
+    va::bootstrap::SHUTDOWN,
 };
 
 pub struct PTrim;
@@ -66,21 +65,32 @@ impl PTrim {
         }
     }
 
-    pub unsafe fn trim(&self) {
+    pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
         if SHUTDOWN.load(Ordering::Relaxed) {
-            return;
+            return (0, 0);
         }
 
         let mut node = THREAD_REGISTER.load(Ordering::Acquire);
         if node.is_null() {
-            return;
+            return (0, 0);
         }
+
+        let mut avg = 0;
+        let mut total = 0;
+        let mut total_freed = 0;
+
+        let timing = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
+        let half_timing = if timing / 2 == 0 { 1 } else { timing / 2 };
 
         while !node.is_null() {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
                 for class in 9..NUM_SIZE_CLASSES {
+                    if total_freed >= pad && pad != 0 {
+                        return (1, total_freed);
+                    }
+
                     let mut to_trim: *mut OxHeader = null_mut();
 
                     let (usage, is_ok) = self.get_usage(engine, class);
@@ -98,11 +108,16 @@ impl PTrim {
                             .load(Ordering::Relaxed)
                             .saturating_sub((*cache).life_time);
 
-                        if life_time > 10000 {
+                        if life_time != 0 {
+                            avg += life_time;
+                            total += 1;
+                        }
+
+                        if life_time > timing {
                             (*cache).next = to_trim;
                             to_trim = cache;
                             continue;
-                        } else if life_time > 5000 {
+                        } else if life_time > half_timing {
                             let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                             (*cache).life_time = current;
                             GlobalHandler.push_to_global(class, cache, cache, 1);
@@ -119,10 +134,13 @@ impl PTrim {
                     while !to_trim.is_null() {
                         let next = (*to_trim).next;
 
-                        if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
-                            if !self.push_to_thread(engine, class, to_trim) {
-                                GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
-                            }
+                        if total_freed <= pad || pad == 0 {
+                            self.release_memory(to_trim, SIZE_CLASSES[class]);
+                            total_freed += SIZE_CLASSES[class];
+                        }
+
+                        if !self.push_to_thread(engine, class, to_trim) {
+                            GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
                         }
 
                         to_trim = next;
@@ -132,10 +150,20 @@ impl PTrim {
 
             node = (*node).next.load(Ordering::Acquire);
         }
+
+        if total > 0 {
+            AVERAGE_BLOCK_TIMES_PTHREAD.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+        }
+
+        if total_freed >= pad {
+            (1, total_freed)
+        } else {
+            (0, total_freed)
+        }
     }
 
     #[inline]
-    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) -> bool {
+    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) {
         unsafe {
             const PAGE_SIZE: usize = 4096;
             const PAGE_MASK: usize = !(PAGE_SIZE - 1);
@@ -148,30 +176,11 @@ impl PTrim {
             let page_end = user_end & PAGE_MASK;
 
             if page_start >= page_end {
-                return false;
+                return;
             }
             let length = page_end - page_start;
-            let class = match_size_class(size).unwrap();
 
-            if ITERATIONS[class] == 1 {
-                let payload_size = SIZE_CLASSES[class];
-                let block_size = align_to(payload_size + HEADER_SIZE, 16);
-                let total = block_size * ITERATIONS[class];
-
-                let is_ok =
-                    madvise(header_ptr as *mut c_void, total, Advice::LinuxDontNeed).is_ok();
-
-                if is_ok {
-                    VA_MAP.free(header_ptr as usize, total);
-                }
-
-                return is_ok;
-            } else {
-                if release_block(header_ptr) {
-                    return true;
-                }
-                return madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
-            }
+            let _ = madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed);
         }
     }
 }

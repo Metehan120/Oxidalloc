@@ -5,13 +5,12 @@ use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError, release_block,
+    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
-        match_size_class,
     },
-    va::{align_to, bitmap::VA_MAP, va_helper::is_ours},
+    va::{bootstrap::SHUTDOWN, va_helper::is_ours},
 };
 
 pub struct GTrim;
@@ -44,8 +43,21 @@ impl GTrim {
         (global_cache, real)
     }
 
-    pub unsafe fn trim(&self) {
-        for class in 0..ITERATIONS.len() {
+    pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
+        if SHUTDOWN.load(Ordering::Relaxed) {
+            return (0, 0);
+        }
+
+        let mut avg = 0;
+        let mut total = 0;
+        let mut total_freed = 0;
+        let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
+
+        for class in 9..ITERATIONS.len() {
+            if total_freed >= pad && pad != 0 {
+                return (1, total_freed);
+            }
+
             let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
             let mut to_trim = null_mut();
 
@@ -64,7 +76,12 @@ impl GTrim {
                         .load(Ordering::Relaxed)
                         .saturating_sub((*block).life_time);
 
-                    if life_time > 10000 {
+                    if life_time != 0 {
+                        avg += life_time;
+                        total += 1;
+                    }
+
+                    if life_time > timing {
                         (*block).next = to_trim;
                         to_trim = block;
                     } else {
@@ -94,17 +111,30 @@ impl GTrim {
             while !to_trim.is_null() {
                 let next = (*to_trim).next;
 
-                if !self.release_memory(to_trim, SIZE_CLASSES[class]) {
-                    GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                if total_freed <= pad || pad == 0 {
+                    self.release_memory(to_trim, SIZE_CLASSES[class]);
+                    total_freed += SIZE_CLASSES[class];
                 }
+
+                GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
 
                 to_trim = next;
             }
         }
+
+        if total > 0 {
+            AVERAGE_BLOCK_TIMES_GLOBAL.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+        }
+
+        if total_freed >= pad {
+            (1, total_freed)
+        } else {
+            (0, total_freed)
+        }
     }
 
     #[inline]
-    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) -> bool {
+    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) {
         unsafe {
             const PAGE_SIZE: usize = 4096;
             const PAGE_MASK: usize = !(PAGE_SIZE - 1);
@@ -117,30 +147,11 @@ impl GTrim {
             let page_end = user_end & PAGE_MASK;
 
             if page_start >= page_end {
-                return false;
+                return;
             }
             let length = page_end - page_start;
-            let class = match_size_class(size).unwrap();
 
-            if ITERATIONS[class] == 1 {
-                let payload_size = SIZE_CLASSES[class];
-                let block_size = align_to(payload_size + HEADER_SIZE, 16);
-                let total = block_size * ITERATIONS[class];
-
-                let is_ok =
-                    madvise(header_ptr as *mut c_void, total, Advice::LinuxDontNeed).is_ok();
-
-                if is_ok {
-                    VA_MAP.free(header_ptr as usize, total);
-                }
-
-                return is_ok;
-            } else {
-                if release_block(header_ptr) {
-                    return true;
-                }
-                return madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed).is_ok();
-            }
+            let _ = madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed);
         }
     }
 }

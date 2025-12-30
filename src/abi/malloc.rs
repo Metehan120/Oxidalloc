@@ -2,7 +2,7 @@
 
 use std::{
     alloc::Layout,
-    os::raw::c_void,
+    os::raw::{c_int, c_void},
     ptr::null_mut,
     sync::{
         Once,
@@ -13,17 +13,20 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    TOTAL_IN_USE, TOTAL_OPS,
-    big_allocations::allocations::big_malloc,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
+    big_allocation::big_malloc,
     get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
         match_size_class, thread_local::ThreadLocalEngine,
     },
-    trim::thread::{spawn_gtrim_thread, spawn_ptrim_thread},
+    trim::{
+        gtrim::GTrim,
+        ptrim::PTrim,
+        thread::{spawn_gtrim_thread, spawn_ptrim_thread},
+    },
     va::{
-        bootstrap::{VA_LEN, boot_strap},
+        bootstrap::{SHUTDOWN, VA_LEN, boot_strap},
         va_helper::is_ours,
     },
 };
@@ -53,7 +56,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     if total > 0 && total % 1500 == 0 {
         let time = get_clock().elapsed().as_millis() as usize;
-        OX_CURRENT_STAMP.swap(time, Ordering::Relaxed);
+        OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
@@ -126,7 +129,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
 
-    TOTAL_IN_USE.fetch_add(1, Ordering::Relaxed);
     (cache as *mut u8).add(HEADER_SIZE)
 }
 
@@ -173,4 +175,24 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
         None => size,
     };
     raw_usable.saturating_sub(offset) as size_t
+}
+
+pub unsafe extern "C" fn malloc_trim(pad: size_t) -> c_int {
+    let is_ok_p = PTrim.trim(pad);
+    let is_ok_g = if is_ok_p.0 == 0 {
+        let gtrim = GTrim.trim(pad);
+        if gtrim.0 == 0 {
+            if (is_ok_p.1 + gtrim.1) >= pad { 1 } else { 0 }
+        } else {
+            1
+        }
+    } else {
+        1
+    };
+
+    if !SHUTDOWN.load(Ordering::Relaxed) && pad == 0 {
+        1
+    } else {
+        is_ok_g | is_ok_p.0
+    }
 }

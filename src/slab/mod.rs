@@ -12,18 +12,18 @@ pub const NUM_SIZE_CLASSES: usize = SIZE_CLASSES.len();
 
 // Iterations of each size class, each iteration is a try to allocate a chunk of memory
 pub const ITERATIONS: [usize; 18] = [
-    2048, // 16B   - tons of tiny allocations (strings, small objects)
-    1024, // 32B   - very common (pointers, small structs)
-    512,  // 64B   - cache-line sized, super common
-    512,  // 128B  - still very frequent
-    256,  // 256B  - common
-    128,  // 512B  - common
-    64,   // 1KB   - moderate
-    32,   // 2KB   - moderate
-    16,   // 4KB   - page-sized, common for buffers
-    8,    // 8KB   - still fairly common
-    4,    // 16KB  - less common
-    2,    // 32KB  - getting rare
+    1024, // 16B   - tons of tiny allocations (strings, small objects)
+    512,  // 32B   - very common (pointers, small structs)
+    256,  // 64B   - cache-line sized, super common
+    256,  // 128B  - still very frequent
+    128,  // 256B  - common
+    64,   // 512B  - common
+    32,   // 1KB   - moderate
+    16,   // 2KB   - moderate
+    8,    // 4KB   - page-sized, common for buffers
+    4,    // 8KB   - still fairly common
+    2,    // 16KB  - less common
+    1,    // 32KB  - getting rare
     1,    // 64KB  - rare
     1,    // 128KB - rare
     1,    // 256KB - very rare
