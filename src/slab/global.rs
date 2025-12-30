@@ -41,15 +41,22 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        self.lock(class);
-
-        let current_head = GLOBAL[class].load(Ordering::Relaxed);
-
-        (*tail).next = current_head;
-        GLOBAL[class].store(head, Ordering::Relaxed);
-        GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
-
-        self.unlock(class);
+        let mut current = GLOBAL[class].load(Ordering::Relaxed);
+        loop {
+            (*tail).next = current;
+            match GLOBAL[class].compare_exchange_weak(
+                current,
+                head,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
+                    break;
+                }
+                Err(new) => current = new,
+            }
+        }
     }
 
     pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
