@@ -39,12 +39,12 @@ pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
 pub struct OxHeader {
-    pub next: *mut OxHeader,
+    pub in_use: u8,
+    pub flag: i32,
+    pub next: usize,
+    pub life_time: usize,
     pub size: u64,
     pub magic: u64,
-    pub flag: i32,
-    pub life_time: usize,
-    pub in_use: u8,
 }
 
 #[repr(u32)]
@@ -58,6 +58,7 @@ pub enum OxidallocError {
     PThreadCacheFailed = 0x1006,
     TooMuchQuarantine = 0x1007,
     DoubleQuarantine = 0x1008,
+    SecurityViolation = 0x1009,
 }
 
 impl Debug for OxidallocError {
@@ -72,6 +73,7 @@ impl Debug for OxidallocError {
             OxidallocError::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
             OxidallocError::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
             OxidallocError::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
+            OxidallocError::SecurityViolation => write!(f, "SecurityViolation (0x1009)"),
         }
     }
 }

@@ -10,9 +10,6 @@ pub mod va_helper {
     pub fn is_ours(addr: usize) -> bool {
         let start = VA_START.load(Ordering::Acquire);
         let end = VA_END.load(Ordering::Acquire);
-        if start == 0 || end == 0 || start >= end {
-            return false;
-        }
         if addr % 8 != 0 {
             return false;
         }

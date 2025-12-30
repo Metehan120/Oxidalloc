@@ -2,8 +2,8 @@
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
-    va::va_helper::is_ours,
+    slab::{NUM_SIZE_CLASSES, pack_header, quarantine::quarantine, unpack_header},
+    va::{bootstrap::GLOBAL_RANDOM, va_helper::is_ours},
 };
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::{hint::spin_loop, ptr::null_mut};
@@ -44,8 +44,8 @@ impl GlobalHandler {
         self.lock(class);
 
         let current_head = GLOBAL[class].load(Ordering::Relaxed);
+        (*tail).next = pack_header(current_head, GLOBAL_RANDOM);
 
-        (*tail).next = current_head;
         GLOBAL[class].store(head, Ordering::Relaxed);
         GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
 
@@ -74,13 +74,17 @@ impl GlobalHandler {
         let mut tail = current_head;
         let mut count = 1;
         // Loop through the list until we reach the end or the batch size is reached
-        while count < batch_size && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-            tail = (*tail).next;
+        while count < batch_size
+            && !unpack_header((*tail).next, GLOBAL_RANDOM).is_null()
+            && is_ours(unpack_header((*tail).next, GLOBAL_RANDOM) as usize)
+        {
+            tail = unpack_header((*tail).next, GLOBAL_RANDOM);
             count += 1;
         }
 
-        let new_head = (*tail).next;
-        (*tail).next = null_mut();
+        let new_head = unpack_header((*tail).next, GLOBAL_RANDOM);
+        (*tail).next = pack_header(null_mut(), GLOBAL_RANDOM);
+
         GLOBAL[class].store(new_head, Ordering::Relaxed);
         GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
 

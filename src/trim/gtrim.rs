@@ -9,8 +9,12 @@ use crate::{
     slab::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
+        pack_header, unpack_header,
     },
-    va::{bootstrap::SHUTDOWN, va_helper::is_ours},
+    va::{
+        bootstrap::{GLOBAL_RANDOM, SHUTDOWN},
+        va_helper::is_ours,
+    },
 };
 
 pub struct GTrim;
@@ -26,7 +30,10 @@ impl GTrim {
         let mut block = global_cache;
         let mut real = 1;
 
-        while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
+        while real < 16
+            && !unpack_header((*block).next, GLOBAL_RANDOM).is_null()
+            && is_ours(unpack_header((*block).next, GLOBAL_RANDOM) as usize)
+        {
             if (*block).in_use == 1 {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
@@ -35,10 +42,11 @@ impl GTrim {
                 );
             }
 
-            block = (*block).next;
+            block = unpack_header((*block).next, GLOBAL_RANDOM);
             real += 1;
         }
-        (*block).next = null_mut();
+
+        (*block).next = pack_header(null_mut(), GLOBAL_RANDOM);
 
         (global_cache, real)
     }
@@ -71,7 +79,7 @@ impl GTrim {
                 let mut to_push = null_mut();
 
                 for _ in 0..size {
-                    let next = (*block).next;
+                    let next = unpack_header((*block).next, GLOBAL_RANDOM);
                     let life_time = OX_CURRENT_STAMP
                         .load(Ordering::Relaxed)
                         .saturating_sub((*block).life_time);
@@ -82,10 +90,10 @@ impl GTrim {
                     }
 
                     if life_time > timing {
-                        (*block).next = to_trim;
+                        (*block).next = pack_header(to_trim, GLOBAL_RANDOM);
                         to_trim = block;
                     } else {
-                        (*block).next = to_push;
+                        (*block).next = pack_header(to_push, GLOBAL_RANDOM);
                         to_push = block;
                     }
 
@@ -99,17 +107,20 @@ impl GTrim {
                 let mut block = to_push;
                 let mut real = 1;
 
-                while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-                    block = (*block).next;
+                while real < 16
+                    && !unpack_header((*block).next, GLOBAL_RANDOM).is_null()
+                    && is_ours(unpack_header((*block).next, GLOBAL_RANDOM) as usize)
+                {
+                    block = unpack_header((*block).next, GLOBAL_RANDOM);
                     real += 1;
                 }
-                (*block).next = null_mut();
+                (*block).next = pack_header(null_mut(), GLOBAL_RANDOM);
 
                 GlobalHandler.push_to_global(class, to_push, block, real);
             }
 
             while !to_trim.is_null() {
-                let next = (*to_trim).next;
+                let next = unpack_header((*to_trim).next, GLOBAL_RANDOM);
 
                 if total_freed <= pad || pad == 0 {
                     self.release_memory(to_trim, SIZE_CLASSES[class]);

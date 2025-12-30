@@ -18,7 +18,7 @@ use crate::{
     get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
-        match_size_class, thread_local::ThreadLocalEngine,
+        match_size_class, pack_header, thread_local::ThreadLocalEngine, unpack_header,
     },
     trim::{
         gtrim::GTrim,
@@ -26,7 +26,7 @@ use crate::{
         thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     },
     va::{
-        bootstrap::{SHUTDOWN, VA_LEN, boot_strap},
+        bootstrap::{GLOBAL_RANDOM, SHUTDOWN, VA_LEN, boot_strap},
         va_helper::is_ours,
     },
 };
@@ -82,12 +82,16 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
             let mut tail = global_cache;
             let mut real = 1;
 
+            let random = GLOBAL_RANDOM;
             // Loop through cache and found the last header and set linked list to null
-            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-                tail = (*tail).next;
+            while real < batch
+                && !unpack_header((*tail).next, random).is_null()
+                && is_ours(unpack_header((*tail).next, random) as usize)
+            {
+                tail = unpack_header((*tail).next, random);
                 real += 1;
             }
-            (*tail).next = null_mut();
+            (*tail).next = pack_header(null_mut(), random);
 
             thread.push_to_thread_tailed(class, global_cache, tail, real);
             cache = thread.pop_from_thread(class);
@@ -125,7 +129,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
         return null_mut();
     }
 
-    (*cache).next = null_mut();
+    (*cache).next = pack_header(null_mut(), GLOBAL_RANDOM);
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
 

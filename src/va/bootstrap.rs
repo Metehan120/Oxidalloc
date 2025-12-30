@@ -3,11 +3,12 @@ use std::{
     os::raw::c_void,
     ptr::null_mut,
     sync::{
-        Mutex,
+        Mutex, Once,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
+use libc::getrandom;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
 use crate::{
@@ -18,11 +19,13 @@ use crate::{
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
 pub static VA_END: AtomicUsize = AtomicUsize::new(0);
 pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
+pub static mut GLOBAL_RANDOM: usize = 0;
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+pub static ONCE: Once = Once::new();
 
 extern "C" fn allocator_shutdown() {
     SHUTDOWN.store(true, Ordering::Release);
@@ -31,6 +34,26 @@ extern "C" fn allocator_shutdown() {
 pub fn register_shutdown() {
     unsafe {
         libc::atexit(allocator_shutdown);
+    }
+}
+
+fn init_random() {
+    unsafe {
+        let mut rand: usize = 0;
+        let ret = getrandom(
+            &mut rand as *mut usize as *mut c_void,
+            size_of::<usize>(),
+            0,
+        );
+        eprintln!("Rand: {}", rand);
+        if ret as usize != size_of::<usize>() {
+            OxidallocError::SecurityViolation.log_and_abort(
+                null_mut(),
+                "Failed to initialize random number generator",
+                None,
+            );
+        }
+        GLOBAL_RANDOM = rand;
     }
 }
 
@@ -70,19 +93,23 @@ pub unsafe fn boot_strap() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if !IS_BOOTSTRAP.load(Ordering::Acquire) {
+    if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
+    IS_BOOTSTRAP.store(false, Ordering::Relaxed);
     THREAD_REGISTER.store(null_mut(), Ordering::Relaxed);
-    IS_BOOTSTRAP.store(false, Ordering::Release);
+
     if IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-    SHUTDOWN.store(false, Ordering::Relaxed);
-    ThreadLocalEngine::get_or_init();
-    va_init();
-    register_shutdown();
-    init_threshold();
+    ONCE.call_once(|| {
+        SHUTDOWN.store(false, Ordering::Relaxed);
+        ThreadLocalEngine::get_or_init();
+        va_init();
+        register_shutdown();
+        init_threshold();
+        init_random();
+    });
 }
 
 pub unsafe fn va_init() {
