@@ -21,7 +21,7 @@ impl GlobalHandler {
     #[inline(always)]
     fn lock(&self, class: usize) {
         while GLOBAL_LOCKS[class]
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             spin_loop();
@@ -41,22 +41,15 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        let mut current = GLOBAL[class].load(Ordering::Relaxed);
-        loop {
-            (*tail).next = current;
-            match GLOBAL[class].compare_exchange_weak(
-                current,
-                head,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::AcqRel);
-                    break;
-                }
-                Err(new) => current = new,
-            }
-        }
+        self.lock(class);
+
+        let current_head = GLOBAL[class].load(Ordering::Relaxed);
+
+        (*tail).next = current_head;
+        GLOBAL[class].store(head, Ordering::Relaxed);
+        GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 
     pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {

@@ -152,7 +152,7 @@ impl ThreadLocalEngine {
     #[inline(always)]
     pub fn lock(&self, class: usize) {
         while self.locks[class]
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             spin_loop();
@@ -212,22 +212,15 @@ impl ThreadLocalEngine {
 
     #[inline(always)]
     pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
-        let mut current = self.cache[class].load(Ordering::Relaxed);
-        loop {
-            (*head).next = current;
-            match self.cache[class].compare_exchange_weak(
-                current,
-                head,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.usages[class].fetch_add(1, Ordering::Relaxed);
-                    break;
-                }
-                Err(new) => current = new,
-            }
-        }
+        self.lock(class);
+
+        let current_header = self.cache[class].load(Ordering::Relaxed);
+        (*head).next = current_header;
+
+        self.cache[class].store(head, Ordering::Relaxed);
+        self.usages[class].fetch_add(1, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 
     #[inline(always)]
@@ -238,22 +231,15 @@ impl ThreadLocalEngine {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        let mut current = self.cache[class].load(Ordering::Relaxed);
-        loop {
-            (*tail).next = current;
-            match self.cache[class].compare_exchange_weak(
-                current,
-                head,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
-                    break;
-                }
-                Err(new) => current = new,
-            }
-        }
+        self.lock(class);
+
+        let current_header = self.cache[class].load(Ordering::Relaxed);
+        (*tail).next = current_header;
+
+        self.cache[class].store(head, Ordering::Relaxed);
+        self.usages[class].fetch_add(batch_size, Ordering::Relaxed);
+
+        self.unlock(class);
     }
 }
 

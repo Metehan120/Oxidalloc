@@ -86,6 +86,19 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
+                for class in 0..9 {
+                    if total_freed >= pad && pad != 0 {
+                        return (1, total_freed);
+                    }
+
+                    let (usage, is_ok) = self.get_usage(engine, class);
+                    if !is_ok {
+                        break;
+                    }
+
+                    for _ in 0..usage {}
+                }
+
                 for class in 9..NUM_SIZE_CLASSES {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
@@ -133,16 +146,11 @@ impl PTrim {
 
                     while !to_trim.is_null() {
                         let next = (*to_trim).next;
-
                         if total_freed <= pad || pad == 0 {
                             self.release_memory(to_trim, SIZE_CLASSES[class]);
                             total_freed += SIZE_CLASSES[class];
                         }
-
-                        if !self.push_to_thread(engine, class, to_trim) {
-                            GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
-                        }
-
+                        GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
                         to_trim = next;
                     }
                 }
