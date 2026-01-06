@@ -99,7 +99,7 @@ impl PTrim {
                     for _ in 0..usage {}
                 }
 
-                for class in 9..NUM_SIZE_CLASSES {
+                for class in 8..NUM_SIZE_CLASSES {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }

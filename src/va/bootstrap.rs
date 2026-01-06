@@ -11,7 +11,7 @@ use std::{
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
 use crate::{
-    OX_TRIM_THRESHOLD, OxidallocError,
+    OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
@@ -31,6 +31,33 @@ extern "C" fn allocator_shutdown() {
 pub fn register_shutdown() {
     unsafe {
         libc::atexit(allocator_shutdown);
+    }
+}
+
+pub fn init_thp() {
+    unsafe {
+        let key = b"OX_USE_THP\0";
+        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+        if !value_ptr.is_null() {
+            let mut val = 0usize;
+            let mut ptr = value_ptr as *const u8;
+
+            while *ptr != 0 {
+                if *ptr >= b'0' && *ptr <= b'9' {
+                    val = val * 10 + (*ptr - b'0') as usize;
+                } else {
+                    break;
+                }
+                ptr = ptr.add(1);
+            }
+
+            if val == 1 {
+                OX_USE_THP.store(true, Ordering::Relaxed);
+            }
+        } else {
+            OX_USE_THP.store(false, Ordering::Relaxed);
+        }
     }
 }
 
@@ -83,6 +110,7 @@ pub unsafe fn boot_strap() {
     va_init();
     register_shutdown();
     init_threshold();
+    init_thp();
 }
 
 pub unsafe fn va_init() {

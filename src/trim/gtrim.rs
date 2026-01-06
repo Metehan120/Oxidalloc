@@ -53,7 +53,7 @@ impl GTrim {
         let mut total_freed = 0;
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
 
-        for class in 9..ITERATIONS.len() {
+        for class in 8..ITERATIONS.len() {
             if total_freed >= pad && pad != 0 {
                 return (1, total_freed);
             }
