@@ -4,7 +4,7 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 
 ## Big Announcement: The first alpha release is coming soon — in the next few weeks.
 
-## **Huge Update**: Oxidalloc now supports Trim for size classes >=4096 (4kb), but still under development if there are any problems please report them.
+## **Huge Update**: Oxidalloc now supports Trim for size classes ≥4096 (4kb), but still under development if there are any problems please report them.
 ### Note: Oxidalloc still in development and experimental.
 
 ## Overview
