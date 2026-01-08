@@ -28,64 +28,54 @@ extern "C" fn allocator_shutdown() {
     SHUTDOWN.store(true, Ordering::Release);
 }
 
-pub fn register_shutdown() {
-    unsafe {
-        libc::atexit(allocator_shutdown);
-    }
+pub unsafe fn register_shutdown() {
+    libc::atexit(allocator_shutdown);
 }
 
-pub fn init_thp() {
-    unsafe {
-        let key = b"OX_USE_THP\0";
-        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+pub unsafe fn init_thp() {
+    let key = b"OX_USE_THP\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
 
-        if !value_ptr.is_null() {
-            let mut val = 0usize;
-            let mut ptr = value_ptr as *const u8;
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
 
-            while *ptr != 0 {
-                if *ptr >= b'0' && *ptr <= b'9' {
-                    val = val * 10 + (*ptr - b'0') as usize;
-                } else {
-                    break;
-                }
-                ptr = ptr.add(1);
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
             }
+            ptr = ptr.add(1);
+        }
 
-            if val == 1 {
-                OX_USE_THP.store(true, Ordering::Relaxed);
-            }
-        } else {
-            OX_USE_THP.store(false, Ordering::Relaxed);
+        if val == 1 {
+            OX_USE_THP.store(true, Ordering::Relaxed);
         }
     }
 }
 
-pub fn init_threshold() {
-    unsafe {
-        let key = b"OX_TRIM_THRESHOLD\0";
-        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+pub unsafe fn init_threshold() {
+    let key = b"OX_TRIM_THRESHOLD\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
 
-        if !value_ptr.is_null() {
-            let mut val = 0usize;
-            let mut ptr = value_ptr as *const u8;
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
 
-            while *ptr != 0 {
-                if *ptr >= b'0' && *ptr <= b'9' {
-                    val = val * 10 + (*ptr - b'0') as usize;
-                } else {
-                    break;
-                }
-                ptr = ptr.add(1);
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
             }
-
-            if val == 0 || val < 1024 * 1024 {
-                val = 1024 * 1024;
-            }
-            OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
-        } else {
-            OX_TRIM_THRESHOLD.store(1024 * 1024 * 10, Ordering::Relaxed);
+            ptr = ptr.add(1);
         }
+
+        if val == 0 || val < 1024 * 1024 {
+            val = 1024 * 1024;
+        }
+        OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
     }
 }
 
@@ -114,7 +104,7 @@ pub unsafe fn boot_strap() {
 }
 
 pub unsafe fn va_init() {
-    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 4;
+    const MIN_RESERVE: usize = 1024 * 1024 * 256;
     const MAX_SIZE: usize = 1024 * 1024 * 1024 * 256;
     let mut size = MAX_SIZE;
 

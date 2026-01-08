@@ -13,9 +13,8 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError, TOTAL_OPS,
     big_allocation::big_malloc,
-    get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
         match_size_class, thread_local::ThreadLocalEngine,
@@ -52,11 +51,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
                 spawn_gtrim_thread();
             });
         }
-    }
-
-    if total > 0 && total % 1500 == 0 {
-        let time = get_clock().elapsed().as_millis() as usize;
-        OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {

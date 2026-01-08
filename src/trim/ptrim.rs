@@ -86,7 +86,7 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                for class in 0..9 {
+                for class in 0..8 {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -96,7 +96,29 @@ impl PTrim {
                         break;
                     }
 
-                    for _ in 0..usage {}
+                    for _ in 0..usage / 2 {
+                        let (cache, is_ok) = self.pop_from_thread(engine, class);
+                        if !is_ok || cache.is_null() {
+                            break;
+                        }
+
+                        let life_time = OX_CURRENT_STAMP
+                            .load(Ordering::Relaxed)
+                            .saturating_sub((*cache).life_time);
+
+                        if life_time > half_timing {
+                            let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+                            (*cache).life_time = current;
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            continue;
+                        }
+
+                        let push = self.push_to_thread(engine, class, cache);
+                        if !push {
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            break;
+                        }
+                    }
                 }
 
                 for class in 8..NUM_SIZE_CLASSES {
