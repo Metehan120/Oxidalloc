@@ -77,9 +77,23 @@ pub struct OxHeader {
 #[allow(unsafe_op_in_unsafe_fn)]
 #[inline]
 pub unsafe fn release_slab(metadata: *mut SlabMetadata, class: usize) -> bool {
-    if metadata.is_null() {
+    if metadata.is_null() || class >= GLOBAL.len() {
         return false;
     }
+
+    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
+    let mut active = 0usize;
+    while !node.is_null() {
+        let engine = (*node).engine.load(Ordering::Acquire);
+        if !engine.is_null() {
+            active += 1;
+            if active > 1 {
+                return false;
+            }
+        }
+        node = (*node).next.load(Ordering::Acquire);
+    }
+
     let cvoid = metadata as *mut c_void;
     let in_use = (*metadata).ref_count.load(Ordering::Acquire);
 
@@ -162,6 +176,7 @@ pub unsafe fn release_blocks(metadata: *mut SlabMetadata, class: usize) {
     let global_head = GLOBAL[class].load(Ordering::Relaxed);
     let (global_head, global_kept, _global_removed) =
         prune_list_for_metadata(global_head, metadata);
+
     GLOBAL[class].store(global_head, Ordering::Relaxed);
     GLOBAL_USAGE[class].store(global_kept, Ordering::Relaxed);
     GLOBAL_LOCKS[class].store(false, Ordering::Release);
@@ -172,12 +187,23 @@ pub unsafe fn release_blocks(metadata: *mut SlabMetadata, class: usize) {
         if !engine.is_null() {
             (*engine).lock(class);
             let local_head = (*engine).cache[class].load(Ordering::Relaxed);
+            if engine.is_null() {
+                continue;
+            }
+
             let (local_head, local_kept, _local_removed) =
                 prune_list_for_metadata(local_head, metadata);
+            if engine.is_null() {
+                continue;
+            }
 
             (*engine).cache[class].store(local_head, Ordering::Relaxed);
             (*engine).usages[class].store(local_kept, Ordering::Relaxed);
             (*engine).latest_usages[class].store(local_kept, Ordering::Relaxed);
+
+            if engine.is_null() {
+                continue;
+            }
             (*engine).unlock(class);
         }
 

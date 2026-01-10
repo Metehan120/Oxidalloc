@@ -324,5 +324,11 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
         }
     }
 
+    for class in 0..NUM_SIZE_CLASSES {
+        (*cache).lock(class);
+    }
+    for class in 0..NUM_SIZE_CLASSES {
+        (*cache).unlock(class);
+    }
     let _ = munmap(cache_ptr, size_of::<ThreadLocalEngine>());
 }
