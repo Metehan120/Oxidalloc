@@ -5,7 +5,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
     MAGIC, OX_ALIGN_TAG, OxHeader, TOTAL_OPS,
-    abi::{free::free, malloc::malloc},
+    abi::{fallback::realloc_fallback, free::free, malloc::malloc},
     slab::match_size_class,
     va::{bootstrap::VA_LEN, va_helper::is_ours},
 };
@@ -24,7 +24,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     }
 
     if !is_ours(ptr as usize) {
-        return null_mut();
+        return realloc_fallback(ptr, new_size);
     }
 
     TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

@@ -204,6 +204,51 @@ impl ThreadLocalEngine {
         self.latest_popped_next[class].store(next, Ordering::Relaxed);
         let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
         self.latest_usages[class].store(usage, Ordering::Relaxed);
+        self.unlock(class);
+
+        header
+    }
+
+    #[inline(always)]
+    pub unsafe fn pop_from_thread_for_alloc(&self, class: usize) -> *mut OxHeader {
+        self.lock(class);
+        let mut header = self.cache[class].load(Ordering::Relaxed);
+
+        if header.is_null() {
+            self.unlock(class);
+            return null_mut();
+        }
+
+        if !is_ours(header as usize) {
+            if !quarantine(Some(self), header as usize, class, true) {
+                self.cache[class].store(null_mut(), Ordering::Relaxed);
+                self.usages[class].store(0, Ordering::Relaxed);
+                self.unlock(class);
+                return null_mut();
+            };
+            let cur_header = self.cache[class].load(Ordering::Relaxed);
+            header = cur_header;
+        }
+
+        if header.is_null() || !is_ours(header as usize) {
+            self.unlock(class);
+            return null_mut();
+        }
+
+        let next = (*header).next;
+        if !next.is_null() {
+            prefetch(next as *const u8);
+        }
+
+        self.cache[class].store(next, Ordering::Relaxed);
+        self.latest_popped_next[class].store(next, Ordering::Relaxed);
+        let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
+        self.latest_usages[class].store(usage, Ordering::Relaxed);
+
+        let metadata = (*header).metadata;
+        if !metadata.is_null() {
+            (*metadata).ref_count.fetch_add(1, Ordering::AcqRel);
+        }
 
         self.unlock(class);
 

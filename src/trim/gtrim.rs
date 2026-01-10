@@ -6,6 +6,7 @@ use rustix::mm::{Advice, madvise};
 
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    release_slab,
     slab::{
         ITERATIONS, SIZE_CLASSES,
         global::{GLOBAL_USAGE, GlobalHandler},
@@ -16,8 +17,8 @@ use crate::{
 pub struct GTrim;
 
 impl GTrim {
-    unsafe fn pop_from_global(&self, class: usize) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_batch_from_global(class, 16);
+    unsafe fn pop_from_global(&self, class: usize, size: usize) -> (*mut OxHeader, usize) {
+        let global_cache = GlobalHandler.pop_batch_from_global(class, size);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -26,7 +27,7 @@ impl GTrim {
         let mut block = global_cache;
         let mut real = 1;
 
-        while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
+        while real < size && !(*block).next.is_null() && is_ours((*block).next as usize) {
             if (*block).in_use == 1 {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
@@ -53,7 +54,34 @@ impl GTrim {
         let mut total_freed = 0;
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
 
-        for class in 8..ITERATIONS.len() {
+        for class in 0..22 {
+            if total_freed >= pad && pad != 0 {
+                return (1, total_freed);
+            }
+
+            let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
+
+            for _ in 0..class_usage {
+                let (cache, _) = self.pop_from_global(class, 1);
+                if cache.is_null() {
+                    break;
+                }
+
+                let life_time = OX_CURRENT_STAMP
+                    .load(Ordering::Relaxed)
+                    .saturating_sub((*cache).life_time);
+
+                if life_time > timing {
+                    if release_slab((*cache).metadata, class) {
+                        continue;
+                    };
+                }
+
+                GlobalHandler.push_to_global(class, cache, cache, 1);
+            }
+        }
+
+        for class in 22..ITERATIONS.len() {
             if total_freed >= pad && pad != 0 {
                 return (1, total_freed);
             }
@@ -62,7 +90,7 @@ impl GTrim {
             let mut to_trim = null_mut();
 
             for _ in 0..class_usage / 16 {
-                let (cache, size) = self.pop_from_global(class);
+                let (cache, size) = self.pop_from_global(class, 16);
                 if cache.is_null() {
                     break;
                 }

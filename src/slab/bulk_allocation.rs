@@ -1,9 +1,9 @@
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{mem::size_of, os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, TOTAL_ALLOCATED,
+    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, SlabMetadata, TOTAL_ALLOCATED,
     slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
@@ -13,7 +13,8 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
-    let total = block_size * num_blocks;
+    let meta_size = align_to(size_of::<SlabMetadata>(), 16);
+    let total = meta_size + (block_size * num_blocks);
 
     let hint = VA_MAP.alloc(total).ok_or(Err::OutOfReservation)?;
     let mem = mmap_anonymous(
@@ -31,15 +32,25 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
+    let metadata = mem as *mut SlabMetadata;
+    std::ptr::write(
+        metadata,
+        SlabMetadata {
+            size: total,
+            ref_count: std::sync::atomic::AtomicUsize::new(0),
+        },
+    );
+
     let mut prev = null_mut();
     for i in (0..num_blocks).rev() {
-        let offset = i * block_size;
+        let offset = meta_size + (i * block_size);
         let current_header = (mem as usize + offset) as *mut OxHeader;
 
         (*current_header).next = prev;
         (*current_header).size = payload_size as u64;
         (*current_header).magic = MAGIC;
         (*current_header).in_use = 0;
+        (*current_header).metadata = metadata;
 
         prev = current_header;
     }

@@ -2,6 +2,7 @@
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
+    abi::fallback::free_fallback,
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::va_helper::is_ours,
@@ -21,6 +22,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     if !is_ours(ptr as usize) {
+        free_fallback(ptr);
         return;
     }
 
@@ -73,4 +75,8 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).life_time = stamp;
 
     thread.push_to_thread(class, header);
+    let metadata = (*header).metadata;
+    if !metadata.is_null() {
+        (*metadata).ref_count.fetch_sub(1, Ordering::AcqRel);
+    }
 }

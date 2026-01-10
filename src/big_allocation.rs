@@ -43,6 +43,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     (*actual_ptr).size = size as u64;
     (*actual_ptr).magic = MAGIC;
     (*actual_ptr).in_use = 1;
+    (*actual_ptr).metadata = null_mut();
 
     (actual_ptr as *mut u8).add(HEADER_SIZE)
 }
@@ -57,6 +58,7 @@ pub unsafe fn big_free(ptr: *mut c_void) {
     // Make the header look free before we potentially lose write access.
     (*header).in_use = 0;
     (*header).magic = 0;
+    (*header).metadata = null_mut();
 
     // If this fails (e.g. under a restrictive sandbox), fall back to `madvise(DONTNEED)`.
     let remap_result = mmap_anonymous(
