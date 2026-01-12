@@ -20,7 +20,7 @@ use crate::{
     slab::{
         ITERATIONS,
         global::{GLOBAL, GLOBAL_LOCKS, GLOBAL_USAGE},
-        thread_local::THREAD_REGISTER,
+        thread_local::{THREAD_REGISTER, lock_thread_register, unlock_thread_register},
     },
     va::{bitmap::VA_MAP, va_helper::is_ours},
 };
@@ -47,7 +47,7 @@ pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
 pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
-pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
+pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 100);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
 pub static OX_DEBUG: AtomicBool = AtomicBool::new(false);
 
@@ -76,47 +76,103 @@ pub struct OxHeader {
 
 #[allow(unsafe_op_in_unsafe_fn)]
 #[inline]
+unsafe fn lock_all_thread_caches(class: usize) {
+    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
+    while !node.is_null() {
+        let engine = (*node).engine.load(Ordering::Acquire);
+        if !engine.is_null() {
+            (*engine).lock(class);
+        }
+        node = (*node).next.load(Ordering::Acquire);
+    }
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+#[inline]
+unsafe fn unlock_all_thread_caches(class: usize) {
+    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
+    while !node.is_null() {
+        let engine = (*node).engine.load(Ordering::Acquire);
+        if !engine.is_null() {
+            (*engine).unlock(class);
+        }
+        node = (*node).next.load(Ordering::Acquire);
+    }
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+#[inline]
+unsafe fn prune_thread_caches_locked(metadata: *mut SlabMetadata, class: usize) {
+    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
+    while !node.is_null() {
+        let engine = (*node).engine.load(Ordering::Acquire);
+        if !engine.is_null() {
+            let local_head = (*engine).cache[class].load(Ordering::Relaxed);
+            let (local_head, local_kept, _local_removed) =
+                prune_list_for_metadata(local_head, metadata);
+
+            (*engine).cache[class].store(local_head, Ordering::Relaxed);
+            (*engine).usages[class].store(local_kept, Ordering::Relaxed);
+            (*engine).latest_usages[class].store(local_kept, Ordering::Relaxed);
+        }
+        node = (*node).next.load(Ordering::Acquire);
+    }
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+#[inline]
 pub unsafe fn release_slab(metadata: *mut SlabMetadata, class: usize) -> bool {
     if metadata.is_null() || class >= GLOBAL.len() {
         return false;
     }
 
-    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
-    let mut active = 0usize;
-    while !node.is_null() {
-        let engine = (*node).engine.load(Ordering::Acquire);
-        if !engine.is_null() {
-            active += 1;
-            if active > 1 {
-                return false;
-            }
-        }
-        node = (*node).next.load(Ordering::Acquire);
+    let in_use = (*metadata).ref_count.load(Ordering::Acquire);
+    if in_use != 0 {
+        return false;
     }
+
+    lock_thread_register();
+    lock_all_thread_caches(class);
+
+    while GLOBAL_LOCKS[class]
+        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        spin_loop();
+    }
+
+    prune_thread_caches_locked(metadata, class);
+
+    let global_head = GLOBAL[class].load(Ordering::Relaxed);
+    let (global_head, global_kept, _global_removed) =
+        prune_list_for_metadata(global_head, metadata);
+
+    GLOBAL[class].store(global_head, Ordering::Relaxed);
+    GLOBAL_USAGE[class].store(global_kept, Ordering::Relaxed);
 
     let cvoid = metadata as *mut c_void;
-    let in_use = (*metadata).ref_count.load(Ordering::Acquire);
 
-    if in_use == 0 {
-        release_blocks(metadata, class);
-        let size = (*metadata).size;
-        if mmap_anonymous(
-            cvoid,
-            size,
-            ProtFlags::empty(),
-            MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
-        )
-        .is_err()
-        {
-            let is_failed = madvise(cvoid, size, Advice::LinuxDontNeed);
-            if is_failed.is_err() {
-                write_bytes(cvoid as *mut u8, 0, size);
-            }
+    let size = (*metadata).size;
+    GLOBAL_LOCKS[class].store(false, Ordering::Release);
+    unlock_all_thread_caches(class);
+    unlock_thread_register();
+
+    if mmap_anonymous(
+        cvoid,
+        size,
+        ProtFlags::empty(),
+        MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
+    )
+    .is_err()
+    {
+        let is_failed = madvise(cvoid, size, Advice::LinuxDontNeed);
+        if is_failed.is_err() {
+            write_bytes(cvoid as *mut u8, 0, size);
         }
-        VA_MAP.free(metadata as usize, size);
-        return true;
     }
-    false
+    VA_MAP.free(metadata as usize, size);
+
+    true
 }
 
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -166,6 +222,11 @@ pub unsafe fn release_blocks(metadata: *mut SlabMetadata, class: usize) {
         return;
     }
 
+    lock_thread_register();
+    lock_all_thread_caches(class);
+
+    prune_thread_caches_locked(metadata, class);
+
     while GLOBAL_LOCKS[class]
         .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_err()
@@ -181,34 +242,8 @@ pub unsafe fn release_blocks(metadata: *mut SlabMetadata, class: usize) {
     GLOBAL_USAGE[class].store(global_kept, Ordering::Relaxed);
     GLOBAL_LOCKS[class].store(false, Ordering::Release);
 
-    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
-    while !node.is_null() {
-        let engine = (*node).engine.load(Ordering::Acquire);
-        if !engine.is_null() {
-            (*engine).lock(class);
-            let local_head = (*engine).cache[class].load(Ordering::Relaxed);
-            if engine.is_null() {
-                continue;
-            }
-
-            let (local_head, local_kept, _local_removed) =
-                prune_list_for_metadata(local_head, metadata);
-            if engine.is_null() {
-                continue;
-            }
-
-            (*engine).cache[class].store(local_head, Ordering::Relaxed);
-            (*engine).usages[class].store(local_kept, Ordering::Relaxed);
-            (*engine).latest_usages[class].store(local_kept, Ordering::Relaxed);
-
-            if engine.is_null() {
-                continue;
-            }
-            (*engine).unlock(class);
-        }
-
-        node = (*node).next.load(Ordering::Acquire);
-    }
+    unlock_all_thread_caches(class);
+    unlock_thread_register();
 }
 
 #[repr(u32)]

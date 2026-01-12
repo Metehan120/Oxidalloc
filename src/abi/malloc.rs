@@ -43,7 +43,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    if total >= 10000 {
+    if total >= 10 {
         if !THREAD_SPAWNED.load(Ordering::Relaxed) {
             THREAD_SPAWNED.store(true, Ordering::Relaxed);
             ONCE.call_once(|| {
