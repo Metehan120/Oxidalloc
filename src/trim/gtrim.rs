@@ -16,8 +16,8 @@ use crate::{
 pub struct GTrim;
 
 impl GTrim {
-    unsafe fn pop_from_global(&self, class: usize, size: usize) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_batch_from_global(class, size);
+    unsafe fn pop_from_global(&self, class: usize) -> (*mut OxHeader, usize) {
+        let global_cache = GlobalHandler.pop_batch_from_global(class, 16);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -26,7 +26,7 @@ impl GTrim {
         let mut block = global_cache;
         let mut real = 1;
 
-        while real < size && !(*block).next.is_null() && is_ours((*block).next as usize) {
+        while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
             if (*block).in_use == 1 {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
@@ -63,7 +63,7 @@ impl GTrim {
             let mut to_trim = null_mut();
 
             for _ in 0..class_usage / 16 {
-                let (cache, size) = self.pop_from_global(class, 16);
+                let (cache, size) = self.pop_from_global(class);
                 if cache.is_null() {
                     break;
                 }

@@ -32,9 +32,8 @@ pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
 pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
-pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 100);
+pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
-pub static OX_DEBUG: AtomicBool = AtomicBool::new(false);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())

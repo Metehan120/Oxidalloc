@@ -26,7 +26,7 @@ impl PTrim {
             return (null_mut(), false);
         }
 
-        let cache_mem = (*cache).pop_from_thread(class, true);
+        let cache_mem = (*cache).pop_from_thread(class);
 
         if cache_mem.is_null() {
             return (null_mut(), true);
@@ -81,16 +81,13 @@ impl PTrim {
 
         let timing = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
         let half_timing = if timing / 2 == 0 { 1 } else { timing / 2 };
-        let mut is_null = node.is_null();
         let class_4096 = get_size_4096_class();
 
-        while is_null {
-            let next = (*node).next.load(Ordering::Acquire);
+        while !node.is_null() {
             let engine = (*node).engine.load(Ordering::Acquire);
-            is_null = next.is_null();
 
             if !engine.is_null() {
-                for class in 0..class_4096 {
+                /* for class in 0..class_4096 {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -123,7 +120,7 @@ impl PTrim {
                             break;
                         }
                     }
-                }
+                } */
 
                 for class in class_4096..NUM_SIZE_CLASSES {
                     if total_freed >= pad && pad != 0 {
@@ -184,7 +181,7 @@ impl PTrim {
                 }
             }
 
-            node = next;
+            node = (*node).next.load(Ordering::Acquire);
         }
 
         if total > 0 {

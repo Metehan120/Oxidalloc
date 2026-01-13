@@ -15,7 +15,7 @@ use std::{
 use crate::{
     OxHeader, OxidallocError,
     slab::{
-        NUM_SIZE_CLASSES, SIZE_CLASSES,
+        NUM_SIZE_CLASSES,
         global::{GLOBAL, GlobalHandler},
         quarantine::quarantine,
     },
@@ -28,22 +28,6 @@ pub struct ThreadNode {
 }
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
-pub static THREAD_REGISTER_LOCK: AtomicBool = AtomicBool::new(false);
-
-#[inline(always)]
-pub fn lock_thread_register() {
-    while THREAD_REGISTER_LOCK
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        spin_loop();
-    }
-}
-
-#[inline(always)]
-pub fn unlock_thread_register() {
-    THREAD_REGISTER_LOCK.store(false, Ordering::Release);
-}
 
 // Register a new thread node with the given, need for trimming
 unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
@@ -55,7 +39,7 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
     ) {
         Ok(mem) => mem,
         Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
-            null_mut() as *mut c_void,
+            0 as *mut c_void,
             "PThread cache creation failed, cannot create thread node: errno({})",
             Some(err),
         ),
@@ -69,16 +53,21 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
         },
     );
 
-    lock_thread_register();
-    let head = THREAD_REGISTER.load(Ordering::Acquire);
-    (*node).next.store(head, Ordering::Relaxed);
-    THREAD_REGISTER.store(node, Ordering::Release);
-    unlock_thread_register();
+    loop {
+        let head = THREAD_REGISTER.load(Ordering::Acquire);
+        (*node).next.store(head, Ordering::Relaxed);
+
+        if THREAD_REGISTER
+            .compare_exchange(head, node, Ordering::Release, Ordering::Acquire)
+            .is_ok()
+        {
+            break;
+        }
+    }
 
     node
 }
 
-#[inline(always)]
 unsafe fn destroy_node(node: *mut ThreadNode) {
     (*node).engine.swap(null_mut(), Ordering::AcqRel);
 }
@@ -176,30 +165,13 @@ impl ThreadLocalEngine {
     }
 
     #[inline(always)]
-    pub unsafe fn pop_from_thread(&self, mut class: usize, is_trim: bool) -> *mut OxHeader {
+    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
         self.lock(class);
         let mut header = self.cache[class].load(Ordering::Relaxed);
 
         if header.is_null() {
-            if SIZE_CLASSES[class] < 1024 * 2 && !is_trim {
-                for i in 1..=2 {
-                    let needed = class + i;
-
-                    let h = self.cache[needed].load(Ordering::Relaxed);
-                    if !h.is_null() {
-                        self.unlock(class);
-                        self.lock(needed);
-                        class = needed;
-                        header = self.cache[class].load(Ordering::Relaxed);
-                        break;
-                    }
-                }
-            }
-
-            if header.is_null() {
-                self.unlock(class);
-                return null_mut();
-            }
+            self.unlock(class);
+            return null_mut();
         }
 
         // Check if the header is ours

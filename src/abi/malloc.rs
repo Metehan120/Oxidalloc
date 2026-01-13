@@ -64,7 +64,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     };
 
     let thread = ThreadLocalEngine::get_or_init();
-    let mut cache = thread.pop_from_thread(class, false);
+    let mut cache = thread.pop_from_thread(class);
 
     // Check if cache is null
     if cache.is_null() {
@@ -84,14 +84,14 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
             (*tail).next = null_mut();
 
             thread.push_to_thread_tailed(class, global_cache, tail, real);
-            cache = thread.pop_from_thread(class, false);
+            cache = thread.pop_from_thread(class);
         } else {
             for i in 0..3 {
                 // Global is null, try to fill thread cache
                 match bulk_fill(thread, class) {
                     // If fill succeeds, pop from thread cache
                     Ok(_) => {
-                        cache = thread.pop_from_thread(class, false);
+                        cache = thread.pop_from_thread(class);
                         break;
                     }
                     // If fill fails, check error if VA exhausted abort
