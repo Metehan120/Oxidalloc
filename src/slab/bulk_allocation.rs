@@ -4,7 +4,7 @@ use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
     Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
+    slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
 
@@ -27,7 +27,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         Err::OutOfMemory
     })?;
 
-    if class == 17 && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
+    if class == NUM_SIZE_CLASSES && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
