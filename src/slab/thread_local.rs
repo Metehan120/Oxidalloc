@@ -80,9 +80,7 @@ unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
 
 #[inline(always)]
 unsafe fn destroy_node(node: *mut ThreadNode) {
-    lock_thread_register();
     (*node).engine.swap(null_mut(), Ordering::AcqRel);
-    unlock_thread_register();
 }
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
