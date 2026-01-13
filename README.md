@@ -2,7 +2,6 @@
 
 A pure Rust general-purpose memory allocator designed to be used as a malloc replacement via `LD_PRELOAD`.
 
-## **On Current Branch**: Oxidalloc now supports Trim for any size classes.
 ## **Huge Update**: Oxidalloc now supports Trim, but still in development if there are any problems please report them.
 
 ## Overview

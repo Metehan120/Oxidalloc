@@ -75,8 +75,4 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).life_time = stamp;
 
     thread.push_to_thread(class, header);
-    let metadata = (*header).metadata;
-    if !metadata.is_null() {
-        (*metadata).ref_count.fetch_sub(1, Ordering::AcqRel);
-    }
 }

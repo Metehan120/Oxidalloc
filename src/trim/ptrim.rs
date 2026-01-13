@@ -5,7 +5,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_PTHREAD, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, release_slab,
+    AVERAGE_BLOCK_TIMES_PTHREAD, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::GlobalHandler,
@@ -26,7 +26,7 @@ impl PTrim {
             return (null_mut(), false);
         }
 
-        let cache_mem = (*cache).pop_from_thread(class);
+        let cache_mem = (*cache).pop_from_thread(class, true);
 
         if cache_mem.is_null() {
             return (null_mut(), true);
@@ -110,16 +110,7 @@ impl PTrim {
                             .load(Ordering::Relaxed)
                             .saturating_sub((*cache).life_time);
 
-                        if life_time > (timing * 2) {
-                            if release_slab((*cache).metadata, class) {
-                                continue;
-                            } else {
-                                let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
-                                (*cache).life_time = current;
-                                GlobalHandler.push_to_global(class, cache, cache, 1);
-                                continue;
-                            };
-                        } else if life_time > half_timing {
+                        if life_time > half_timing {
                             let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                             (*cache).life_time = current;
                             GlobalHandler.push_to_global(class, cache, cache, 1);

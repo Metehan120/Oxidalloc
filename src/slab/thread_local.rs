@@ -178,13 +178,30 @@ impl ThreadLocalEngine {
     }
 
     #[inline(always)]
-    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
+    pub unsafe fn pop_from_thread(&self, mut class: usize, is_trim: bool) -> *mut OxHeader {
         self.lock(class);
         let mut header = self.cache[class].load(Ordering::Relaxed);
 
         if header.is_null() {
-            self.unlock(class);
-            return null_mut();
+            if SIZE_CLASSES[class] < 1024 * 2 && !is_trim {
+                for i in 1..=2 {
+                    let needed = class + i;
+
+                    let h = self.cache[needed].load(Ordering::Relaxed);
+                    if !h.is_null() {
+                        self.unlock(class);
+                        self.lock(needed);
+                        class = needed;
+                        header = self.cache[class].load(Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+
+            if header.is_null() {
+                self.unlock(class);
+                return null_mut();
+            }
         }
 
         // Check if the header is ours
@@ -217,69 +234,6 @@ impl ThreadLocalEngine {
         self.latest_popped_next[class].store(next, Ordering::Relaxed);
         let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
         self.latest_usages[class].store(usage, Ordering::Relaxed);
-        self.unlock(class);
-
-        header
-    }
-
-    #[inline(always)]
-    pub unsafe fn pop_from_thread_for_alloc(&self, mut class: usize) -> *mut OxHeader {
-        self.lock(class);
-        let mut header = self.cache[class].load(Ordering::Relaxed);
-
-        if header.is_null() {
-            if SIZE_CLASSES[class] < 1024 * 2 {
-                for i in 1..=2 {
-                    let needed = class + i;
-
-                    let h = self.cache[needed].load(Ordering::Relaxed);
-                    if !h.is_null() {
-                        self.unlock(class);
-                        self.lock(needed);
-                        class = needed;
-                        header = self.cache[class].load(Ordering::Relaxed);
-                        break;
-                    }
-                }
-            }
-
-            if header.is_null() {
-                self.unlock(class);
-                return null_mut();
-            }
-        }
-
-        if !is_ours(header as usize) {
-            if !quarantine(Some(self), header as usize, class, true) {
-                self.cache[class].store(null_mut(), Ordering::Relaxed);
-                self.usages[class].store(0, Ordering::Relaxed);
-                self.unlock(class);
-                return null_mut();
-            };
-            let cur_header = self.cache[class].load(Ordering::Relaxed);
-            header = cur_header;
-        }
-
-        if header.is_null() || !is_ours(header as usize) {
-            self.unlock(class);
-            return null_mut();
-        }
-
-        let next = (*header).next;
-        if !next.is_null() {
-            prefetch(next as *const u8);
-        }
-
-        self.cache[class].store(next, Ordering::Relaxed);
-        self.latest_popped_next[class].store(next, Ordering::Relaxed);
-        let usage = self.usages[class].fetch_sub(1, Ordering::Relaxed);
-        self.latest_usages[class].store(usage, Ordering::Relaxed);
-
-        let metadata = (*header).metadata;
-        if !metadata.is_null() {
-            (*metadata).ref_count.fetch_add(1, Ordering::AcqRel);
-        }
-
         self.unlock(class);
 
         header

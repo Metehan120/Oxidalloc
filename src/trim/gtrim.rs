@@ -6,7 +6,6 @@ use rustix::mm::{Advice, madvise};
 
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    release_slab,
     slab::{
         ITERATIONS, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL_USAGE, GlobalHandler},
@@ -54,35 +53,6 @@ impl GTrim {
         let mut total_freed = 0;
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
         let class_4096 = get_size_4096_class();
-
-        for class in 0..class_4096 {
-            if total_freed >= pad && pad != 0 {
-                return (1, total_freed);
-            }
-
-            let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
-
-            for _ in 0..class_usage {
-                let (cache, _) = self.pop_from_global(class, 1);
-                if cache.is_null() {
-                    break;
-                }
-
-                let life_time = OX_CURRENT_STAMP
-                    .load(Ordering::Relaxed)
-                    .saturating_sub((*cache).life_time);
-
-                if life_time > timing {
-                    if release_slab((*cache).metadata, class) {
-                        continue;
-                    }
-                    let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
-                    (*cache).life_time = current;
-                }
-
-                GlobalHandler.push_to_global(class, cache, cache, 1);
-            }
-        }
 
         for class in class_4096..ITERATIONS.len() {
             if total_freed >= pad && pad != 0 {
