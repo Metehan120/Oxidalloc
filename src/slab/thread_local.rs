@@ -281,7 +281,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
     // Move all blocks to global
     for class in 0..GLOBAL.len() {
-        (*cache).lock(class);
         let head = (*cache).cache[class].swap(null_mut(), Ordering::AcqRel);
         if !is_ours(head as usize) {
             continue;
@@ -306,7 +305,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
             GlobalHandler.push_to_global(class, head, tail, count);
         }
-        (*cache).unlock(class);
     }
 
     let _ = munmap(cache_ptr, size_of::<ThreadLocalEngine>());
