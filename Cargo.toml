@@ -17,6 +17,10 @@ criterion = "0.8.1"
 name = "oxidalloc"
 crate-type = ["cdylib", "rlib"]
 
+[[bench]]
+name = "bench"
+harness = false
+
 [profile.dev]
 opt-level = 3
 debug = true
