@@ -14,6 +14,7 @@ use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
     OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    va::bitmap::TOTAL_VA_RANGE_GIB,
 };
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
@@ -123,7 +124,8 @@ pub unsafe fn init_reverse() {
         if val == 0 || val < 1024 * 1024 * 256 {
             val = 1024 * 1024 * 256;
         }
-        if val > 1024 * 1024 * 1024 * 256 {
+
+        if val > 1024 * 1024 * 1024 * TOTAL_VA_RANGE_GIB {
             OxidallocError::ReservationExceeded.log_and_abort(
                 null_mut() as *mut c_void,
                 "Reservation size is too large, MAX: 256GB",
