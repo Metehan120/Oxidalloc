@@ -63,6 +63,7 @@ pub enum OxidallocError {
     PThreadCacheFailed = 0x1006,
     TooMuchQuarantine = 0x1007,
     DoubleQuarantine = 0x1008,
+    ReservationExceeded = 0x1009,
 }
 
 impl Debug for OxidallocError {
@@ -77,6 +78,7 @@ impl Debug for OxidallocError {
             OxidallocError::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
             OxidallocError::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
             OxidallocError::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
+            OxidallocError::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
         }
     }
 }
