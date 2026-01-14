@@ -219,4 +219,37 @@ impl VaBitmap {
             self.hint.store(chunk, Ordering::Relaxed);
         }
     }
+
+    pub fn realloc_inplace(&self, addr: usize, old_size: usize, new_size: usize) -> Option<usize> {
+        let old_blocks = (old_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let new_blocks = (new_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+        if new_blocks == old_blocks {
+            return Some(old_blocks * BLOCK_SIZE);
+        }
+
+        if new_blocks < old_blocks {
+            let shrink_start_bit =
+                (addr - VA_START.load(Ordering::Relaxed)) / BLOCK_SIZE + new_blocks;
+            let count_to_free = old_blocks - new_blocks;
+            self.rollback(shrink_start_bit, count_to_free);
+            return Some(new_blocks * BLOCK_SIZE);
+        }
+
+        let start_va = VA_START.load(Ordering::Relaxed);
+        let offset = addr - start_va;
+        let start_bit = offset / BLOCK_SIZE;
+        let growth_start_bit = start_bit + old_blocks;
+        let additional_needed = new_blocks - old_blocks;
+
+        if growth_start_bit + additional_needed > self.max_bits() {
+            return None;
+        }
+
+        if self.try_claim(growth_start_bit, additional_needed) {
+            Some(new_blocks * BLOCK_SIZE)
+        } else {
+            None
+        }
+    }
 }

@@ -57,7 +57,7 @@ unsafe fn decide_pthread() -> bool {
     let timing = pthread_avg.max(1);
     let periodic = total % timing == 0;
 
-    periodic && tls_is_worse
+    periodic || tls_is_worse
 }
 
 fn check_memory_pressure() -> usize {
