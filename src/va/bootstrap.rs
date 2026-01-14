@@ -99,7 +99,7 @@ pub unsafe fn init_reverse() {
         if val == 0 || val < 1024 * 1024 * 256 {
             val = 1024 * 1024 * 256;
         }
-        OX_MAX_RESERVATION.store(val, Ordering::Relaxed);
+        OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
     }
 }
 
