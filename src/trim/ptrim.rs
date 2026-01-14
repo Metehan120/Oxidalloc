@@ -87,7 +87,7 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                /* for class in 0..class_4096 {
+                for class in 0..class_4096 {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -120,7 +120,7 @@ impl PTrim {
                             break;
                         }
                     }
-                } */
+                }
 
                 for class in class_4096..NUM_SIZE_CLASSES {
                     if total_freed >= pad && pad != 0 {

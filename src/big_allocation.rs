@@ -6,7 +6,10 @@ use crate::{
     HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
     va::{align_to, bitmap::VA_MAP},
 };
-use std::{os::raw::c_void, ptr::null_mut};
+use std::{
+    os::raw::c_void,
+    ptr::{null_mut, write_bytes},
+};
 
 pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     // Align size to the page size so we don't explode later
@@ -67,7 +70,10 @@ pub unsafe fn big_free(ptr: *mut c_void) {
     );
 
     if remap_result.is_err() {
-        let _ = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
+        let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
+        if is_failed.is_err() {
+            write_bytes(header as *mut u8, 0, total_size);
+        }
     }
 
     VA_MAP.free(header as usize, total_size);
