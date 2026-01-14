@@ -69,7 +69,15 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     // Check if cache is null
     if cache.is_null() {
         // Check global cache if its allocated then pop batch from global cache
-        let batch = if class > 10 { ITERATIONS[class] } else { 16 };
+        let batch = if class > 10 {
+            if ITERATIONS[class] / 2 == 0 {
+                1
+            } else {
+                ITERATIONS[class] / 2
+            }
+        } else {
+            16
+        };
         let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
 
         if !global_cache.is_null() {
