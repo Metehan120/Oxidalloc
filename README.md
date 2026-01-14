@@ -24,7 +24,7 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 
 Oxidalloc is a high-performance allocator written entirely in Rust. It is designed to be ABI-compatible with glibc's malloc family and verified to run system-wide across a full Linux desktop environment.
 
-## ***Important***: This allocator have a new experimental mode called "Self Healing", which is still in development and may not be stable or even may cause security risk. The code is provided as-is, without any guarantees.
+## ***Important***: This allocator have a experimental mode called "Self Healing", which is comes disabled by default, but you can enable it by setting the environment variable `OX_ENABLE_EXPERIMENTAL_HEALING=1`, *WARNING*: This mode may cause unstability or even security risk.
 
 ## Features
 

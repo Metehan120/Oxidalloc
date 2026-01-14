@@ -71,7 +71,7 @@ impl GlobalHandler {
             }
 
             if !is_ours(head as usize) {
-                quarantine(None, head as usize, class);
+                quarantine(None, head as usize, class, false);
                 GLOBAL[class].store(0, Ordering::Relaxed);
                 GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
                 return null_mut();

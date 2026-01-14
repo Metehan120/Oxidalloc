@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    OxHeader, OxidallocError,
+    OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES,
         global::{GLOBAL, GlobalHandler},
@@ -163,7 +163,12 @@ impl ThreadLocalEngine {
             // Check if the header is ours
             if !is_ours(header as usize) {
                 // Try to recover, if fails return null
-                if !quarantine(Some(self), header as usize, class) {
+                if !quarantine(
+                    Some(self),
+                    header as usize,
+                    class,
+                    OX_ENABLE_EXPERIMENTAL_HEALING.load(Ordering::Relaxed),
+                ) {
                     self.tls[class].usage.store(0, Ordering::Relaxed);
                     return null_mut();
                 }
