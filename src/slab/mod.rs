@@ -10,9 +10,23 @@ pub const SIZE_CLASSES: [usize; 34] = [
     3072, 3840, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 65536, 131072, 262144, 524288,
     1048576, 2097152,
 ];
+static SIZE_LUT: [u8; 64] = {
+    let mut lut = [0u8; 64];
+    let mut i = 0;
+    while i < 64 {
+        let size = (i + 1) * 16;
+        let mut class = 0;
+        while class < 34 && SIZE_CLASSES[class] < size {
+            class += 1;
+        }
+        lut[i] = class as u8;
+        i += 1;
+    }
+    lut
+};
 
 pub const NUM_SIZE_CLASSES: usize = SIZE_CLASSES.len();
-const CLASS_4096: OnceLock<usize> = OnceLock::new();
+static CLASS_4096: OnceLock<usize> = OnceLock::new();
 
 pub fn get_size_4096_class() -> usize {
     *CLASS_4096.get_or_init(|| SIZE_CLASSES.iter().position(|&s| s >= 4096).unwrap())
@@ -26,13 +40,18 @@ pub const ITERATIONS: [usize; 34] = [
     2, 2, 2, 1, 1, 1, // Very Large (32KB-256KB)
     1, 1, 1, 1, 1, 1, 1,
 ];
-
 #[inline(always)]
 pub fn match_size_class(size: usize) -> Option<usize> {
-    for (i, &class_size) in SIZE_CLASSES.iter().enumerate() {
-        if size <= class_size {
+    if size > 0 && size <= 1024 {
+        let index = (size - 1) >> 4;
+        return Some(SIZE_LUT[index] as usize);
+    }
+
+    for i in 15..NUM_SIZE_CLASSES {
+        if size <= SIZE_CLASSES[i] {
             return Some(i);
         }
     }
+
     None
 }

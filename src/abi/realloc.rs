@@ -4,7 +4,7 @@ use libc::size_t;
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    MAGIC, OX_ALIGN_TAG, OxHeader, TOTAL_OPS,
+    MAGIC, OX_ALIGN_TAG, OxHeader,
     abi::{free::free, malloc::malloc},
     va::{bootstrap::VA_LEN, va_helper::is_ours},
 };
@@ -16,8 +16,6 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 #[cold]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
-    TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
-
     if ptr.is_null() {
         return malloc(new_size);
     }
@@ -25,8 +23,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     if !is_ours(ptr as usize) {
         return null_mut();
     }
-
-    TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     if new_size > VA_LEN.load(Ordering::Relaxed) {
         return null_mut();

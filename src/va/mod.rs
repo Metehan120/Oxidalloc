@@ -8,8 +8,8 @@ pub mod va_helper {
 
     #[inline(always)]
     pub fn is_ours(addr: usize) -> bool {
-        let start = VA_START.load(Ordering::Acquire);
-        let end = VA_END.load(Ordering::Acquire);
+        let start = VA_START.load(Ordering::Relaxed);
+        let end = VA_END.load(Ordering::Relaxed);
         if addr % 8 != 0 {
             return false;
         }

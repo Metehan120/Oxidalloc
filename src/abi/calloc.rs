@@ -1,12 +1,10 @@
-use crate::{HEADER_SIZE, OxHeader, TOTAL_OPS, abi::malloc::malloc};
+use crate::{HEADER_SIZE, OxHeader, abi::malloc::malloc};
 use libc::{__errno_location, ENOMEM, size_t};
 use std::{os::raw::c_void, ptr::null_mut};
 
 #[allow(unsafe_op_in_unsafe_fn)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
-    TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
     let total_size = match nmemb.checked_mul(size) {
         Some(s) => s,
         None => {

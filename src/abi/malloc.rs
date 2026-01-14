@@ -6,14 +6,14 @@ use std::{
     ptr::null_mut,
     sync::{
         Once,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     big_allocation::big_malloc,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
@@ -34,6 +34,7 @@ static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
+pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline(always)]
 // Separated allocation function for better scalability in future
@@ -41,9 +42,9 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
 
-    let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    if total >= 128 {
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    } else {
         if !THREAD_SPAWNED.load(Ordering::Relaxed) {
             THREAD_SPAWNED.store(true, Ordering::Relaxed);
             ONCE.call_once(|| {

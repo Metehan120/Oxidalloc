@@ -1,7 +1,8 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    abi::malloc::TOTAL_MALLOC_FREE,
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::va_helper::is_ours,
@@ -14,7 +15,9 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 #[unsafe(no_mangle)]
 // If we seperate free nothing will change much, free can stay naked for now
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
-    TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    }
 
     if ptr.is_null() {
         return;

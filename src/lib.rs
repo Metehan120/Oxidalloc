@@ -25,7 +25,6 @@ pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
 pub const MAGIC: u64 = 0x01B01698BF0BEEF;
-pub static TOTAL_OPS: AtomicUsize = AtomicUsize::new(0);
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);

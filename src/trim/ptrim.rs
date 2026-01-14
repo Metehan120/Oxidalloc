@@ -60,7 +60,7 @@ impl PTrim {
         if engine.is_null() {
             (0, false)
         } else {
-            let usage = (*engine).usages[class].load(Ordering::Relaxed);
+            let usage = (*engine).tls[class].usage.load(Ordering::Relaxed);
             (usage, true)
         }
     }
