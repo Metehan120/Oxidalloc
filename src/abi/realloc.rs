@@ -71,7 +71,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         }
     }
 
-    let mut is_failed = false;
     if old_class.is_none() {
         let old_total = align_to(raw_capacity + HEADER_SIZE, 4096);
         let new_total = align_to(new_size + HEADER_SIZE, 4096);
@@ -113,7 +112,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
                     (header as usize) + old_total,
                     actual_new_va_size - old_total,
                 );
-                is_failed = true;
             }
         }
     }
@@ -129,8 +127,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         old_capacity.min(new_size),
     );
 
-    if !is_failed {
-        free(ptr)
-    };
+    free(ptr);
     new_ptr
 }
