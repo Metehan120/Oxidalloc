@@ -6,16 +6,15 @@ use std::{
     ptr::null_mut,
     sync::{
         Once,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError, TOTAL_OPS,
+    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     big_allocation::big_malloc,
-    get_clock,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
         match_size_class, thread_local::ThreadLocalEngine,
@@ -35,6 +34,7 @@ static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
+pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline(always)]
 // Separated allocation function for better scalability in future
@@ -42,9 +42,9 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
 
-    let total = TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    if total >= 10000 {
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    } else {
         if !THREAD_SPAWNED.load(Ordering::Relaxed) {
             THREAD_SPAWNED.store(true, Ordering::Relaxed);
             ONCE.call_once(|| {
@@ -52,11 +52,6 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
                 spawn_gtrim_thread();
             });
         }
-    }
-
-    if total > 0 && total % 1500 == 0 {
-        let time = get_clock().elapsed().as_millis() as usize;
-        OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
     }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
@@ -75,7 +70,15 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
     // Check if cache is null
     if cache.is_null() {
         // Check global cache if its allocated then pop batch from global cache
-        let batch = if class > 10 { ITERATIONS[class] } else { 16 };
+        let batch = if class > 10 {
+            if ITERATIONS[class] / 2 == 0 {
+                1
+            } else {
+                ITERATIONS[class] / 2
+            }
+        } else {
+            16
+        };
         let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
 
         if !global_cache.is_null() {

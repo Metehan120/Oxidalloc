@@ -3,8 +3,8 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OxHeader, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, SIZE_CLASSES, thread_local::ThreadLocalEngine},
+    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, TOTAL_ALLOCATED,
+    slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
 
@@ -27,12 +27,8 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         Err::OutOfMemory
     })?;
 
-    // For 2MB size class use THP which uses 2MB pages
-    if class == 17 {
-        match madvise(mem, total, Advice::LinuxHugepage) {
-            Ok(_) => (),
-            Err(_) => (),
-        };
+    if class == NUM_SIZE_CLASSES && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
     let mut prev = null_mut();

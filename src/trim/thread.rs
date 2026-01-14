@@ -26,8 +26,12 @@ unsafe fn decide_global() -> bool {
         LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
     }
 
+    if LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 75 {
+        return true;
+    }
+
     let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
-    LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 75 || (total % timing == 0 && total != 0)
+    total % timing == 0 && total != 0
 }
 
 unsafe fn decide_pthread() -> bool {
@@ -40,8 +44,20 @@ unsafe fn decide_pthread() -> bool {
         LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
     }
 
-    let timing = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
-    LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 85 || (total % timing == 0 && total != 0)
+    let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+    if pressure > 85 {
+        return true;
+    }
+
+    let pthread_avg = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
+    let global_avg = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
+
+    let tls_is_worse = pthread_avg + 10 > global_avg;
+
+    let timing = pthread_avg.max(1);
+    let periodic = total % timing == 0;
+
+    periodic || tls_is_worse
 }
 
 fn check_memory_pressure() -> usize {

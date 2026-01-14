@@ -7,7 +7,7 @@ use rustix::mm::{Advice, madvise};
 use crate::{
     AVERAGE_BLOCK_TIMES_PTHREAD, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     slab::{
-        NUM_SIZE_CLASSES, SIZE_CLASSES,
+        NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::GlobalHandler,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
@@ -60,7 +60,7 @@ impl PTrim {
         if engine.is_null() {
             (0, false)
         } else {
-            let usage = (*engine).usages[class].load(Ordering::Relaxed);
+            let usage = (*engine).tls[class].usage.load(Ordering::Relaxed);
             (usage, true)
         }
     }
@@ -81,12 +81,48 @@ impl PTrim {
 
         let timing = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
         let half_timing = if timing / 2 == 0 { 1 } else { timing / 2 };
+        let class_4096 = get_size_4096_class();
 
         while !node.is_null() {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
-                for class in 9..NUM_SIZE_CLASSES {
+                for class in 0..class_4096 {
+                    if total_freed >= pad && pad != 0 {
+                        return (1, total_freed);
+                    }
+
+                    let (usage, is_ok) = self.get_usage(engine, class);
+                    if !is_ok {
+                        break;
+                    }
+
+                    for _ in 0..usage / 2 {
+                        let (cache, is_ok) = self.pop_from_thread(engine, class);
+                        if !is_ok || cache.is_null() {
+                            break;
+                        }
+
+                        let life_time = OX_CURRENT_STAMP
+                            .load(Ordering::Relaxed)
+                            .saturating_sub((*cache).life_time);
+
+                        if life_time > half_timing {
+                            let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+                            (*cache).life_time = current;
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            continue;
+                        }
+
+                        let push = self.push_to_thread(engine, class, cache);
+                        if !push {
+                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            break;
+                        }
+                    }
+                }
+
+                for class in class_4096..NUM_SIZE_CLASSES {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -133,16 +169,13 @@ impl PTrim {
 
                     while !to_trim.is_null() {
                         let next = (*to_trim).next;
-
+                        let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                         if total_freed <= pad || pad == 0 {
                             self.release_memory(to_trim, SIZE_CLASSES[class]);
                             total_freed += SIZE_CLASSES[class];
                         }
-
-                        if !self.push_to_thread(engine, class, to_trim) {
-                            GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
-                        }
-
+                        (*to_trim).life_time = current;
+                        GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
                         to_trim = next;
                     }
                 }
@@ -152,7 +185,7 @@ impl PTrim {
         }
 
         if total > 0 {
-            AVERAGE_BLOCK_TIMES_PTHREAD.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+            AVERAGE_BLOCK_TIMES_PTHREAD.store((avg / total).max(100).min(10000), Ordering::Relaxed);
         }
 
         if total_freed >= pad {

@@ -4,7 +4,20 @@ A pure Rust general-purpose memory allocator designed to be used as a malloc rep
 
 ## Big Announcement: The first alpha release is coming soon — in the next few weeks.
 
-## **Huge Update**: Oxidalloc now supports Trim for size classes ≥4096 (4kb), but still under development if there are any problems please report them.
+## **Huge Update**: Oxidalloc now comes with many contention fixes, lock-free paths, improved performance and more.
+## This update includes:
+- Improved performance, shaved ~3-4ns off
+- Improved contention handling: shouldnt slow down even with 16 threads
+- Improved paths: lock-free global with "tagged" pointers which should prevent ABA while being fast (Hopefully, haha.), and lock-free TLS (for ptrim thread)
+- Many RSS fixes and better internal fragmentation handling: >%40 RSS drops on most conditions
+- LUT for size class searchs: Optimized lookup table for size class searchs, reducing search time by ~50%
+- Pushing small block to Global after life time exceeded
+- Some optimizations for better cache utilization
+- More configuration options
+- Better trimming policy
+- Better realloc path
+## While this update is still under development, please report any issues or feedbacks.
+
 ### Note: Oxidalloc still in development and experimental.
 
 ## Overview

@@ -1,12 +1,14 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use libc::size_t;
+use rustix::mm::{MremapFlags, mremap};
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    MAGIC, OX_ALIGN_TAG, OxHeader, TOTAL_OPS,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
     abi::{free::free, malloc::malloc},
-    va::{bootstrap::VA_LEN, va_helper::is_ours},
+    slab::match_size_class,
+    va::{align_to, bitmap::VA_MAP, bootstrap::VA_LEN, va_helper::is_ours},
 };
 
 const OFFSET_SIZE: usize = size_of::<usize>();
@@ -16,8 +18,6 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 #[cold]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
-    TOTAL_OPS.fetch_add(1, Ordering::Relaxed);
-
     if ptr.is_null() {
         return malloc(new_size);
     }
@@ -25,8 +25,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     if !is_ours(ptr as usize) {
         return null_mut();
     }
-
-    TOTAL_OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     if new_size > VA_LEN.load(Ordering::Relaxed) {
         return null_mut();
@@ -62,6 +60,60 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
     if new_size <= old_capacity {
         return ptr;
+    }
+
+    let old_class = match_size_class(raw_capacity);
+    let new_class = match_size_class(new_size);
+
+    if let (Some(old), Some(new)) = (old_class, new_class) {
+        if old == new {
+            return ptr;
+        }
+    }
+
+    if old_class.is_none() {
+        let old_total = align_to(raw_capacity + HEADER_SIZE, 4096);
+        let new_total = align_to(new_size + HEADER_SIZE, 4096);
+
+        if new_total == old_total {
+            (*header).size = new_size as u64;
+            return ptr;
+        }
+
+        if new_total < old_total {
+            let _ = mremap(
+                header as *mut c_void,
+                old_total,
+                new_total,
+                MremapFlags::empty(),
+            );
+
+            VA_MAP.free((header as usize) + new_total, old_total - new_total);
+
+            (*header).size = new_size as u64;
+            return ptr;
+        }
+
+        if let Some(actual_new_va_size) =
+            VA_MAP.realloc_inplace(header as usize, old_total, new_total)
+        {
+            let resmap_res = mremap(
+                header as *mut c_void,
+                old_total,
+                actual_new_va_size,
+                MremapFlags::empty(),
+            );
+
+            if resmap_res.is_ok() {
+                (*header).size = new_size as u64;
+                return ptr;
+            } else {
+                VA_MAP.free(
+                    (header as usize) + old_total,
+                    actual_new_va_size - old_total,
+                );
+            }
+        }
     }
 
     let new_ptr = malloc(new_size);

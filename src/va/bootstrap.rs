@@ -11,7 +11,7 @@ use std::{
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
 use crate::{
-    OX_TRIM_THRESHOLD, OxidallocError,
+    OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
@@ -28,37 +28,85 @@ extern "C" fn allocator_shutdown() {
     SHUTDOWN.store(true, Ordering::Release);
 }
 
-pub fn register_shutdown() {
-    unsafe {
-        libc::atexit(allocator_shutdown);
+pub unsafe fn register_shutdown() {
+    libc::atexit(allocator_shutdown);
+}
+
+pub unsafe fn init_thp() {
+    let key = b"OX_USE_THP\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
+
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
+            }
+            ptr = ptr.add(1);
+        }
+
+        if val == 1 {
+            OX_USE_THP.store(true, Ordering::Relaxed);
+        }
     }
 }
 
-pub fn init_threshold() {
-    unsafe {
-        let key = b"OX_TRIM_THRESHOLD\0";
-        let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+pub unsafe fn init_threshold() {
+    let key = b"OX_TRIM_THRESHOLD\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
 
-        if !value_ptr.is_null() {
-            let mut val = 0usize;
-            let mut ptr = value_ptr as *const u8;
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
 
-            while *ptr != 0 {
-                if *ptr >= b'0' && *ptr <= b'9' {
-                    val = val * 10 + (*ptr - b'0') as usize;
-                } else {
-                    break;
-                }
-                ptr = ptr.add(1);
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
             }
-
-            if val == 0 || val < 1024 * 1024 {
-                val = 1024 * 1024;
-            }
-            OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
-        } else {
-            OX_TRIM_THRESHOLD.store(1024 * 1024 * 10, Ordering::Relaxed);
+            ptr = ptr.add(1);
         }
+
+        if val == 0 || val < 1024 * 1024 {
+            val = 1024 * 1024;
+        }
+        OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
+    }
+}
+
+pub unsafe fn init_reverse() {
+    let key = b"OX_MAX_RESERVATION\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
+
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
+            }
+            ptr = ptr.add(1);
+        }
+
+        if val == 0 || val < 1024 * 1024 * 256 {
+            val = 1024 * 1024 * 256;
+        }
+        if val > 1024 * 1024 * 1024 * 256 {
+            OxidallocError::ReservationExceeded.log_and_abort(
+                null_mut() as *mut c_void,
+                "Reservation size is too large, MAX: 256GB",
+                None,
+            )
+        }
+        OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
     }
 }
 
@@ -80,14 +128,17 @@ pub unsafe fn boot_strap() {
     }
     SHUTDOWN.store(false, Ordering::Relaxed);
     ThreadLocalEngine::get_or_init();
+    init_reverse();
     va_init();
     register_shutdown();
     init_threshold();
+    init_thp();
 }
 
 pub unsafe fn va_init() {
-    const MIN_RESERVE: usize = 1024 * 1024 * 1024 * 4;
-    const MAX_SIZE: usize = 1024 * 1024 * 1024 * 256;
+    const MIN_RESERVE: usize = 1024 * 1024 * 256;
+    #[allow(non_snake_case)]
+    let MAX_SIZE = OX_MAX_RESERVATION.load(Ordering::Relaxed);
     let mut size = MAX_SIZE;
 
     if MAX_SIZE < MIN_RESERVE {

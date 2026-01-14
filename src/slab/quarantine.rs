@@ -10,12 +10,7 @@ pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);
 
-pub fn quarantine(
-    thread_cache: Option<&ThreadLocalEngine>,
-    ptr: usize,
-    class: usize,
-    already_locked: bool,
-) -> bool {
+pub fn quarantine(thread_cache: Option<&ThreadLocalEngine>, ptr: usize, class: usize) -> bool {
     // Try recovering header from old popped head, if available
     //
     // How is this works:
@@ -24,33 +19,37 @@ pub fn quarantine(
     //
     // Better trying to recover header from old popped head, if available
     // If not recoverable than then leak it
-    if let Some(healing_cache) = thread_cache {
-        if !already_locked {
-            healing_cache.lock(class);
+    if let Some(cache) = thread_cache {
+        let detached = cache.tls[class].head.swap(null_mut(), Ordering::Acquire);
+
+        if detached.is_null() {
+            return false;
         }
-        let mut recovered = false;
-        let candidate = healing_cache.latest_popped_next[class].load(Ordering::Relaxed);
 
-        if !candidate.is_null() && is_ours(candidate as usize) {
-            let latest_usage = healing_cache.latest_usages[class].load(Ordering::Relaxed);
+        let candidate = cache.tls[class].latest_next.load(Ordering::Relaxed);
+        if candidate.is_null() || !is_ours(candidate as usize) {
+            return false;
+        }
 
-            unsafe {
-                let magic = read_volatile(&(*candidate).magic);
-                if magic == MAGIC || magic == 0 {
-                    healing_cache.cache[class].store(candidate, Ordering::Relaxed);
-                    healing_cache.usages[class].store(latest_usage, Ordering::Relaxed);
-                    recovered = true;
-                }
+        unsafe {
+            let magic = read_volatile(&(*candidate).magic);
+            if magic != MAGIC && magic != 0 {
+                return false;
             }
         }
 
-        if !already_locked {
-            healing_cache.unlock(class);
-        }
+        let usage = cache.tls[class].latest_usage.load(Ordering::Relaxed);
 
-        if recovered {
+        if cache.tls[class]
+            .head
+            .compare_exchange(null_mut(), candidate, Ordering::Release, Ordering::Relaxed)
+            .is_ok()
+        {
+            cache.tls[class].usage.store(usage, Ordering::Relaxed);
             return true;
         }
+
+        return false;
     }
 
     let guard = QUARANTINE.load(Ordering::Relaxed);

@@ -1,42 +1,59 @@
+use std::sync::OnceLock;
+
 pub mod bulk_allocation;
 pub mod global;
 pub mod quarantine;
 pub mod thread_local;
 
-pub const SIZE_CLASSES: [usize; 18] = [
-    16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288,
+pub const SIZE_CLASSES: [usize; 34] = [
+    16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320, 384, 512, 768, 1024, 1280, 1536, 1792, 2048,
+    2560, 3072, 3840, 4096, 8192, 12288, 16384, 24576, 32768, 65536, 131072, 262144, 524288,
     1048576, 2097152,
 ];
 
-pub const NUM_SIZE_CLASSES: usize = SIZE_CLASSES.len();
-
-// Iterations of each size class, each iteration is a try to allocate a chunk of memory
-pub const ITERATIONS: [usize; 18] = [
-    1024, // 16B   - tons of tiny allocations (strings, small objects)
-    512,  // 32B   - very common (pointers, small structs)
-    256,  // 64B   - cache-line sized, super common
-    256,  // 128B  - still very frequent
-    128,  // 256B  - common
-    64,   // 512B  - common
-    32,   // 1KB   - moderate
-    16,   // 2KB   - moderate
-    8,    // 4KB   - page-sized, common for buffers
-    4,    // 8KB   - still fairly common
-    2,    // 16KB  - less common
-    1,    // 32KB  - getting rare
-    1,    // 64KB  - rare
-    1,    // 128KB - rare
-    1,    // 256KB - very rare
-    1,    // 512KB - very rare
-    1,    // 1MB   - almost never
-    1,    // 2MB   - almost never
+pub const ITERATIONS: [usize; 34] = [
+    // Tiny (16B-128B)
+    1024, 512, 512, 512, 256, 256, 128, // Small (160B-512B)
+    64, 64, 64, 32, 32, 32, // Medium (768B-2KB)
+    16, 16, 8, 8, 8, 8, 8, 4, // Large (3KB-16KB)
+    4, 4, 4, 2, 2, 2, // Very Large (32KB-256KB)
+    1, 1, 1, 1, 1, 1, 1,
 ];
 
+static SIZE_LUT: [u8; 64] = {
+    let mut lut = [0u8; 64];
+    let mut i = 0;
+    while i < 64 {
+        let size = (i + 1) * 16;
+        let mut class = 0;
+        while class < 34 && SIZE_CLASSES[class] < size {
+            class += 1;
+        }
+        lut[i] = class as u8;
+        i += 1;
+    }
+    lut
+};
+
+pub const NUM_SIZE_CLASSES: usize = SIZE_CLASSES.len();
+static CLASS_4096: OnceLock<usize> = OnceLock::new();
+
+pub fn get_size_4096_class() -> usize {
+    *CLASS_4096.get_or_init(|| SIZE_CLASSES.iter().position(|&s| s >= 4096).unwrap())
+}
+
+#[inline(always)]
 pub fn match_size_class(size: usize) -> Option<usize> {
-    for (i, &class_size) in SIZE_CLASSES.iter().enumerate() {
-        if size <= class_size {
+    if size > 0 && size <= 1024 {
+        let index = (size - 1) >> 4;
+        return Some(SIZE_LUT[index] as usize);
+    }
+
+    for i in 15..NUM_SIZE_CLASSES {
+        if size <= SIZE_CLASSES[i] {
             return Some(i);
         }
     }
+
     None
 }

@@ -7,7 +7,7 @@ use rustix::mm::{Advice, madvise};
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
-        ITERATIONS, SIZE_CLASSES,
+        ITERATIONS, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL_USAGE, GlobalHandler},
     },
     va::{bootstrap::SHUTDOWN, va_helper::is_ours},
@@ -52,8 +52,9 @@ impl GTrim {
         let mut total = 0;
         let mut total_freed = 0;
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
+        let class_4096 = get_size_4096_class();
 
-        for class in 9..ITERATIONS.len() {
+        for class in class_4096..ITERATIONS.len() {
             if total_freed >= pad && pad != 0 {
                 return (1, total_freed);
             }
