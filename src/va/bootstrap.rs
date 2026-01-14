@@ -157,6 +157,7 @@ pub unsafe fn boot_strap() {
     register_shutdown();
     init_threshold();
     init_thp();
+    init_healing();
 }
 
 pub unsafe fn va_init() {
