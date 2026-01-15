@@ -5,18 +5,35 @@ pub mod global;
 pub mod quarantine;
 pub mod thread_local;
 
+// The exact size classes used for lookup
 pub const SIZE_CLASSES: [usize; 34] = [
-    16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320, 384, 512, 768, 1024, 1280, 1536, 1792, 2048,
-    2560, 3072, 3840, 4096, 8192, 12288, 16384, 24576, 32768, 65536, 131072, 262144, 524288,
-    1048576, 2097152,
+    // Tiny (16-128) - 16 Byte steps
+    16, 32, 48, 64, 80, 96, 128, // Small (160-512) - 32/64 Byte steps
+    160, 192, 256, 320, 384, 512, // Medium (768-3072) - Large steps
+    768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, // Large (3840-24KB)
+    3840, 4096, 8192, 12288, 16384, 24576, // Very Large (32KB+)
+    32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
 ];
 
+// Calculated for: Header=64B, Metadata=16B, Align=16B
 pub const ITERATIONS: [usize; 34] = [
-    // Tiny (16B-128B) - Targets ~64KB (16 Pages) perfectly
-    819, 597, 585, 511, 455, 307, 341, // Small (160B-512B) - Targets ~16KB (4 Pages)
-    73, 63, 51, 42, 36, 28, // Medium (768B-2KB) - Targets ~16KB or ~8KB tightly
-    19, 15, 6, 5, 8, 7, 3, 5, // Large (3KB-24KB) - Targets 4 Pages or 1 Block
-    4, 3, 1, 1, 1, 1, // Very Large (32KB+)
+    // TINY (Targets ~64KB / 16 Pages)
+    // 16B  -> Block 80B  -> 65536 / 80  = 819 (0 Waste)
+    // 32B  -> Block 96B  -> 65536 / 96  = 682 (64B Waste)
+    819, 682, 585, 511, 455, 307, 341,
+    // --- SMALL (Targets ~16KB / 4 Pages)
+    // 160B -> Block 224B -> 16384 / 224 = 73 (16B Waste)
+    73, 63, 51, 42, 36, 28,
+    // MEDIUM (Targets ~16KB or ~8KB)
+    // 768B -> Block 832B -> 16384 / 832 = 19 (560B Waste)
+    // We drop to N=1 quickly for sizes > 2KB to prevent VIRT bloat
+    19, 15, 12, 5, 8, 7, 3, 5,
+    // LARGE (Targets 1 Block)
+    // For sizes > 3KB, we want Malloc/Free to be 1:1 with mmap/munmap logic
+    // via bulk_fill to allow immediate reclamation by gtrim and ptrim
+    1, 1, 1, 1, 1, 1, // VERY LARGE
+    //
+    // Always 1. Let the OS handle the pages.
     1, 1, 1, 1, 1, 1, 1,
 ];
 

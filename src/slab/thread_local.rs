@@ -93,6 +93,15 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
+pub unsafe fn get_or_init() {
+    THREAD_ONCE.call_once(|| {
+        let mut key = 0;
+        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+        THREAD_KEY.store(key, Ordering::Relaxed);
+        THREAD_INIT.store(false, Ordering::Relaxed);
+    });
+}
+
 static THREAD_KEY: AtomicU32 = AtomicU32::new(0);
 static THREAD_ONCE: Once = Once::new();
 static THREAD_INIT: AtomicBool = AtomicBool::new(true);
@@ -114,15 +123,6 @@ pub struct ThreadLocalEngine {
 
 #[thread_local]
 static mut TLS: *mut ThreadLocalEngine = null_mut();
-
-pub unsafe fn get_or_init() {
-    THREAD_ONCE.call_once(|| {
-        let mut key = 0;
-        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-        THREAD_KEY.store(key, Ordering::Relaxed);
-        THREAD_INIT.store(false, Ordering::Relaxed);
-    });
-}
 
 impl ThreadLocalEngine {
     pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
