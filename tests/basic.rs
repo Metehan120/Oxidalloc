@@ -27,15 +27,6 @@ fn smoke_global_reuse() {
 }
 
 #[test]
-fn bootstrap_sets_va_len() {
-    use oxidalloc::va::bootstrap::{VA_LEN, boot_strap};
-    use std::sync::atomic::Ordering;
-
-    unsafe { boot_strap() };
-    assert!(VA_LEN.load(Ordering::Relaxed) > 0);
-}
-
-#[test]
 fn realloc_handles_posix_memalign_pointer() {
     unsafe {
         let mut ptr: *mut libc::c_void = std::ptr::null_mut();

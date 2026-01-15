@@ -1,25 +1,16 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use std::{
-    os::raw::c_void,
     ptr::null_mut,
     sync::{
         Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
-
 use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
-    OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
-    va::bitmap::TOTAL_VA_RANGE_GIB,
 };
-
-pub static VA_START: AtomicUsize = AtomicUsize::new(0);
-pub static VA_END: AtomicUsize = AtomicUsize::new(0);
-pub static VA_LEN: AtomicUsize = AtomicUsize::new(0);
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
@@ -125,13 +116,6 @@ pub unsafe fn init_reverse() {
             val = 1024 * 1024 * 256;
         }
 
-        if val > 1024 * 1024 * 1024 * TOTAL_VA_RANGE_GIB {
-            OxidallocError::ReservationExceeded.log_and_abort(
-                null_mut() as *mut c_void,
-                "Reservation size is too large, MAX: 128GB (default)",
-                None,
-            )
-        }
         OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
     }
 }
@@ -154,50 +138,8 @@ pub unsafe fn boot_strap() {
     }
     SHUTDOWN.store(false, Ordering::Relaxed);
     ThreadLocalEngine::get_or_init();
-    init_reverse();
-    va_init();
     register_shutdown();
     init_threshold();
     init_thp();
     init_healing();
-}
-
-pub unsafe fn va_init() {
-    const MIN_RESERVE: usize = 1024 * 1024 * 256;
-    #[allow(non_snake_case)]
-    let MAX_SIZE = OX_MAX_RESERVATION.load(Ordering::Relaxed);
-    let mut size = MAX_SIZE;
-
-    if MAX_SIZE < MIN_RESERVE {
-        size = MIN_RESERVE;
-    }
-
-    loop {
-        let probe = mmap_anonymous(
-            null_mut(),
-            size,
-            ProtFlags::empty(),
-            MapFlags::PRIVATE | MapFlags::NORESERVE,
-        );
-
-        match probe {
-            Ok(output) => {
-                VA_START.store(output as usize, Ordering::Relaxed);
-                VA_END.store((output as usize) + size, Ordering::Relaxed);
-                VA_LEN.store(size, Ordering::Relaxed);
-                return;
-            }
-            Err(err) => {
-                if size <= MIN_RESERVE {
-                    OxidallocError::VAIinitFailed.log_and_abort(
-                        0 as *mut c_void,
-                        "Init failed during BOOTSTRAP: No available VA reserve",
-                        Some(err),
-                    )
-                }
-
-                size /= 2;
-            }
-        }
-    }
 }

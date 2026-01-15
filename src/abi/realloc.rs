@@ -2,13 +2,13 @@
 
 use libc::size_t;
 use rustix::mm::{MremapFlags, mremap};
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{os::raw::c_void, ptr::null_mut};
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
     abi::{free::free, malloc::malloc},
     slab::match_size_class,
-    va::{align_to, bitmap::VA_MAP, bootstrap::VA_LEN, is_ours},
+    va::{align_to, bitmap::VA_MAP, is_ours},
 };
 
 const OFFSET_SIZE: usize = size_of::<usize>();
@@ -22,10 +22,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     }
 
     if !is_ours(ptr as usize) {
-        return null_mut();
-    }
-
-    if new_size > VA_LEN.load(Ordering::Relaxed) {
         return null_mut();
     }
 

@@ -25,7 +25,7 @@ use crate::{
         thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     },
     va::{
-        bootstrap::{SHUTDOWN, VA_LEN, boot_strap},
+        bootstrap::{SHUTDOWN, boot_strap},
         is_ours,
     },
 };
@@ -80,11 +80,6 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 unsafe fn allocate(layout: &Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
-
-    if size > VA_LEN.load(Ordering::Relaxed) {
-        *__errno_location() = ENOMEM;
-        return null_mut();
-    }
 
     let class = match match_size_class(size) {
         Some(class) => class,

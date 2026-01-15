@@ -1,6 +1,4 @@
-use std::sync::atomic::Ordering;
-
-use crate::va::bootstrap::{VA_END, VA_START};
+use crate::va::bitmap::VA_MAP;
 
 pub mod bitmap;
 pub mod bootstrap;
@@ -12,10 +10,8 @@ pub fn align_to(size: usize, align: usize) -> usize {
 
 #[inline(always)]
 pub fn is_ours(addr: usize) -> bool {
-    let start = VA_START.load(Ordering::Relaxed);
-    let end = VA_END.load(Ordering::Relaxed);
-    if addr == 0 || addr < start || addr >= end {
+    if addr % 8 != 0 {
         return false;
     }
-    addr >= start && addr < end
+    unsafe { VA_MAP.is_ours(addr) }
 }
