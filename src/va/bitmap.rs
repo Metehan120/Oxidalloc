@@ -81,7 +81,8 @@ pub struct Segment {
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     lock: AtomicBool,
-    latest: AtomicPtr<Segment>,
+    latest: [AtomicPtr<Segment>; 4],
+    hint: AtomicUsize,
 }
 
 impl VaBitmap {
@@ -89,26 +90,31 @@ impl VaBitmap {
         Self {
             map: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
-            latest: AtomicPtr::new(null_mut()),
+            latest: [const { AtomicPtr::new(null_mut()) }; 4],
+            hint: AtomicUsize::new(0),
         }
     }
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        let latest = self.latest.load(Ordering::Acquire);
-
-        if !latest.is_null() {
-            let s = &*latest;
-            if addr >= s.va_start && addr < s.va_end {
-                return true;
+        for i in 0..4 {
+            let s_ptr = self.latest[i].load(Ordering::Relaxed);
+            if !s_ptr.is_null() {
+                let s = &*s_ptr;
+                if addr >= s.va_start && addr < s.va_end {
+                    return true;
+                }
+            } else {
+                break;
             }
         }
 
-        let mut curr = self.map.load(Ordering::Acquire);
+        let mut curr = self.map.load(Ordering::Relaxed);
         while !curr.is_null() {
-            let s = unsafe { &*curr };
+            let s = &*curr;
             if addr >= s.va_start && addr < s.va_end {
-                self.latest.store(curr, Ordering::Release);
+                let idx = (self.hint.fetch_add(1, Ordering::Relaxed) % 4) as usize;
+                self.latest[idx].store(curr, Ordering::Relaxed);
                 return true;
             }
             curr = s.next;
