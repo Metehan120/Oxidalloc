@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{OX_MAX_RESERVATION, OxidallocError, slab::global::MAX_NUMA_NODES};
+use crate::{OX_MAX_RESERVATION, OxidallocError, slab::thread_local::ThreadLocalEngine};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     os::raw::c_void,
@@ -81,7 +81,7 @@ pub struct Segment {
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     lock: AtomicBool,
-    latest: [AtomicPtr<Segment>; MAX_NUMA_NODES],
+    latest: AtomicPtr<Segment>,
 }
 
 impl VaBitmap {
@@ -89,35 +89,37 @@ impl VaBitmap {
         Self {
             map: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
-            latest: [const { AtomicPtr::new(null_mut()) }; MAX_NUMA_NODES],
+            latest: AtomicPtr::new(null_mut()),
         }
     }
 
     #[inline(always)]
-    pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        for i in 0..MAX_NUMA_NODES {
-            let s_ptr = self.latest[i].load(Ordering::Relaxed);
-            if !s_ptr.is_null() {
-                let s = &*s_ptr;
-                if addr >= s.va_start && addr < s.va_end {
-                    return true;
-                }
-            } else {
-                break;
+    pub unsafe fn is_ours(&self, addr: usize, thread_local: Option<&ThreadLocalEngine>) -> bool {
+        let latest_segment = if let Some(thread) = thread_local {
+            thread.latest_segment.load(Ordering::Relaxed)
+        } else {
+            self.latest.load(Ordering::Relaxed)
+        };
+
+        if !latest_segment.is_null() {
+            let s = &*latest_segment;
+            if addr >= s.va_start && addr < s.va_end {
+                return true;
             }
         }
 
-        let mut idx = 0;
-
-        let mut curr = self.map.load(Ordering::Relaxed);
+        let mut curr = self.map.load(Ordering::Acquire);
         while !curr.is_null() {
             let s = &*curr;
             if addr >= s.va_start && addr < s.va_end {
-                self.latest[idx % MAX_NUMA_NODES].store(curr, Ordering::Relaxed);
+                if let Some(thread) = thread_local {
+                    thread.latest_segment.store(curr, Ordering::Relaxed);
+                } else {
+                    self.latest.store(curr, Ordering::Relaxed);
+                }
                 return true;
             }
             curr = s.next;
-            idx += 1;
         }
 
         false

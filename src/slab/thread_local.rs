@@ -20,7 +20,7 @@ use crate::{
         global::{GlobalHandler, MAX_NUMA_NODES},
         quarantine::quarantine,
     },
-    va::is_ours,
+    va::{bitmap::Segment, is_ours},
 };
 
 pub struct ThreadNode {
@@ -109,6 +109,7 @@ pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
     pub numa_node_id: usize,
+    pub latest_segment: AtomicPtr<Segment>,
 }
 
 #[cfg(feature = "nightly")]
@@ -181,6 +182,7 @@ impl ThreadLocalEngine {
                     }; NUM_SIZE_CLASSES],
                     node: null_mut(),
                     numa_node_id: (numa % MAX_NUMA_NODES),
+                    latest_segment: AtomicPtr::new(null_mut()),
                 },
             );
 
@@ -209,7 +211,7 @@ impl ThreadLocalEngine {
             }
 
             // Check if the header is ours
-            if !is_ours(header as usize) {
+            if !is_ours(header as usize, Some(self)) {
                 // Try to recover, if fails return null
                 if !quarantine(
                     Some(self),
@@ -218,11 +220,12 @@ impl ThreadLocalEngine {
                     OX_ENABLE_EXPERIMENTAL_HEALING.load(Ordering::Relaxed),
                 ) {
                     self.tls[class].usage.store(0, Ordering::Relaxed);
+                    self.tls[class].head.store(null_mut(), Ordering::Relaxed);
                     return null_mut();
                 }
                 header = self.tls[class].head.load(Ordering::Relaxed);
                 // Check if data is still valid
-                if header.is_null() || !is_ours(header as usize) {
+                if header.is_null() || !is_ours(header as usize, Some(self)) {
                     return null_mut();
                 }
             }
@@ -299,7 +302,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     // Move all blocks to global
     for class in 0..NUM_SIZE_CLASSES {
         let head = (*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel);
-        if !is_ours(head as usize) {
+        if !is_ours(head as usize, None) {
             continue;
         }
 
@@ -312,7 +315,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
                 if next.is_null() {
                     break;
                 }
-                if !is_ours(next as usize) {
+                if !is_ours(next as usize, None) {
                     (*tail).next = null_mut();
                     break;
                 }

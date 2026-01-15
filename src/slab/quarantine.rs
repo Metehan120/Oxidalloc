@@ -33,7 +33,7 @@ pub fn quarantine(
             }
 
             let candidate = cache.tls[class].latest_next.load(Ordering::Relaxed);
-            if candidate.is_null() || !is_ours(candidate as usize) {
+            if candidate.is_null() || !is_ours(candidate as usize, Some(cache)) {
                 return false;
             }
 

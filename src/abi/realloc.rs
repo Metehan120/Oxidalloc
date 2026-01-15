@@ -7,7 +7,7 @@ use std::{os::raw::c_void, ptr::null_mut};
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
     abi::{fallback::realloc_fallback, free::free, malloc::malloc},
-    slab::match_size_class,
+    slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP, is_ours},
 };
 
@@ -21,7 +21,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         return malloc(new_size);
     }
 
-    if !is_ours(ptr as usize) {
+    let thread = ThreadLocalEngine::get_or_init();
+    if !is_ours(ptr as usize, Some(thread)) {
         realloc_fallback(ptr, new_size);
         return null_mut();
     }
@@ -39,7 +40,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     // Found offset so we can calculate the original pointer
     if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
         let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
+        if is_ours(presumed_original_ptr as usize, Some(thread)) {
             raw_ptr = presumed_original_ptr;
             offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
         }

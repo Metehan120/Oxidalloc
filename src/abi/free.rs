@@ -25,7 +25,8 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
-    if !is_ours(ptr as usize) {
+    let thread = ThreadLocalEngine::get_or_init();
+    if !is_ours(ptr as usize, Some(thread)) {
         free_fallback(ptr);
         return;
     }
@@ -35,7 +36,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
     if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
         let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
+        if is_ours(presumed_original_ptr as usize, Some(thread)) {
             header_search_ptr = presumed_original_ptr;
         }
     }
@@ -62,8 +63,6 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     let size = (*header).size as usize;
-    let thread = ThreadLocalEngine::get_or_init();
-
     match Layout::array::<u8>(size) {
         Ok(layout) => free_inner(&layout, header, thread, header_search_ptr),
         Err(_) => return,

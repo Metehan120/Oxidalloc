@@ -50,7 +50,10 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
         let mut real = 1;
 
         // Loop through cache and found the last header and set linked list to null
-        while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+        while real < batch
+            && !(*tail).next.is_null()
+            && is_ours((*tail).next as usize, Some(thread))
+        {
             tail = (*tail).next;
             real += 1;
         }
@@ -136,7 +139,8 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
         return 0;
     }
 
-    if !is_ours(ptr as usize) {
+    let thread = ThreadLocalEngine::get_or_init();
+    if !is_ours(ptr as usize, Some(thread)) {
         return malloc_usable_size_fallback(ptr);
     }
 
@@ -147,7 +151,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
     if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
         let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
+        if is_ours(presumed_original_ptr as usize, Some(thread)) {
             raw_ptr = presumed_original_ptr;
             offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
         }
@@ -155,7 +159,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
     let header = (raw_ptr as *mut u8).sub(HEADER_SIZE) as *mut OxHeader;
 
-    if !is_ours(header as usize) {
+    if !is_ours(header as usize, Some(thread)) {
         return 0;
     }
 

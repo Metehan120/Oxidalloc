@@ -9,6 +9,7 @@ use crate::{
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL, GlobalHandler, MAX_NUMA_NODES},
+        thread_local::ThreadLocalEngine,
     },
     trim::{
         TimeDecay,
@@ -20,7 +21,12 @@ use crate::{
 pub struct GTrim;
 
 impl GTrim {
-    unsafe fn pop_from_global(&self, class: usize, numa_node_id: usize) -> (*mut OxHeader, usize) {
+    unsafe fn pop_from_global(
+        &self,
+        class: usize,
+        numa_node_id: usize,
+        thread: &ThreadLocalEngine,
+    ) -> (*mut OxHeader, usize) {
         let global_cache = GlobalHandler.pop_from_global_local(numa_node_id, class, 16);
 
         if global_cache.is_null() {
@@ -30,7 +36,8 @@ impl GTrim {
         let mut block = global_cache;
         let mut real = 1;
 
-        while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
+        while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize, Some(thread))
+        {
             if (*block).in_use == 1 {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
@@ -53,6 +60,7 @@ impl GTrim {
         }
         let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
         let force_trim = pressure > 90;
+        let thread_engine = ThreadLocalEngine::get_or_init();
 
         let mut avg = 0;
         let mut total = 0;
@@ -70,7 +78,7 @@ impl GTrim {
                 let mut to_trim = null_mut();
 
                 for _ in 0..class_usage / 16 {
-                    let (cache, size) = self.pop_from_global(class, numa);
+                    let (cache, size) = self.pop_from_global(class, numa, thread_engine);
                     if cache.is_null() {
                         break;
                     }
@@ -107,7 +115,10 @@ impl GTrim {
                     let mut block = to_push;
                     let mut real = 1;
 
-                    while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
+                    while real < 16
+                        && !(*block).next.is_null()
+                        && is_ours((*block).next as usize, None)
+                    {
                         block = (*block).next;
                         real += 1;
                     }
