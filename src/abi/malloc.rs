@@ -26,7 +26,7 @@ use crate::{
     },
     va::{
         bootstrap::{SHUTDOWN, VA_LEN, boot_strap},
-        va_helper::is_ours,
+        is_ours,
     },
 };
 
@@ -42,7 +42,7 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 
     let batch = if class > 10 { ITERATIONS[class] } else { 16 };
 
-    let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
+    let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
 
     if !global_cache.is_null() {
         let mut tail = global_cache;
@@ -77,7 +77,7 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 
 #[inline(always)]
 // Separated allocation function for better scalability in future
-unsafe fn allocate(layout: Layout) -> *mut u8 {
+unsafe fn allocate(layout: &Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
 
@@ -125,8 +125,11 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     }
 
     match Layout::array::<u8>(size) {
-        Ok(layout) => allocate(layout) as *mut c_void,
-        Err(_) => null_mut(),
+        Ok(layout) => allocate(&layout) as *mut c_void,
+        Err(_) => {
+            *__errno_location() = ENOMEM;
+            null_mut()
+        }
     }
 }
 

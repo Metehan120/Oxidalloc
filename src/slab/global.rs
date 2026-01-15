@@ -3,7 +3,7 @@
 use crate::{
     OxHeader,
     slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
-    va::va_helper::is_ours,
+    va::is_ours,
 };
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,22 +27,33 @@ fn unpack_tag(val: usize) -> usize {
     val & TAG_MASK
 }
 
-pub static GLOBAL: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
-pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
+#[repr(C, align(64))]
+pub struct NumaGlobal {
+    pub list: [AtomicUsize; NUM_SIZE_CLASSES],
+    pub usage: [AtomicUsize; NUM_SIZE_CLASSES],
+}
+
+pub static MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
+pub static GLOBAL: [NumaGlobal; MAX_NUMA_NODES] = [const {
+    NumaGlobal {
+        list: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+        usage: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
+    }
+}; MAX_NUMA_NODES];
+
 pub struct GlobalHandler;
 
 impl GlobalHandler {
     pub unsafe fn push_to_global(
         &self,
         class: usize,
+        numa_node_id: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
         loop {
-            let cur = GLOBAL[class].load(Ordering::Relaxed);
+            let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
             let cur_ptr = unpack_ptr(cur);
             let cur_tag = unpack_tag(cur);
 
@@ -50,19 +61,51 @@ impl GlobalHandler {
 
             let new = pack(head, cur_tag.wrapping_add(1));
 
-            if GLOBAL[class]
+            if GLOBAL[numa_node_id].list[class]
                 .compare_exchange(cur, new, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
-                GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
+                GLOBAL[numa_node_id].usage[class].fetch_add(batch_size, Ordering::Relaxed);
                 return;
             }
         }
     }
 
-    pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
+    pub unsafe fn pop_from_global(
+        &self,
+        preffered_node: usize,
+        class: usize,
+        batch_size: usize,
+    ) -> *mut OxHeader {
+        let res = self.pop_from_shard(preffered_node, class, batch_size);
+        if !res.is_null() {
+            return res;
+        }
+
+        // If resident is null (empty) then try to steal from other nodes
+        //
+        // # Safety
+        // The caller must ensure `preffered_node` is a valid index within `MAX_NUMA_NODES`.
+        // Returns `null_mut()` if no blocks are available in any NUMA shard.
+        for i in 1..MAX_NUMA_NODES {
+            let neighbor = (preffered_node + i) % MAX_NUMA_NODES;
+            let res = self.pop_from_shard(neighbor, class, batch_size);
+            if !res.is_null() {
+                return res;
+            }
+        }
+
+        null_mut()
+    }
+
+    unsafe fn pop_from_shard(
+        &self,
+        numa_node_id: usize,
+        class: usize,
+        batch_size: usize,
+    ) -> *mut OxHeader {
         loop {
-            let cur = GLOBAL[class].load(Ordering::Relaxed);
+            let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
             let head = unpack_ptr(cur);
             let tag = unpack_tag(cur);
 
@@ -72,8 +115,8 @@ impl GlobalHandler {
 
             if !is_ours(head as usize) {
                 quarantine(None, head as usize, class, false);
-                GLOBAL[class].store(0, Ordering::Relaxed);
-                GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
+                GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
+                GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
                 return null_mut();
             }
 
@@ -87,12 +130,12 @@ impl GlobalHandler {
             let new_head = (*tail).next;
             let new = pack(new_head, tag.wrapping_add(1));
 
-            if GLOBAL[class]
+            if GLOBAL[numa_node_id].list[class]
                 .compare_exchange(cur, new, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
                 (*tail).next = null_mut();
-                GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
+                GLOBAL[numa_node_id].usage[class].fetch_sub(count, Ordering::Relaxed);
                 return head;
             }
         }

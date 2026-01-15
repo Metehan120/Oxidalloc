@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crate::va::bootstrap::{VA_END, VA_START};
 
 // User can change it if needed
-pub const TOTAL_VA_RANGE_GIB: usize = 256;
+pub const TOTAL_VA_RANGE_GIB: usize = 128;
 
 pub const BLOCK_SIZE: usize = 4096;
 const GIB: usize = 1024 * 1024 * 1024;

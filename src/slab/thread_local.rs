@@ -17,10 +17,10 @@ use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES,
-        global::{GLOBAL, GlobalHandler},
+        global::{GLOBAL, GlobalHandler, MAX_NUMA_NODES},
         quarantine::quarantine,
     },
-    va::va_helper::is_ours,
+    va::is_ours,
 };
 
 pub struct ThreadNode {
@@ -73,6 +73,16 @@ unsafe fn destroy_node(node: *mut ThreadNode) {
     (*node).engine.swap(null_mut(), Ordering::AcqRel);
 }
 
+unsafe fn get_numa_node_id() -> usize {
+    let mut cpu = 0;
+    let mut node = 0;
+
+    // get node id so we can use it for numa allocation
+    libc::syscall(libc::SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
+
+    node as usize
+}
+
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub fn prefetch(ptr: *const u8) {
@@ -87,7 +97,7 @@ pub fn prefetch(ptr: *const u8) {
 
 static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
 
-#[repr(C, align(16))]
+#[repr(C, align(64))]
 pub struct TlsBin {
     pub head: AtomicPtr<OxHeader>,
     pub usage: AtomicUsize,
@@ -98,6 +108,7 @@ pub struct TlsBin {
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
+    pub numa_node_id: usize,
 }
 
 #[cfg(feature = "nightly")]
@@ -154,6 +165,9 @@ impl ThreadLocalEngine {
                 )
             }) as *mut ThreadLocalEngine;
 
+            let numa = get_numa_node_id();
+
+            // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
             std::ptr::write(
                 cache,
                 ThreadLocalEngine {
@@ -166,6 +180,7 @@ impl ThreadLocalEngine {
                         }
                     }; NUM_SIZE_CLASSES],
                     node: null_mut(),
+                    numa_node_id: (numa % MAX_NUMA_NODES),
                 },
             );
 
@@ -206,7 +221,6 @@ impl ThreadLocalEngine {
                     return null_mut();
                 }
                 header = self.tls[class].head.load(Ordering::Relaxed);
-
                 // Check if data is still valid
                 if header.is_null() || !is_ours(header as usize) {
                     return null_mut();
@@ -306,7 +320,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
                 count += 1;
             }
 
-            GlobalHandler.push_to_global(class, head, tail, count);
+            GlobalHandler.push_to_global(class, (*cache).numa_node_id, head, tail, count);
         }
     }
 

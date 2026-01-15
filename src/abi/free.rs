@@ -5,9 +5,9 @@ use crate::{
     abi::malloc::TOTAL_MALLOC_FREE,
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
-    va::va_helper::is_ours,
+    va::is_ours,
 };
-use std::{os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
+use std::{alloc::Layout, os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
@@ -61,7 +61,20 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let size = (*header).size as usize;
     let thread = ThreadLocalEngine::get_or_init();
 
-    let class = match match_size_class(size) {
+    match Layout::array::<u8>(size) {
+        Ok(layout) => free_inner(&layout, header, thread, header_search_ptr),
+        Err(_) => return,
+    };
+}
+
+#[inline(always)]
+unsafe fn free_inner(
+    layout: &Layout,
+    header: *mut OxHeader,
+    thread: &ThreadLocalEngine,
+    header_search_ptr: *mut c_void,
+) {
+    let class = match match_size_class(layout.size()) {
         Some(class) => class,
         None => {
             big_free(header_search_ptr as *mut OxHeader);

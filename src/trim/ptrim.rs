@@ -65,6 +65,15 @@ impl PTrim {
         }
     }
 
+    unsafe fn get_numa_id(&self, engine: *mut ThreadLocalEngine) -> (usize, bool) {
+        if engine.is_null() {
+            (0, false)
+        } else {
+            let numa_id = (*engine).numa_node_id;
+            (numa_id, true)
+        }
+    }
+
     pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
         if SHUTDOWN.load(Ordering::Relaxed) {
             return (0, 0);
@@ -87,6 +96,11 @@ impl PTrim {
             let engine = (*node).engine.load(Ordering::Acquire);
 
             if !engine.is_null() {
+                let (numa_id, is_ok) = self.get_numa_id(engine);
+                if !is_ok {
+                    continue;
+                }
+
                 for class in 0..class_4096 {
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
@@ -110,13 +124,13 @@ impl PTrim {
                         if life_time > half_timing {
                             let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                             (*cache).life_time = current;
-                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            GlobalHandler.push_to_global(class, numa_id, cache, cache, 1);
                             continue;
                         }
 
                         let push = self.push_to_thread(engine, class, cache);
                         if !push {
-                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            GlobalHandler.push_to_global(class, numa_id, cache, cache, 1);
                             break;
                         }
                     }
@@ -156,13 +170,13 @@ impl PTrim {
                         } else if life_time > half_timing {
                             let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                             (*cache).life_time = current;
-                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            GlobalHandler.push_to_global(class, numa_id, cache, cache, 1);
                             continue;
                         }
 
                         let push = self.push_to_thread(engine, class, cache);
                         if !push {
-                            GlobalHandler.push_to_global(class, cache, cache, 1);
+                            GlobalHandler.push_to_global(class, numa_id, cache, cache, 1);
                             break;
                         }
                     }
@@ -175,7 +189,7 @@ impl PTrim {
                             total_freed += SIZE_CLASSES[class];
                         }
                         (*to_trim).life_time = current;
-                        GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                        GlobalHandler.push_to_global(class, numa_id, to_trim, to_trim, 1);
                         to_trim = next;
                     }
                 }

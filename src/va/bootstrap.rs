@@ -128,7 +128,7 @@ pub unsafe fn init_reverse() {
         if val > 1024 * 1024 * 1024 * TOTAL_VA_RANGE_GIB {
             OxidallocError::ReservationExceeded.log_and_abort(
                 null_mut() as *mut c_void,
-                "Reservation size is too large, MAX: 256GB",
+                "Reservation size is too large, MAX: 128GB (default)",
                 None,
             )
         }

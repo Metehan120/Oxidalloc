@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::{MAGIC, OxidallocError, slab::thread_local::ThreadLocalEngine, va::va_helper::is_ours};
+use crate::{MAGIC, OxidallocError, slab::thread_local::ThreadLocalEngine, va::is_ours};
 
 pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 

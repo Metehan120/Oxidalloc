@@ -8,7 +8,7 @@ use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
     abi::{free::free, malloc::malloc},
     slab::match_size_class,
-    va::{align_to, bitmap::VA_MAP, bootstrap::VA_LEN, va_helper::is_ours},
+    va::{align_to, bitmap::VA_MAP, bootstrap::VA_LEN, is_ours},
 };
 
 const OFFSET_SIZE: usize = size_of::<usize>();
