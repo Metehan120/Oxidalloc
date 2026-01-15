@@ -3,7 +3,6 @@
 use crate::{OX_MAX_RESERVATION, OxidallocError};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
-    cell::UnsafeCell,
     os::raw::c_void,
     ptr::{null_mut, write},
     sync::{
@@ -67,10 +66,6 @@ pub const BLOCK_SIZE: usize = 4096;
 
 pub static VA_MAP: VaBitmap = VaBitmap::new();
 
-thread_local! {
-    static LATEST_SEGMENT: UnsafeCell<*mut Segment> = UnsafeCell::new(null_mut());
-}
-
 pub struct Segment {
     next: *mut Segment,
     va_start: usize,
@@ -86,6 +81,7 @@ pub struct Segment {
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     lock: AtomicBool,
+    latest: AtomicPtr<Segment>,
 }
 
 impl VaBitmap {
@@ -93,12 +89,13 @@ impl VaBitmap {
         Self {
             map: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
+            latest: AtomicPtr::new(null_mut()),
         }
     }
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        let latest = LATEST_SEGMENT.with(|latest| *latest.get());
+        let latest = self.latest.load(Ordering::Acquire);
 
         if !latest.is_null() {
             let s = &*latest;
@@ -111,7 +108,7 @@ impl VaBitmap {
         while !curr.is_null() {
             let s = unsafe { &*curr };
             if addr >= s.va_start && addr < s.va_end {
-                LATEST_SEGMENT.with(|ptr| ptr.get().write(curr));
+                self.latest.store(curr, Ordering::Release);
                 return true;
             }
             curr = s.next;
