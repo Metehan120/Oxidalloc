@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{OX_MAX_RESERVATION, OxidallocError};
+use crate::{OX_MAX_RESERVATION, OxidallocError, slab::global::MAX_NUMA_NODES};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     os::raw::c_void,
@@ -81,8 +81,7 @@ pub struct Segment {
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     lock: AtomicBool,
-    latest: [AtomicPtr<Segment>; 4],
-    hint: AtomicUsize,
+    latest: [AtomicPtr<Segment>; MAX_NUMA_NODES],
 }
 
 impl VaBitmap {
@@ -90,14 +89,13 @@ impl VaBitmap {
         Self {
             map: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
-            latest: [const { AtomicPtr::new(null_mut()) }; 4],
-            hint: AtomicUsize::new(0),
+            latest: [const { AtomicPtr::new(null_mut()) }; MAX_NUMA_NODES],
         }
     }
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        for i in 0..4 {
+        for i in 0..MAX_NUMA_NODES {
             let s_ptr = self.latest[i].load(Ordering::Relaxed);
             if !s_ptr.is_null() {
                 let s = &*s_ptr;
@@ -109,15 +107,17 @@ impl VaBitmap {
             }
         }
 
+        let mut idx = 0;
+
         let mut curr = self.map.load(Ordering::Relaxed);
         while !curr.is_null() {
             let s = &*curr;
             if addr >= s.va_start && addr < s.va_end {
-                let idx = (self.hint.fetch_add(1, Ordering::Relaxed) % 4) as usize;
-                self.latest[idx].store(curr, Ordering::Relaxed);
+                self.latest[idx % MAX_NUMA_NODES].store(curr, Ordering::Relaxed);
                 return true;
             }
             curr = s.next;
+            idx += 1;
         }
 
         false
