@@ -175,12 +175,12 @@ impl ThreadLocalEngine {
 
             (*cache).node = register_node(cache);
 
-            pthread_setspecific(key, cache as *mut c_void);
-
             #[cfg(feature = "nightly")]
             {
                 TLS = cache
             };
+
+            pthread_setspecific(key, cache as *mut c_void);
 
             return &*cache;
         }
