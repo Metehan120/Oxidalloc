@@ -15,7 +15,6 @@ const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
 // TODO: Better realloc implementation
-#[cold]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     if ptr.is_null() {
@@ -76,7 +75,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         let new_total = align_to(new_size + HEADER_SIZE, 4096);
 
         if new_total == old_total {
-            (*header).size = new_size as u64;
+            (*header).size = new_size;
             return ptr;
         }
 
@@ -90,7 +89,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
             VA_MAP.free((header as usize) + new_total, old_total - new_total);
 
-            (*header).size = new_size as u64;
+            (*header).size = new_size;
             return ptr;
         }
 
@@ -105,7 +104,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
             );
 
             if resmap_res.is_ok() {
-                (*header).size = new_size as u64;
+                (*header).size = new_size;
                 return ptr;
             } else {
                 VA_MAP.free(

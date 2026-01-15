@@ -3,7 +3,7 @@ use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, TOTAL_ALLOCATED,
+    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, OxidallocError, TOTAL_ALLOCATED,
     slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
@@ -15,7 +15,14 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let num_blocks = ITERATIONS[class];
     let total = block_size * num_blocks;
 
-    let hint = VA_MAP.alloc(total).ok_or(Err::OutOfReservation)?;
+    let hint = VA_MAP.alloc(total).unwrap_or_else(|| {
+        OxidallocError::VaBitmapExhausted.log_and_abort(
+            null_mut(),
+            "VA bitmap exhausted | This is expected",
+            None,
+        )
+    });
+
     let mem = mmap_anonymous(
         hint as *mut c_void,
         total,
@@ -37,7 +44,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let current_header = (mem as usize + offset) as *mut OxHeader;
 
         (*current_header).next = prev;
-        (*current_header).size = payload_size as u64;
+        (*current_header).size = payload_size;
         (*current_header).magic = MAGIC;
         (*current_header).in_use = 0;
 

@@ -13,7 +13,7 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
     big_allocation::big_malloc,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
@@ -37,22 +37,49 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline(always)]
+unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
+    let mut output = null_mut();
+
+    let batch = if class > 10 { ITERATIONS[class] } else { 16 };
+
+    let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
+
+    if !global_cache.is_null() {
+        let mut tail = global_cache;
+        let mut real = 1;
+
+        // Loop through cache and found the last header and set linked list to null
+        while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+            tail = (*tail).next;
+            real += 1;
+        }
+        (*tail).next = null_mut();
+
+        thread.push_to_thread_tailed(class, global_cache, tail, real);
+        return thread.pop_from_thread(class);
+    }
+
+    for i in 0..3 {
+        match bulk_fill(thread, class) {
+            Ok(_) => {
+                output = thread.pop_from_thread(class);
+                break;
+            }
+            Err(_) => match i {
+                2 => return null_mut(),
+                _ => continue,
+            },
+        }
+    }
+
+    output
+}
+
+#[inline(always)]
 // Separated allocation function for better scalability in future
 unsafe fn allocate(layout: Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
-
-    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
-        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
-    } else {
-        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
-            THREAD_SPAWNED.store(true, Ordering::Relaxed);
-            ONCE.call_once(|| {
-                spawn_ptrim_thread();
-                spawn_gtrim_thread();
-            });
-        }
-    }
 
     if size > VA_LEN.load(Ordering::Relaxed) {
         *__errno_location() = ENOMEM;
@@ -69,59 +96,7 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
     // Check if cache is null
     if cache.is_null() {
-        // Check global cache if its allocated then pop batch from global cache
-        let batch = if class > 10 {
-            if ITERATIONS[class] / 2 == 0 {
-                1
-            } else {
-                ITERATIONS[class] / 2
-            }
-        } else {
-            16
-        };
-        let global_cache = GlobalHandler.pop_batch_from_global(class, batch);
-
-        if !global_cache.is_null() {
-            let mut tail = global_cache;
-            let mut real = 1;
-
-            // Loop through cache and found the last header and set linked list to null
-            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-                tail = (*tail).next;
-                real += 1;
-            }
-            (*tail).next = null_mut();
-
-            thread.push_to_thread_tailed(class, global_cache, tail, real);
-            cache = thread.pop_from_thread(class);
-        } else {
-            for i in 0..3 {
-                // Global is null, try to fill thread cache
-                match bulk_fill(thread, class) {
-                    // If fill succeeds, pop from thread cache
-                    Ok(_) => {
-                        cache = thread.pop_from_thread(class);
-                        break;
-                    }
-                    // If fill fails, check error if VA exhausted abort
-                    Err(error) => {
-                        match error {
-                            Err::OutOfMemory => (),
-                            Err::OutOfReservation => OxidallocError::VaBitmapExhausted
-                                .log_and_abort(
-                                    null_mut(),
-                                    "VA bitmap exhausted | This is expected",
-                                    None,
-                                ),
-                        }
-
-                        if i == 2 {
-                            return null_mut();
-                        }
-                    }
-                }
-            }
-        }
+        cache = try_fill(thread, class)
     }
 
     if cache.is_null() {
@@ -137,6 +112,18 @@ unsafe fn allocate(layout: Layout) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    } else {
+        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
+            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+            ONCE.call_once(|| {
+                spawn_ptrim_thread();
+                spawn_gtrim_thread();
+            });
+        }
+    }
+
     match Layout::array::<u8>(size) {
         Ok(layout) => allocate(layout) as *mut c_void,
         Err(_) => null_mut(),

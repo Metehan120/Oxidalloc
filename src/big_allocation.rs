@@ -43,15 +43,15 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     }
 
     // Initialize the header
-    (*actual_ptr).size = size as u64;
+    (*actual_ptr).size = size;
     (*actual_ptr).magic = MAGIC;
     (*actual_ptr).in_use = 1;
 
     (actual_ptr as *mut u8).add(HEADER_SIZE)
 }
 
-pub unsafe fn big_free(ptr: *mut c_void) {
-    let header = (ptr as *mut OxHeader).sub(1);
+pub unsafe fn big_free(ptr: *mut OxHeader) {
+    let header = ptr.sub(1);
     let payload_size = (*header).size as usize;
 
     // Align size back to original size

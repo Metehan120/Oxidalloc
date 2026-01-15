@@ -64,7 +64,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let class = match match_size_class(size) {
         Some(class) => class,
         None => {
-            big_free(header_search_ptr);
+            big_free(header_search_ptr as *mut OxHeader);
             return;
         }
     };

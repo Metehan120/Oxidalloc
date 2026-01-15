@@ -46,7 +46,7 @@ pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
-    pub size: u64,
+    pub size: usize,
     pub magic: u64,
     pub flag: i32,
     pub life_time: usize,

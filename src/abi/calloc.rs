@@ -1,26 +1,41 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use crate::{HEADER_SIZE, OxHeader, abi::malloc::malloc};
 use libc::{__errno_location, ENOMEM, size_t};
-use std::{os::raw::c_void, ptr::null_mut};
+use std::{alloc::Layout, os::raw::c_void, ptr::null_mut};
 
-#[allow(unsafe_op_in_unsafe_fn)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
-    let total_size = match nmemb.checked_mul(size) {
+#[inline(always)]
+unsafe fn calc_and_get(size: Layout, nmem: usize) -> Option<(*mut c_void, usize)> {
+    let size = size.size();
+    let total_size = match nmem.checked_mul(size) {
         Some(s) => s,
         None => {
-            unsafe { *__errno_location() = ENOMEM };
-            return null_mut();
+            *__errno_location() = ENOMEM;
+            return None;
         }
     };
 
-    // glibc returns a non-null pointer for zero-sized calloc; keep parity by
-    // allocating the smallest block we can hand back.
     let effective_size = if total_size == 0 { 1 } else { total_size };
-
     let ptr = malloc(effective_size);
     if ptr.is_null() {
-        return null_mut();
+        return None;
     }
+    Some((ptr, effective_size))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
+    let layout = match Layout::array::<u8>(size) {
+        Ok(layout) => layout,
+        Err(_) => {
+            *__errno_location() = ENOMEM;
+            return null_mut();
+        }
+    };
+    let (ptr, effective_size) = match calc_and_get(layout, nmemb) {
+        Some(ptr) => ptr,
+        None => return null_mut(),
+    };
 
     if !ptr.is_null() {
         unsafe {
