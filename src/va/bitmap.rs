@@ -2,8 +2,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::va::bootstrap::{VA_END, VA_START};
 
+// User can change it if needed
+pub const TOTAL_VA_RANGE_GIB: usize = 256;
+
 pub const BLOCK_SIZE: usize = 4096;
-pub static BITMAP_LEN: usize = 65_536 * 16;
+const GIB: usize = 1024 * 1024 * 1024;
+const TOTAL_BITS: usize = (TOTAL_VA_RANGE_GIB * GIB) / BLOCK_SIZE;
+pub const BITMAP_LEN: usize = TOTAL_BITS / 64;
 
 pub static VA_MAP: VaBitmap = VaBitmap::new();
 

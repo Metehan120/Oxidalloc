@@ -11,8 +11,10 @@ use std::{
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 
 use crate::{
-    OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
+    OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
+    OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    va::bitmap::TOTAL_VA_RANGE_GIB,
 };
 
 pub static VA_START: AtomicUsize = AtomicUsize::new(0);
@@ -51,6 +53,29 @@ pub unsafe fn init_thp() {
 
         if val == 1 {
             OX_USE_THP.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+pub unsafe fn init_healing() {
+    let key = b"OX_ENABLE_EXPERIMENTAL_HEALING\0";
+    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
+
+    if !value_ptr.is_null() {
+        let mut val = 0usize;
+        let mut ptr = value_ptr as *const u8;
+
+        while *ptr != 0 {
+            if *ptr >= b'0' && *ptr <= b'9' {
+                val = val * 10 + (*ptr - b'0') as usize;
+            } else {
+                break;
+            }
+            ptr = ptr.add(1);
+        }
+
+        if val == 1 {
+            OX_ENABLE_EXPERIMENTAL_HEALING.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -99,7 +124,8 @@ pub unsafe fn init_reverse() {
         if val == 0 || val < 1024 * 1024 * 256 {
             val = 1024 * 1024 * 256;
         }
-        if val > 1024 * 1024 * 1024 * 256 {
+
+        if val > 1024 * 1024 * 1024 * TOTAL_VA_RANGE_GIB {
             OxidallocError::ReservationExceeded.log_and_abort(
                 null_mut() as *mut c_void,
                 "Reservation size is too large, MAX: 256GB",
@@ -133,6 +159,7 @@ pub unsafe fn boot_strap() {
     register_shutdown();
     init_threshold();
     init_thp();
+    init_healing();
 }
 
 pub unsafe fn va_init() {
