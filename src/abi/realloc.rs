@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use libc::size_t;
+use libc::{__errno_location, size_t};
 use rustix::mm::{MremapFlags, mremap};
 use std::{os::raw::c_void, ptr::null_mut};
 
@@ -125,4 +125,23 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
     free(ptr);
     new_ptr
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn reallocarray(
+    ptr: *mut c_void,
+    nmemb: size_t,
+    size: size_t,
+) -> *mut c_void {
+    let total_size = match nmemb.checked_mul(size) {
+        Some(s) => s,
+        None => {
+            if let Some(errno_ptr) = __errno_location().as_mut() {
+                *errno_ptr = libc::ENOMEM;
+            }
+            return null_mut();
+        }
+    };
+
+    realloc(ptr, total_size)
 }

@@ -1,5 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+use libc::size_t;
+
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     abi::{fallback::free_fallback, malloc::TOTAL_MALLOC_FREE},
@@ -90,4 +92,14 @@ unsafe fn free_inner(
     (*header).life_time = stamp;
 
     thread.push_to_thread(class, header);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn free_sized(ptr: *mut c_void, _: size_t) {
+    free(ptr);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn free_aligned_sized(ptr: *mut c_void, _: size_t, _: size_t) {
+    free(ptr);
 }
