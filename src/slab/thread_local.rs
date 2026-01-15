@@ -206,11 +206,11 @@ impl ThreadLocalEngine {
                     return null_mut();
                 }
                 header = self.tls[class].head.load(Ordering::Relaxed);
-            }
 
-            // Check if data is still valid
-            if header.is_null() || !is_ours(header as usize) {
-                return null_mut();
+                // Check if data is still valid
+                if header.is_null() || !is_ours(header as usize) {
+                    return null_mut();
+                }
             }
 
             let next = (*header).next;
