@@ -1,9 +1,8 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use libc::{pthread_key_t, pthread_setspecific};
+use libc::{pthread_getspecific, pthread_key_t, pthread_setspecific};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
-    cell::UnsafeCell,
     os::raw::c_void,
     ptr::null_mut,
     sync::{
@@ -99,22 +98,17 @@ pub struct ThreadLocalEngine {
     pub node: *mut ThreadNode,
 }
 
-thread_local! {
-    static TLS: UnsafeCell<*mut ThreadLocalEngine> = UnsafeCell::new(null_mut())
-}
-
 impl ThreadLocalEngine {
     #[inline(always)]
     pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
-        let tls = TLS.with(|ptr| *ptr.get());
+        let key = THREAD_KEY.get_or_init(|| {
+            let mut key = 0;
+            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+            key
+        });
+        let tls = pthread_getspecific(*key) as *mut ThreadLocalEngine;
 
         if tls.is_null() {
-            let key = THREAD_KEY.get_or_init(|| {
-                let mut key = 0;
-                libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-                key
-            });
-
             let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
             let engine_size = size_of::<ThreadLocalEngine>();
             let total_size = tls_size + engine_size;
@@ -150,7 +144,6 @@ impl ThreadLocalEngine {
 
             (*cache).node = register_node(cache);
             pthread_setspecific(*key, cache as *mut c_void);
-            TLS.with(|ptr| ptr.get().write(cache));
 
             return &*cache;
         }
