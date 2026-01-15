@@ -17,7 +17,7 @@ use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES,
-        global::{GLOBAL, GlobalHandler, MAX_NUMA_NODES},
+        global::{GlobalHandler, MAX_NUMA_NODES},
         quarantine::quarantine,
     },
     va::is_ours,
@@ -297,7 +297,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     destroy_node((*cache).node);
 
     // Move all blocks to global
-    for class in 0..GLOBAL.len() {
+    for class in 0..NUM_SIZE_CLASSES {
         let head = (*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel);
         if !is_ours(head as usize) {
             continue;

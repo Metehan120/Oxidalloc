@@ -44,6 +44,12 @@ pub fn get_clock() -> &'static Instant {
 pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
+pub struct MetaData {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
     pub size: usize,
@@ -52,6 +58,7 @@ pub struct OxHeader {
     pub life_time: usize,
     pub in_use: u8,
     pub used_before: u8,
+    pub metadata: *mut MetaData,
 }
 
 #[repr(u32)]

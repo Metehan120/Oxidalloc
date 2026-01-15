@@ -6,7 +6,7 @@ use std::{os::raw::c_void, ptr::null_mut};
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
-    abi::{free::free, malloc::malloc},
+    abi::{fallback::realloc_fallback, free::free, malloc::malloc},
     slab::match_size_class,
     va::{align_to, bitmap::VA_MAP, is_ours},
 };
@@ -22,6 +22,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     }
 
     if !is_ours(ptr as usize) {
+        realloc_fallback(ptr, new_size);
         return null_mut();
     }
 

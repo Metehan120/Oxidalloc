@@ -21,7 +21,7 @@ pub struct GTrim;
 
 impl GTrim {
     unsafe fn pop_from_global(&self, class: usize, numa_node_id: usize) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_from_global(numa_node_id, class, 16);
+        let global_cache = GlobalHandler.pop_from_global_local(numa_node_id, class, 16);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -121,6 +121,7 @@ impl GTrim {
 
                     if (total_freed <= pad || pad == 0) || force_trim {
                         self.release_memory(to_trim, SIZE_CLASSES[class]);
+                        (*to_trim).used_before = 0;
                         total_freed += SIZE_CLASSES[class];
                     }
 

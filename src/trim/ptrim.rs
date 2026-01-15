@@ -192,6 +192,7 @@ impl PTrim {
                         let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
                         if (total_freed <= pad || pad == 0) || force_trim {
                             self.release_memory(to_trim, SIZE_CLASSES[class]);
+                            (*to_trim).used_before = 0;
                             total_freed += SIZE_CLASSES[class];
                         }
                         (*to_trim).life_time = current;

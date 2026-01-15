@@ -2,7 +2,7 @@
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    abi::malloc::TOTAL_MALLOC_FREE,
+    abi::{fallback::free_fallback, malloc::TOTAL_MALLOC_FREE},
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::is_ours,
@@ -24,6 +24,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     if !is_ours(ptr as usize) {
+        free_fallback(ptr);
         return;
     }
 

@@ -98,6 +98,15 @@ impl GlobalHandler {
         null_mut()
     }
 
+    pub unsafe fn pop_from_global_local(
+        &self,
+        numa_node_id: usize,
+        class: usize,
+        batch_size: usize,
+    ) -> *mut OxHeader {
+        self.pop_from_shard(numa_node_id, class, batch_size)
+    }
+
     unsafe fn pop_from_shard(
         &self,
         numa_node_id: usize,
@@ -114,6 +123,7 @@ impl GlobalHandler {
             }
 
             if !is_ours(head as usize) {
+                eprintln!("Is not ours");
                 quarantine(None, head as usize, class, false);
                 GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
                 GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);

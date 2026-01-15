@@ -7,7 +7,7 @@ use std::{
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_CURRENT_STAMP, OX_USE_THP, OxHeader, OxidallocError,
+    Err, HEADER_SIZE, MAGIC, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader, OxidallocError,
     TOTAL_ALLOCATED,
     slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
@@ -18,7 +18,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
-    let total = block_size * num_blocks;
+    let total = size_of::<MetaData>() + (block_size * num_blocks);
 
     let hint = VA_MAP.alloc(total).unwrap_or_else(|| {
         OxidallocError::VaBitmapExhausted.log_and_abort(
@@ -39,6 +39,15 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         Err::OutOfMemory
     })?;
 
+    let metadata = mem as *mut MetaData;
+    write(
+        metadata,
+        MetaData {
+            start: mem as usize,
+            end: (mem as usize) + total,
+        },
+    );
+
     if class == NUM_SIZE_CLASSES && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
@@ -46,7 +55,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
     let mut prev = null_mut();
     for i in (0..num_blocks).rev() {
-        let offset = i * block_size;
+        let offset = size_of::<MetaData>() + (i * block_size);
         let current_header = (mem as usize + offset) as *mut OxHeader;
 
         write(
@@ -59,6 +68,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
                 life_time: current_stamp,
                 in_use: 0,
                 used_before: 0,
+                metadata: metadata,
             },
         );
 

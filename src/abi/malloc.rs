@@ -14,6 +14,7 @@ use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
+    abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
         ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
@@ -136,7 +137,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
     }
 
     if !is_ours(ptr as usize) {
-        return 0;
+        return malloc_usable_size_fallback(ptr);
     }
 
     let mut raw_ptr = ptr;
