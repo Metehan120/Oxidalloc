@@ -6,11 +6,15 @@ use std::{
     cell::UnsafeCell,
     os::raw::c_void,
     ptr::{null_mut, write},
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
+    sync::{
+        Once,
+        atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
+    },
 };
 
 pub static LATEST_TRIED: AtomicUsize = AtomicUsize::new(0);
 pub static RESERVE: AtomicU8 = AtomicU8::new(0);
+pub static ONCE: Once = Once::new();
 
 pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     const MIN_RESERVE: usize = 1024 * 1024 * 256;
@@ -183,10 +187,20 @@ impl VaBitmap {
 
         let mut curr = self.map.load(Ordering::Acquire);
         if curr.is_null() {
-            match self.grow() {
-                Some(new) => curr = new,
-                None => return None,
-            };
+            ONCE.call_once(|| {
+                match self.grow() {
+                    Some(new) => curr = new,
+                    None => OxidallocError::VAIinitFailed.log_and_abort(
+                        null_mut() as *mut c_void,
+                        "VA initialization failed during allocator start",
+                        None,
+                    ),
+                };
+            });
+
+            if curr.is_null() {
+                curr = self.map.load(Ordering::Acquire);
+            }
         }
 
         while !curr.is_null() {
