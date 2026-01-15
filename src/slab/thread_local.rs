@@ -1,15 +1,13 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-#[cfg(not(feature = "nightly"))]
-use libc::pthread_getspecific;
-use libc::{pthread_key_t, pthread_setspecific};
+use libc::pthread_setspecific;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
     os::raw::c_void,
     ptr::null_mut,
     sync::{
-        OnceLock,
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        Once,
+        atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
     },
 };
 
@@ -95,7 +93,9 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
-static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
+static THREAD_KEY: AtomicU32 = AtomicU32::new(0);
+static THREAD_ONCE: Once = Once::new();
+static THREAD_INIT: AtomicBool = AtomicBool::new(true);
 
 #[repr(C, align(64))]
 pub struct TlsBin {
@@ -112,91 +112,83 @@ pub struct ThreadLocalEngine {
     pub latest_segment: AtomicPtr<Segment>,
 }
 
-#[cfg(feature = "nightly")]
 #[thread_local]
 static mut TLS: *mut ThreadLocalEngine = null_mut();
 
+pub unsafe fn get_or_init() {
+    THREAD_ONCE.call_once(|| {
+        let mut key = 0;
+        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+        THREAD_KEY.store(key, Ordering::Relaxed);
+        THREAD_INIT.store(false, Ordering::Relaxed);
+    });
+}
+
 impl ThreadLocalEngine {
+    pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
+        let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
+        let engine_size = size_of::<ThreadLocalEngine>();
+        let total_size = tls_size + engine_size;
+
+        let cache = mmap_anonymous(
+            null_mut(),
+            total_size,
+            ProtFlags::READ | ProtFlags::WRITE,
+            MapFlags::PRIVATE,
+        )
+        .unwrap_or_else(|err| {
+            OxidallocError::PThreadCacheFailed.log_and_abort(
+                null_mut(),
+                "PThread cache creation failed: errno({})",
+                Some(err),
+            )
+        }) as *mut ThreadLocalEngine;
+
+        let numa = get_numa_node_id();
+
+        // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
+        std::ptr::write(
+            cache,
+            ThreadLocalEngine {
+                tls: [const {
+                    TlsBin {
+                        head: AtomicPtr::new(null_mut()),
+                        usage: AtomicUsize::new(0),
+                        latest_usage: AtomicUsize::new(0),
+                        latest_next: AtomicPtr::new(null_mut()),
+                    }
+                }; NUM_SIZE_CLASSES],
+                node: null_mut(),
+                numa_node_id: (numa % MAX_NUMA_NODES),
+                latest_segment: AtomicPtr::new(null_mut()),
+            },
+        );
+
+        (*cache).node = register_node(cache);
+        pthread_setspecific(key, cache as *mut c_void);
+        TLS = cache;
+
+        cache
+    }
+
     #[inline(always)]
     pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
-        let tls;
-
-        let key;
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            key = *THREAD_KEY.get_or_init(|| {
-                let mut key = 0;
-                libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-                key
-            });
-            tls = pthread_getspecific(key) as *mut ThreadLocalEngine;
+        if !TLS.is_null() {
+            return &*TLS;
         }
 
-        #[cfg(feature = "nightly")]
-        {
-            tls = TLS;
-        }
+        let key = if !THREAD_INIT.load(Ordering::Acquire) {
+            THREAD_KEY.load(Ordering::Acquire)
+        } else {
+            get_or_init();
+            THREAD_KEY.load(Ordering::Acquire)
+        };
 
+        let mut tls = libc::pthread_getspecific(key) as *mut ThreadLocalEngine;
         if tls.is_null() {
-            #[cfg(feature = "nightly")]
-            {
-                key = *THREAD_KEY.get_or_init(|| {
-                    let mut key = 0;
-                    libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-                    key
-                });
-            }
-
-            let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
-            let engine_size = size_of::<ThreadLocalEngine>();
-            let total_size = tls_size + engine_size;
-
-            let cache = mmap_anonymous(
-                null_mut(),
-                total_size,
-                ProtFlags::READ | ProtFlags::WRITE,
-                MapFlags::PRIVATE,
-            )
-            .unwrap_or_else(|err| {
-                OxidallocError::PThreadCacheFailed.log_and_abort(
-                    null_mut(),
-                    "PThread cache creation failed: errno({})",
-                    Some(err),
-                )
-            }) as *mut ThreadLocalEngine;
-
-            let numa = get_numa_node_id();
-
-            // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
-            std::ptr::write(
-                cache,
-                ThreadLocalEngine {
-                    tls: [const {
-                        TlsBin {
-                            head: AtomicPtr::new(null_mut()),
-                            usage: AtomicUsize::new(0),
-                            latest_usage: AtomicUsize::new(0),
-                            latest_next: AtomicPtr::new(null_mut()),
-                        }
-                    }; NUM_SIZE_CLASSES],
-                    node: null_mut(),
-                    numa_node_id: (numa % MAX_NUMA_NODES),
-                    latest_segment: AtomicPtr::new(null_mut()),
-                },
-            );
-
-            (*cache).node = register_node(cache);
-
-            #[cfg(feature = "nightly")]
-            {
-                TLS = cache
-            };
-
-            pthread_setspecific(key, cache as *mut c_void);
-
-            return &*cache;
+            tls = Self::init_tls(key);
         }
+        TLS = tls;
 
         &*tls
     }
@@ -292,11 +284,11 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
+    TLS = null_mut();
     let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;
     }
-
     destroy_node((*cache).node);
 
     // Move all blocks to global

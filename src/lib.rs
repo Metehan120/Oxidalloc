@@ -1,5 +1,5 @@
 #![warn(clippy::nursery, clippy::pedantic)]
-#![cfg_attr(feature = "nightly", feature(thread_local))]
+#![feature(thread_local)]
 
 use rustix::io::Errno;
 use std::{

@@ -85,6 +85,18 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
     boot_strap();
     let size = layout.size();
 
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 1024 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    } else {
+        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
+            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+            ONCE.call_once(|| {
+                spawn_ptrim_thread();
+                spawn_gtrim_thread();
+            });
+        }
+    }
+
     let class = match match_size_class(size) {
         Some(class) => class,
         None => return big_malloc(size),
@@ -112,18 +124,6 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
-    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 256 {
-        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
-    } else {
-        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
-            THREAD_SPAWNED.store(true, Ordering::Relaxed);
-            ONCE.call_once(|| {
-                spawn_ptrim_thread();
-                spawn_gtrim_thread();
-            });
-        }
-    }
-
     match Layout::array::<u8>(size) {
         Ok(layout) => allocate(&layout) as *mut c_void,
         Err(_) => {
