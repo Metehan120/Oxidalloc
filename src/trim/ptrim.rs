@@ -206,7 +206,7 @@ impl PTrim {
         }
 
         if total > 0 {
-            let avg = (avg / total).max(100).min(10000);
+            let avg = (avg / total).max(100).min(3000);
             AVERAGE_BLOCK_TIMES_PTHREAD.store(avg, Ordering::Relaxed);
             PTRIM_DECAY.swap(TimeDecay::decide_on(avg) as u8, Ordering::AcqRel);
         }

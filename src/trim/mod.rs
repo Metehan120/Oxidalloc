@@ -14,8 +14,8 @@ impl TimeDecay {
     pub fn decide_on(avg_time: usize) -> TimeDecay {
         match avg_time {
             0..=1000 => TimeDecay::Normal,
-            1001..=3000 => TimeDecay::Medium,
-            3001..=5000 => TimeDecay::High,
+            1001..=2000 => TimeDecay::Medium,
+            2001..=2500 => TimeDecay::High,
             _ => TimeDecay::Aggressive,
         }
     }
