@@ -51,6 +51,7 @@ pub struct OxHeader {
     pub flag: i32,
     pub life_time: usize,
     pub in_use: u8,
+    pub used_before: u8,
 }
 
 #[repr(u32)]

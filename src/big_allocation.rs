@@ -61,19 +61,18 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     (*header).in_use = 0;
     (*header).magic = 0;
 
+    let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
+
     // If this fails (e.g. under a restrictive sandbox), fall back to `madvise(DONTNEED)`.
-    let remap_result = mmap_anonymous(
+    let is_mremap_failed = mmap_anonymous(
         header as *mut c_void,
         total_size,
         ProtFlags::empty(),
         MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
     );
 
-    if remap_result.is_err() {
-        let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
-        if is_failed.is_err() {
-            write_bytes(header as *mut u8, 0, total_size);
-        }
+    if is_failed.is_err() && is_mremap_failed.is_err() {
+        write_bytes(header as *mut u8, 0, total_size);
     }
 
     VA_MAP.free(header as usize, total_size);

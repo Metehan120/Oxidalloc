@@ -101,6 +101,7 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
+    (*cache).used_before = 1;
 
     (cache as *mut u8).add(HEADER_SIZE)
 }

@@ -1,9 +1,14 @@
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{
+    os::raw::c_void,
+    ptr::{null_mut, write},
+    sync::atomic::Ordering,
+};
 
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader, OxidallocError, TOTAL_ALLOCATED,
+    Err, HEADER_SIZE, MAGIC, OX_CURRENT_STAMP, OX_USE_THP, OxHeader, OxidallocError,
+    TOTAL_ALLOCATED,
     slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
@@ -38,15 +43,24 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
+    let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
     let mut prev = null_mut();
     for i in (0..num_blocks).rev() {
         let offset = i * block_size;
         let current_header = (mem as usize + offset) as *mut OxHeader;
 
-        (*current_header).next = prev;
-        (*current_header).size = payload_size;
-        (*current_header).magic = MAGIC;
-        (*current_header).in_use = 0;
+        write(
+            current_header,
+            OxHeader {
+                next: prev,
+                size: payload_size,
+                magic: MAGIC,
+                flag: 0,
+                life_time: current_stamp,
+                in_use: 0,
+                used_before: 0,
+            },
+        );
 
         prev = current_header;
     }

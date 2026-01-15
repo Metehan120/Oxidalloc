@@ -11,6 +11,10 @@ use crate::{
         global::GlobalHandler,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
     },
+    trim::{
+        TimeDecay,
+        thread::{LAST_PRESSURE_CHECK, PTRIM_DECAY},
+    },
     va::bootstrap::SHUTDOWN,
 };
 
@@ -78,6 +82,8 @@ impl PTrim {
         if SHUTDOWN.load(Ordering::Relaxed) {
             return (0, 0);
         }
+        let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+        let force_trim = pressure > 85;
 
         let mut node = THREAD_REGISTER.load(Ordering::Acquire);
         if node.is_null() {
@@ -184,7 +190,7 @@ impl PTrim {
                     while !to_trim.is_null() {
                         let next = (*to_trim).next;
                         let current = OX_CURRENT_STAMP.load(Ordering::Relaxed);
-                        if total_freed <= pad || pad == 0 {
+                        if (total_freed <= pad || pad == 0) || force_trim {
                             self.release_memory(to_trim, SIZE_CLASSES[class]);
                             total_freed += SIZE_CLASSES[class];
                         }
@@ -199,7 +205,9 @@ impl PTrim {
         }
 
         if total > 0 {
-            AVERAGE_BLOCK_TIMES_PTHREAD.store((avg / total).max(100).min(10000), Ordering::Relaxed);
+            let avg = (avg / total).max(100).min(10000);
+            AVERAGE_BLOCK_TIMES_PTHREAD.store(avg, Ordering::Relaxed);
+            PTRIM_DECAY.swap(TimeDecay::decide_on(avg) as u8, Ordering::AcqRel);
         }
 
         if total_freed >= pad {

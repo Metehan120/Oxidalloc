@@ -10,6 +10,10 @@ use crate::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL, GlobalHandler, MAX_NUMA_NODES},
     },
+    trim::{
+        TimeDecay,
+        thread::{GLOBAL_DECAY, LAST_PRESSURE_CHECK},
+    },
     va::{bootstrap::SHUTDOWN, is_ours},
 };
 
@@ -47,6 +51,8 @@ impl GTrim {
         if SHUTDOWN.load(Ordering::Relaxed) {
             return (0, 0);
         }
+        let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+        let force_trim = pressure > 90;
 
         let mut avg = 0;
         let mut total = 0;
@@ -113,7 +119,7 @@ impl GTrim {
                 while !to_trim.is_null() {
                     let next = (*to_trim).next;
 
-                    if total_freed <= pad || pad == 0 {
+                    if (total_freed <= pad || pad == 0) || force_trim {
                         self.release_memory(to_trim, SIZE_CLASSES[class]);
                         total_freed += SIZE_CLASSES[class];
                     }
@@ -126,7 +132,9 @@ impl GTrim {
         }
 
         if total > 0 {
-            AVERAGE_BLOCK_TIMES_GLOBAL.store((avg / total).max(100).min(10000), Ordering::Relaxed);
+            let avg = (avg / total).max(100).min(10000);
+            AVERAGE_BLOCK_TIMES_GLOBAL.store(avg, Ordering::Relaxed);
+            GLOBAL_DECAY.swap(TimeDecay::decide_on(avg) as u8, Ordering::AcqRel);
         }
 
         if total_freed >= pad {
