@@ -118,12 +118,8 @@ impl ThreadLocalEngine {
                 libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
                 key
             });
+            tls = pthread_getspecific(key) as *mut ThreadLocalEngine;
         }
-
-        #[cfg(not(feature = "nightly"))]
-        {
-            tls = pthread_getspecific(key) as *mut ThreadLocalEngine
-        };
 
         #[cfg(feature = "nightly")]
         {
