@@ -5,7 +5,6 @@ pub mod global;
 pub mod quarantine;
 pub mod thread_local;
 
-// The exact size classes used for lookup
 pub const SIZE_CLASSES: [usize; 34] = [
     // Tiny (16-128) - 16 Byte steps
     16, 32, 48, 64, 80, 96, 128, // Small (160-512) - 32/64 Byte steps
@@ -15,7 +14,6 @@ pub const SIZE_CLASSES: [usize; 34] = [
     32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
 ];
 
-// Calculated for: Header=64B, Metadata=16B, Align=16B
 pub const ITERATIONS: [usize; 34] = [
     // TINY (Targets ~64KB / 16 Pages)
     // 16B  -> Block 80B  -> 65536 / 80  = 819 (0 Waste)
