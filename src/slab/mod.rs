@@ -12,11 +12,11 @@ pub const SIZE_CLASSES: [usize; 34] = [
 ];
 
 pub const ITERATIONS: [usize; 34] = [
-    // Tiny (16B-128B)
-    1024, 512, 512, 512, 256, 256, 128, // Small (160B-512B)
-    64, 64, 64, 32, 32, 32, // Medium (768B-2KB)
-    16, 16, 8, 8, 8, 8, 8, 4, // Large (3KB-16KB)
-    4, 4, 4, 2, 2, 2, // Very Large (32KB-256KB)
+    // Tiny (16B-128B) - Targets ~64KB (16 Pages) perfectly
+    819, 597, 585, 511, 455, 307, 341, // Small (160B-512B) - Targets ~16KB (4 Pages)
+    73, 63, 51, 42, 36, 28, // Medium (768B-2KB) - Targets ~16KB or ~8KB tightly
+    19, 15, 6, 5, 8, 7, 3, 5, // Large (3KB-24KB) - Targets 4 Pages or 1 Block
+    4, 3, 1, 1, 1, 1, // Very Large (32KB+)
     1, 1, 1, 1, 1, 1, 1,
 ];
 
