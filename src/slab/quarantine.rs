@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    MAGIC, OxidallocError,
+    MAGIC, OxHeader, OxidallocError,
     slab::thread_local::ThreadLocalEngine,
     va::{bootstrap::GLOBAL_RANDOM, is_ours},
 };
@@ -13,6 +13,11 @@ pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 
 pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);
+
+#[inline(always)]
+unsafe fn xor_main_ptr(ptr: usize) -> usize {
+    unsafe { ptr ^ GLOBAL_RANDOM }
+}
 
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn quarantine(
@@ -53,7 +58,12 @@ pub unsafe fn quarantine(
 
             if cache.tls[class]
                 .head
-                .compare_exchange(null_mut(), candidate, Ordering::Release, Ordering::Relaxed)
+                .compare_exchange(
+                    null_mut(),
+                    xor_main_ptr(candidate as usize) as *mut OxHeader,
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                )
                 .is_ok()
             {
                 cache.tls[class].usage.store(usage, Ordering::Relaxed);

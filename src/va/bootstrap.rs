@@ -38,7 +38,6 @@ fn init_random() {
             size_of::<usize>(),
             0,
         );
-        eprintln!("Rand: {}", rand);
         if ret as usize != size_of::<usize>() {
             OxidallocError::SecurityViolation.log_and_abort(
                 null_mut(),

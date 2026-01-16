@@ -14,6 +14,9 @@ criterion = "=0.8.0"
 name = "oxidalloc"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+hardened_free_list = []
+
 [[bench]]
 name = "bench"
 harness = false
