@@ -34,7 +34,7 @@ pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
 }
 
-pub unsafe fn init_random_numa() {
+pub(crate) unsafe fn _init_random_numa() {
     unsafe {
         let mut rand: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
         let ret = getrandom(
@@ -193,6 +193,6 @@ pub unsafe fn boot_strap() {
         init_healing();
         init_random();
         #[cfg(feature = "hardened")]
-        init_random_numa();
+        _init_random_numa();
     });
 }
