@@ -10,6 +10,7 @@ use std::{
 use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    va::align_to,
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -116,7 +117,9 @@ pub unsafe fn init_reverse() {
             val = 1024 * 1024 * 256;
         }
 
-        OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
+        OX_MAX_RESERVATION.store(align_to(val, 4096), Ordering::Relaxed);
+    } else {
+        OX_MAX_RESERVATION.store(1024 * 1024 * 1024 * 64, Ordering::Relaxed);
     }
 }
 
@@ -139,6 +142,7 @@ pub unsafe fn boot_strap() {
     SHUTDOWN.store(false, Ordering::Relaxed);
     ThreadLocalEngine::get_or_init();
     register_shutdown();
+    init_reverse();
     init_threshold();
     init_thp();
     init_healing();
