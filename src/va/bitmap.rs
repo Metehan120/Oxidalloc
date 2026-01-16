@@ -253,6 +253,15 @@ impl VaBitmap {
             return;
         }
 
+        let latest_segment = self.latest_segment.load(Ordering::Acquire);
+        if !latest_segment.is_null() {
+            let s = unsafe { &*latest_segment };
+            if addr >= s.va_start && addr < s.va_end {
+                s.free(addr, size);
+                return;
+            }
+        }
+
         let mut curr = self.map.load(Ordering::Acquire);
         while !curr.is_null() {
             let s = unsafe { &*curr };
@@ -270,6 +279,15 @@ impl VaBitmap {
         old_size: usize,
         new_size: usize,
     ) -> Option<usize> {
+        let latest_segment = self.latest_segment.load(Ordering::Acquire);
+        if !latest_segment.is_null() {
+            let s = unsafe { &*latest_segment };
+            if addr >= s.va_start && addr < s.va_end {
+                let va_size = s.realloc_inplace(addr, old_size, new_size);
+                return va_size;
+            }
+        }
+
         let mut curr = self.map.load(Ordering::Acquire);
         while !curr.is_null() {
             let s = unsafe { &*curr };
