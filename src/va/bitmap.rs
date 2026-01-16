@@ -239,6 +239,7 @@ impl VaBitmap {
         }
 
         let new_seg_ptr = self.grow()?;
+        self.latest_segment.store(new_seg_ptr, Ordering::Release);
         let new_seg = unsafe { &*new_seg_ptr };
         if needed == 1 {
             new_seg.alloc_single()
