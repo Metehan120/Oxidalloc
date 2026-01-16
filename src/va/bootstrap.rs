@@ -36,9 +36,13 @@ pub unsafe fn register_shutdown() {
 
 unsafe fn init_random_numa() {
     unsafe {
-        let mut rand: [usize; 4] = [0; 4];
-        let ret = getrandom(rand.as_mut_ptr() as *mut c_void, size_of::<usize>() * 4, 0);
-        if ret as usize != (size_of::<usize>() * 4) {
+        let mut rand: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
+        let ret = getrandom(
+            rand.as_mut_ptr() as *mut c_void,
+            size_of::<usize>() * MAX_NUMA_NODES,
+            0,
+        );
+        if ret as usize != (size_of::<usize>() * MAX_NUMA_NODES) {
             OxidallocError::SecurityViolation.log_and_abort(
                 null_mut(),
                 "Failed to initialize random number generator",
