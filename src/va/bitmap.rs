@@ -1,6 +1,9 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{OX_MAX_RESERVATION, OxidallocError, slab::thread_local::ThreadLocalEngine};
+use crate::{
+    OX_MAX_RESERVATION, OxidallocError, slab::thread_local::ThreadLocalEngine,
+    va::bootstrap::boot_strap,
+};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     os::raw::c_void,
@@ -16,6 +19,8 @@ pub static RESERVE: AtomicU8 = AtomicU8::new(0);
 pub static ONCE: Once = Once::new();
 
 pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
+    boot_strap();
+
     const MIN_RESERVE: usize = 1024 * 1024 * 256;
     #[allow(non_snake_case)]
     let MAX_SIZE =
