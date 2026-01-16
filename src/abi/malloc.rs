@@ -37,6 +37,7 @@ const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 
+#[cold]
 #[inline(always)]
 unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();

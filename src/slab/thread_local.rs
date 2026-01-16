@@ -146,6 +146,7 @@ impl ThreadLocalEngine {
         }
     }
 
+    #[cold]
     pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
         let total_size = size_of::<ThreadLocalEngine>();
 

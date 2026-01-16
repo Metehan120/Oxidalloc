@@ -19,6 +19,7 @@ unsafe fn xor_main_ptr(ptr: usize) -> usize {
     unsafe { ptr ^ GLOBAL_RANDOM }
 }
 
+#[cold]
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn quarantine(
     thread_cache: Option<&ThreadLocalEngine>,
