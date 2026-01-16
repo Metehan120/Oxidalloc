@@ -2,7 +2,7 @@
 use std::{
     ptr::null_mut,
     sync::{
-        Mutex,
+        Mutex, Once,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -120,6 +120,8 @@ pub unsafe fn init_reverse() {
     }
 }
 
+static ONCE: Once = Once::new();
+
 pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
@@ -136,11 +138,13 @@ pub unsafe fn boot_strap() {
     if IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-    SHUTDOWN.store(false, Ordering::Relaxed);
-    ThreadLocalEngine::get_or_init();
-    register_shutdown();
-    init_reverse();
-    init_threshold();
-    init_thp();
-    init_healing();
+    ONCE.call_once(|| {
+        SHUTDOWN.store(false, Ordering::Relaxed);
+        ThreadLocalEngine::get_or_init();
+        register_shutdown();
+        init_reverse();
+        init_threshold();
+        init_thp();
+        init_healing();
+    });
 }
