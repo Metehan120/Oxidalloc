@@ -1,5 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
+#[cfg(feature = "hardened")]
+use libc::getrandom;
 use libc::pthread_setspecific;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
@@ -11,8 +13,6 @@ use std::{
     },
 };
 
-#[cfg(feature = "hardened_free_list")]
-use crate::va::bootstrap::GLOBAL_RANDOM;
 use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
     slab::{
@@ -122,7 +122,7 @@ pub struct ThreadLocalEngine {
     pub node: *mut ThreadNode,
     pub numa_node_id: usize,
     pub latest_segment: AtomicPtr<Segment>,
-    #[cfg(feature = "hardened_free_list")]
+    #[cfg(feature = "hardened")]
     pub xor_key: usize,
 }
 
@@ -132,7 +132,7 @@ static mut TLS: *mut ThreadLocalEngine = null_mut();
 impl ThreadLocalEngine {
     #[inline(always)]
     unsafe fn xor_ptr(&self, ptr: *mut OxHeader) -> *mut OxHeader {
-        #[cfg(feature = "hardened_free_list")]
+        #[cfg(feature = "hardened")]
         {
             if ptr.is_null() {
                 return null_mut();
@@ -140,7 +140,7 @@ impl ThreadLocalEngine {
             ((ptr as usize) ^ self.xor_key) as *mut OxHeader
         }
 
-        #[cfg(not(feature = "hardened_free_list"))]
+        #[cfg(not(feature = "hardened"))]
         {
             ptr
         }
@@ -165,6 +165,24 @@ impl ThreadLocalEngine {
 
         let numa = get_numa_node_id();
 
+        #[cfg(feature = "hardened")]
+        let mut rand: usize = 0;
+        #[cfg(feature = "hardened")]
+        {
+            let res = getrandom(
+                &mut rand as *mut usize as *mut c_void,
+                size_of::<usize>(),
+                0,
+            );
+            if res as usize != size_of::<usize>() {
+                OxidallocError::SecurityViolation.log_and_abort(
+                    null_mut(),
+                    "Failed to generate per-thread encryption key",
+                    None,
+                );
+            }
+        }
+
         // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
         std::ptr::write(
             cache,
@@ -180,8 +198,8 @@ impl ThreadLocalEngine {
                 node: null_mut(),
                 numa_node_id: (numa % MAX_NUMA_NODES),
                 latest_segment: AtomicPtr::new(null_mut()),
-                #[cfg(feature = "hardened_free_list")]
-                xor_key: GLOBAL_RANDOM,
+                #[cfg(feature = "hardened")]
+                xor_key: rand,
             },
         );
 
@@ -291,7 +309,7 @@ impl ThreadLocalEngine {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        #[cfg(feature = "hardened_free_list")]
+        #[cfg(feature = "hardened")]
         {
             let mut curr = head;
             while curr != tail {
@@ -332,8 +350,16 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     }
     destroy_node((*cache).node);
 
+    #[cfg(feature = "hardened")]
+    let random_key = (*cache).xor_key;
+    #[cfg(not(feature = "hardened"))]
+    let random_key = 0;
+
     for class in 0..NUM_SIZE_CLASSES {
-        let head = xor_ptr_general((*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel));
+        let head = xor_ptr_general(
+            (*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel),
+            random_key,
+        );
 
         if !is_ours(head as usize, None) {
             continue;
@@ -344,7 +370,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             let mut count = 1;
             loop {
                 let next_encrypted = (*tail).next;
-                let next = xor_ptr_general(next_encrypted);
+                let next = xor_ptr_general(next_encrypted, random_key);
 
                 (*tail).next = next;
                 (*tail).life_time = 0;

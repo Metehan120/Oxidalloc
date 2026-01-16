@@ -78,18 +78,16 @@ pub fn match_size_class(size: usize) -> Option<usize> {
 }
 
 #[inline(always)]
-pub unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
-    #[cfg(feature = "hardened_free_list")]
+pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader {
+    #[cfg(feature = "hardened")]
     {
-        use crate::va::bootstrap::GLOBAL_RANDOM;
-
         if ptr.is_null() {
             return std::ptr::null_mut();
         }
-        ((ptr as usize) ^ GLOBAL_RANDOM) as *mut OxHeader
+        ((ptr as usize) ^ _key) as *mut OxHeader
     }
 
-    #[cfg(not(feature = "hardened_free_list"))]
+    #[cfg(not(feature = "hardened"))]
     {
         ptr
     }
@@ -97,7 +95,7 @@ pub unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
 
 #[inline(always)]
 pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
-    #[cfg(feature = "hardened_free_list")]
+    #[cfg(feature = "hardened")]
     {
         use crate::va::bootstrap::PER_NUMA_KEY;
 
@@ -107,7 +105,7 @@ pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
         ((ptr as usize) ^ PER_NUMA_KEY[_numa]) as *mut OxHeader
     }
 
-    #[cfg(not(feature = "hardened_free_list"))]
+    #[cfg(not(feature = "hardened"))]
     {
         ptr
     }

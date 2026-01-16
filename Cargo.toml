@@ -15,7 +15,7 @@ name = "oxidalloc"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-hardened_free_list = []
+hardened = []
 
 [[bench]]
 name = "bench"

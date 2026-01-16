@@ -52,7 +52,7 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        #[cfg(feature = "hardened_free_list")]
+        #[cfg(feature = "hardened")]
         {
             use crate::slab::xor_ptr_numa;
 
