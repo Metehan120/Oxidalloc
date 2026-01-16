@@ -192,6 +192,7 @@ pub unsafe fn boot_strap() {
         init_thp();
         init_healing();
         init_random();
+        #[cfg(feature = "hardened")]
         init_random_numa();
     });
 }
