@@ -80,6 +80,7 @@ pub struct Segment {
 // - Metehan
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
+    latest_segment: AtomicPtr<Segment>,
     lock: AtomicBool,
     latest: AtomicPtr<Segment>,
 }
@@ -88,6 +89,7 @@ impl VaBitmap {
     pub const fn new() -> Self {
         Self {
             map: AtomicPtr::new(null_mut()),
+            latest_segment: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
             latest: AtomicPtr::new(null_mut()),
         }
@@ -190,6 +192,19 @@ impl VaBitmap {
         }
         let needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
+        let hint_ptr = self.latest_segment.load(Ordering::Relaxed);
+        if !hint_ptr.is_null() {
+            let segment = &*hint_ptr;
+            let res = if needed == 1 {
+                segment.alloc_single()
+            } else {
+                segment.alloc_multi(needed)
+            };
+            if res.is_some() {
+                return res;
+            }
+        }
+
         let mut curr = self.map.load(Ordering::Acquire);
         if curr.is_null() {
             ONCE.call_once(|| {
@@ -217,6 +232,7 @@ impl VaBitmap {
             };
 
             if res.is_some() {
+                self.latest_segment.store(curr, Ordering::Release);
                 return res;
             }
             curr = unsafe { (*curr).next };
