@@ -34,7 +34,7 @@ pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
 }
 
-unsafe fn init_random_numa() {
+pub unsafe fn init_random_numa() {
     unsafe {
         let mut rand: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
         let ret = getrandom(
