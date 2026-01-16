@@ -13,12 +13,16 @@ use libc::getrandom;
 use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
     OxidallocError,
-    slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    slab::{
+        global::MAX_NUMA_NODES,
+        thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    },
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 pub static mut GLOBAL_RANDOM: usize = 0;
+pub static mut PER_NUMA_KEY: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
 
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
@@ -30,23 +34,36 @@ pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
 }
 
-fn init_random() {
+unsafe fn init_random_numa() {
     unsafe {
-        let mut rand: usize = 0;
-        let ret = getrandom(
-            &mut rand as *mut usize as *mut c_void,
-            size_of::<usize>(),
-            0,
-        );
-        if ret as usize != size_of::<usize>() {
+        let mut rand: [usize; 4] = [0; 4];
+        let ret = getrandom(rand.as_mut_ptr() as *mut c_void, size_of::<usize>() * 4, 0);
+        if ret as usize != (size_of::<usize>() * 4) {
             OxidallocError::SecurityViolation.log_and_abort(
                 null_mut(),
                 "Failed to initialize random number generator",
                 None,
             );
         }
-        GLOBAL_RANDOM = rand;
+        PER_NUMA_KEY = rand;
     }
+}
+
+unsafe fn init_random() {
+    let mut rand: usize = 0;
+    let ret = getrandom(
+        &mut rand as *mut usize as *mut c_void,
+        size_of::<usize>(),
+        0,
+    );
+    if ret as usize != size_of::<usize>() {
+        OxidallocError::SecurityViolation.log_and_abort(
+            null_mut(),
+            "Failed to initialize random number generator",
+            None,
+        );
+    }
+    GLOBAL_RANDOM = rand;
 }
 
 pub unsafe fn init_thp() {
@@ -171,5 +188,6 @@ pub unsafe fn boot_strap() {
         init_thp();
         init_healing();
         init_random();
+        init_random_numa();
     });
 }

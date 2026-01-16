@@ -19,6 +19,7 @@ use crate::{
         NUM_SIZE_CLASSES,
         global::{GlobalHandler, MAX_NUMA_NODES},
         quarantine::quarantine,
+        xor_ptr_general,
     },
     va::{bitmap::Segment, is_ours},
 };
@@ -320,22 +321,6 @@ impl ThreadLocalEngine {
                 return;
             }
         }
-    }
-}
-
-#[inline(always)]
-pub unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
-    #[cfg(feature = "hardened_free_list")]
-    {
-        if ptr.is_null() {
-            return null_mut();
-        }
-        ((ptr as usize) ^ GLOBAL_RANDOM) as *mut OxHeader
-    }
-
-    #[cfg(not(feature = "hardened_free_list"))]
-    {
-        ptr
     }
 }
 

@@ -2,7 +2,7 @@
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
+    slab::{NUM_SIZE_CLASSES, quarantine::quarantine, xor_ptr_numa},
     va::is_ours,
 };
 use std::ptr::null_mut;
@@ -52,6 +52,18 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
+        #[cfg(feature = "hardened_free_list")]
+        {
+            use crate::slab::xor_ptr_numa;
+
+            let mut curr = head;
+            while curr != tail {
+                let next_raw = (*curr).next;
+                (*curr).next = xor_ptr_numa(next_raw, numa_node_id);
+                curr = next_raw;
+            }
+        }
+
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
             let cur_ptr = unpack_ptr(cur);
@@ -106,7 +118,6 @@ impl GlobalHandler {
     ) -> *mut OxHeader {
         self.pop_from_shard(numa_node_id, class, batch_size)
     }
-
     unsafe fn pop_from_shard(
         &self,
         numa_node_id: usize,
@@ -115,12 +126,14 @@ impl GlobalHandler {
     ) -> *mut OxHeader {
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
-            let head = unpack_ptr(cur);
+            let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
 
-            if head.is_null() {
+            if head_enc.is_null() {
                 return null_mut();
             }
+
+            let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize, None) {
                 quarantine(None, head as usize, class, false);
@@ -131,20 +144,34 @@ impl GlobalHandler {
 
             let mut tail = head;
             let mut count = 1;
-            while count < batch_size && !(*tail).next.is_null() {
-                tail = (*tail).next;
+
+            while count < batch_size {
+                let next_enc = (*tail).next;
+                if next_enc.is_null() {
+                    break;
+                }
+                let next_raw = xor_ptr_numa(next_enc, numa_node_id);
+
+                tail = next_raw;
                 count += 1;
             }
 
-            let new_head = (*tail).next;
-            let new = pack(new_head, tag.wrapping_add(1));
+            let new_head_enc = (*tail).next;
+            let new = pack(new_head_enc, tag.wrapping_add(1));
 
             if GLOBAL[numa_node_id].list[class]
                 .compare_exchange(cur, new, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
-                (*tail).next = null_mut();
                 GLOBAL[numa_node_id].usage[class].fetch_sub(count, Ordering::Relaxed);
+                let mut curr = head;
+                while curr != tail {
+                    let next_enc = (*curr).next;
+                    let next_raw = xor_ptr_numa(next_enc, numa_node_id);
+                    (*curr).next = next_raw;
+                    curr = next_raw;
+                }
+                (*tail).next = null_mut();
                 return head;
             }
         }

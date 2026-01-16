@@ -1,4 +1,7 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 use std::sync::OnceLock;
+
+use crate::OxHeader;
 
 pub mod bulk_allocation;
 pub mod global;
@@ -72,4 +75,40 @@ pub fn match_size_class(size: usize) -> Option<usize> {
     }
 
     None
+}
+
+#[inline(always)]
+pub unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
+    #[cfg(feature = "hardened_free_list")]
+    {
+        use crate::va::bootstrap::GLOBAL_RANDOM;
+
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        ((ptr as usize) ^ GLOBAL_RANDOM) as *mut OxHeader
+    }
+
+    #[cfg(not(feature = "hardened_free_list"))]
+    {
+        ptr
+    }
+}
+
+#[inline(always)]
+pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
+    #[cfg(feature = "hardened_free_list")]
+    {
+        use crate::va::bootstrap::PER_NUMA_KEY;
+
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        ((ptr as usize) ^ PER_NUMA_KEY[_numa]) as *mut OxHeader
+    }
+
+    #[cfg(not(feature = "hardened_free_list"))]
+    {
+        ptr
+    }
 }
