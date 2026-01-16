@@ -1,5 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use std::{
+    os::raw::c_void,
     ptr::null_mut,
     sync::{
         Mutex, Once,
@@ -7,13 +8,17 @@ use std::{
     },
 };
 
+use libc::getrandom;
+
 use crate::{
     OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
+    OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
+pub static mut GLOBAL_RANDOM: usize = 0;
 
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
@@ -23,6 +28,26 @@ extern "C" fn allocator_shutdown() {
 
 pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
+}
+
+fn init_random() {
+    unsafe {
+        let mut rand: usize = 0;
+        let ret = getrandom(
+            &mut rand as *mut usize as *mut c_void,
+            size_of::<usize>(),
+            0,
+        );
+        eprintln!("Rand: {}", rand);
+        if ret as usize != size_of::<usize>() {
+            OxidallocError::SecurityViolation.log_and_abort(
+                null_mut(),
+                "Failed to initialize random number generator",
+                None,
+            );
+        }
+        GLOBAL_RANDOM = rand;
+    }
 }
 
 pub unsafe fn init_thp() {
@@ -146,5 +171,6 @@ pub unsafe fn boot_strap() {
         init_threshold();
         init_thp();
         init_healing();
+        init_random();
     });
 }

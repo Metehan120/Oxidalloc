@@ -73,6 +73,7 @@ pub enum OxidallocError {
     TooMuchQuarantine = 0x1007,
     DoubleQuarantine = 0x1008,
     ReservationExceeded = 0x1009,
+    SecurityViolation = 0x100A,
 }
 
 impl Debug for OxidallocError {
@@ -88,6 +89,7 @@ impl Debug for OxidallocError {
             OxidallocError::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
             OxidallocError::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
             OxidallocError::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
+            OxidallocError::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
         }
     }
 }

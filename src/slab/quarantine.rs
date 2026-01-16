@@ -3,14 +3,19 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::{MAGIC, OxidallocError, slab::thread_local::ThreadLocalEngine, va::is_ours};
+use crate::{
+    MAGIC, OxidallocError,
+    slab::thread_local::ThreadLocalEngine,
+    va::{bootstrap::GLOBAL_RANDOM, is_ours},
+};
 
 pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
 
 pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);
 
-pub fn quarantine(
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn quarantine(
     thread_cache: Option<&ThreadLocalEngine>,
     ptr: usize,
     class: usize,
@@ -59,6 +64,7 @@ pub fn quarantine(
         }
     }
 
+    let ptr = ptr ^ GLOBAL_RANDOM;
     let guard = QUARANTINE.load(Ordering::Relaxed);
     TOTAL_QUARANTINED.fetch_add(1, Ordering::Relaxed);
 
