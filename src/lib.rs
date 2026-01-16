@@ -49,6 +49,7 @@ pub struct MetaData {
     pub end: usize,
 }
 
+#[cfg(not(feature = "hardened_free_list"))]
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
@@ -59,6 +60,19 @@ pub struct OxHeader {
     pub in_use: u8,
     pub used_before: u8,
     pub metadata: *mut MetaData,
+}
+
+#[cfg(feature = "hardened_free_list")]
+#[repr(C, align(16))]
+pub struct OxHeader {
+    pub magic: u64,
+    pub size: usize,
+    pub life_time: usize,
+    pub next: *mut OxHeader,
+    pub in_use: u8,
+    pub used_before: u8,
+    pub metadata: *mut MetaData,
+    pub flag: i32,
 }
 
 #[repr(u32)]
