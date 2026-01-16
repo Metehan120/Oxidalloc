@@ -146,9 +146,7 @@ impl ThreadLocalEngine {
     }
 
     pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
-        let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
-        let engine_size = size_of::<ThreadLocalEngine>();
-        let total_size = tls_size + engine_size;
+        let total_size = size_of::<ThreadLocalEngine>();
 
         let cache = mmap_anonymous(
             null_mut(),
@@ -252,12 +250,7 @@ impl ThreadLocalEngine {
 
             if self.tls[class]
                 .head
-                .compare_exchange(
-                    current_header,
-                    self.xor_ptr(next),
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
+                .compare_exchange(current_header, next, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
                 self.tls[class].latest_next.store(next, Ordering::Relaxed);
@@ -272,7 +265,7 @@ impl ThreadLocalEngine {
     pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
         loop {
             let current = self.tls[class].head.load(Ordering::Relaxed);
-            (*head).next = self.xor_ptr(current);
+            (*head).next = current;
 
             if self.tls[class]
                 .head
@@ -289,7 +282,6 @@ impl ThreadLocalEngine {
             }
         }
     }
-
     #[inline(always)]
     pub unsafe fn push_to_thread_tailed(
         &self,
@@ -298,9 +290,19 @@ impl ThreadLocalEngine {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
+        #[cfg(feature = "hardened_free_list")]
+        {
+            let mut curr = head;
+            while curr != tail {
+                let next_raw = (*curr).next;
+                (*curr).next = self.xor_ptr(next_raw);
+                curr = next_raw;
+            }
+        }
+
         loop {
             let current_header = self.tls[class].head.load(Ordering::Relaxed);
-            (*tail).next = self.xor_ptr(current_header);
+            (*tail).next = current_header;
 
             if self.tls[class]
                 .head
@@ -322,7 +324,7 @@ impl ThreadLocalEngine {
 }
 
 #[inline(always)]
-unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
+pub unsafe fn xor_ptr_general(ptr: *mut OxHeader) -> *mut OxHeader {
     #[cfg(feature = "hardened_free_list")]
     {
         if ptr.is_null() {
@@ -345,7 +347,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     }
     destroy_node((*cache).node);
 
-    // Move all blocks to global
     for class in 0..NUM_SIZE_CLASSES {
         let head = xor_ptr_general((*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel));
 
@@ -357,15 +358,21 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             let mut tail = head;
             let mut count = 1;
             loop {
-                let next = (*tail).next;
+                let next_encrypted = (*tail).next;
+                let next = xor_ptr_general(next_encrypted);
+
+                (*tail).next = next;
                 (*tail).life_time = 0;
+
                 if next.is_null() {
                     break;
                 }
+
                 if !is_ours(next as usize, None) {
                     (*tail).next = null_mut();
                     break;
                 }
+
                 tail = next;
                 count += 1;
             }
@@ -374,9 +381,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
         }
     }
 
-    let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
-    let engine_size = size_of::<ThreadLocalEngine>();
-    let total_size = tls_size + engine_size;
+    let total_size = size_of::<ThreadLocalEngine>();
 
     let _ = munmap(cache_ptr, total_size);
 }
