@@ -71,7 +71,10 @@ impl GlobalHandler {
 
             (*tail).next = cur_ptr;
 
-            let new = pack(head, cur_tag.wrapping_add(1));
+            let new = pack(
+                xor_ptr_numa(head, numa_node_id) as *mut OxHeader,
+                cur_tag.wrapping_add(1),
+            );
 
             if GLOBAL[numa_node_id].list[class]
                 .compare_exchange(cur, new, Ordering::Release, Ordering::Relaxed)
