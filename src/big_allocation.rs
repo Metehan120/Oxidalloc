@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{
     os::raw::c_void,
-    ptr::{null_mut, write_bytes},
+    ptr::{null_mut, write, write_bytes},
 };
 
 pub unsafe fn big_malloc(size: usize) -> *mut u8 {
@@ -42,10 +42,19 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         );
     }
 
-    // Initialize the header
-    (*actual_ptr).size = size;
-    (*actual_ptr).magic = MAGIC;
-    (*actual_ptr).in_use = 1;
+    write(
+        actual_ptr,
+        OxHeader {
+            next: null_mut(),
+            size,
+            magic: MAGIC,
+            flag: 0,
+            life_time: 0,
+            in_use: 1,
+            used_before: 1,
+            metadata: null_mut(),
+        },
+    );
 
     (actual_ptr as *mut u8).add(HEADER_SIZE)
 }
