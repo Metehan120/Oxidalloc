@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
-    OxHeader,
+    MAX_NUMA_NODES, OxHeader,
     slab::{NUM_SIZE_CLASSES, quarantine::quarantine, xor_ptr_numa},
     va::is_ours,
 };
@@ -33,7 +33,6 @@ pub struct NumaGlobal {
     pub usage: [AtomicUsize; NUM_SIZE_CLASSES],
 }
 
-pub static MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
 pub static GLOBAL: [NumaGlobal; MAX_NUMA_NODES] = [const {
     NumaGlobal {
         list: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
@@ -139,7 +138,7 @@ impl GlobalHandler {
 
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
-            if !is_ours(head as usize, None) {
+            if !is_ours(head as usize) {
                 quarantine(head as usize);
                 GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
                 GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);

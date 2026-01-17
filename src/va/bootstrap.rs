@@ -11,11 +11,8 @@ use std::{
 use libc::getrandom;
 
 use crate::{
-    OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
-    slab::{
-        global::MAX_NUMA_NODES,
-        thread_local::{THREAD_REGISTER, ThreadLocalEngine},
-    },
+    MAX_NUMA_NODES, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
+    slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -116,31 +113,6 @@ pub unsafe fn init_threshold() {
     }
 }
 
-pub unsafe fn init_reverse() {
-    let key = b"OX_MAX_RESERVATION\0";
-    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
-
-    if !value_ptr.is_null() {
-        let mut val = 0usize;
-        let mut ptr = value_ptr as *const u8;
-
-        while *ptr != 0 {
-            if *ptr >= b'0' && *ptr <= b'9' {
-                val = val * 10 + (*ptr - b'0') as usize;
-            } else {
-                break;
-            }
-            ptr = ptr.add(1);
-        }
-
-        if val == 0 || val < 1024 * 1024 * 256 {
-            val = 1024 * 1024 * 256;
-        }
-
-        OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
-    }
-}
-
 static ONCE: Once = Once::new();
 
 #[cold]
@@ -165,7 +137,6 @@ pub unsafe fn boot_strap() {
         SHUTDOWN.store(false, Ordering::Relaxed);
         ThreadLocalEngine::get_or_init();
         register_shutdown();
-        init_reverse();
         init_threshold();
         init_thp();
         init_random();

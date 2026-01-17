@@ -1,9 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{
-    OX_MAX_RESERVATION, OxidallocError, slab::thread_local::ThreadLocalEngine,
-    va::bootstrap::boot_strap,
-};
+use crate::{OxidallocError, va::bootstrap::boot_strap};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     os::raw::c_void,
@@ -17,19 +14,14 @@ use std::{
 pub static LATEST_TRIED: AtomicUsize = AtomicUsize::new(0);
 pub static RESERVE: AtomicU8 = AtomicU8::new(0);
 pub static ONCE: Once = Once::new();
+pub static ONCE_PROTECTION: Once = Once::new();
 
 pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     boot_strap();
 
     const MIN_RESERVE: usize = 1024 * 1024 * 256;
     #[allow(non_snake_case)]
-    let MAX_SIZE =
-        if LATEST_TRIED.load(Ordering::Relaxed) != 0 && RESERVE.load(Ordering::Relaxed) > 5 {
-            LATEST_TRIED.load(Ordering::Relaxed)
-        } else {
-            RESERVE.fetch_add(1, Ordering::Relaxed);
-            OX_MAX_RESERVATION.load(Ordering::Relaxed)
-        };
+    let MAX_SIZE = CHUNK_SIZE;
 
     let mut size = MAX_SIZE;
 
@@ -68,8 +60,56 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 }
 
 pub const BLOCK_SIZE: usize = 4096;
+pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
-pub static VA_MAP: VaBitmap = VaBitmap::new();
+const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
+const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
+const SHIFT: usize = 32;
+const EXIST: u8 = 0x1;
+const EMPTY: u8 = 0xFF;
+
+pub struct RadixTree {
+    nodes: AtomicPtr<u8>,
+}
+
+impl RadixTree {
+    pub unsafe fn new() -> Self {
+        let size = ENTRIES;
+        let ptr = mmap_anonymous(
+            null_mut(),
+            size,
+            ProtFlags::READ | ProtFlags::WRITE,
+            MapFlags::PRIVATE | MapFlags::NORESERVE,
+        )
+        .unwrap();
+
+        std::ptr::write_bytes(ptr as *mut u8, EMPTY, size);
+
+        Self {
+            nodes: AtomicPtr::new(ptr as *mut u8),
+        }
+    }
+
+    #[inline(always)]
+    pub fn set_range(&self, start: usize, size: usize) {
+        let start_idx = start / CHUNK_SIZE;
+        let count = size / CHUNK_SIZE;
+        let base = self.nodes.load(Ordering::Relaxed);
+
+        unsafe {
+            for i in 0..count {
+                base.add(start_idx + i).write(EXIST);
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_node_id(&self, addr: usize) -> u8 {
+        let idx = addr >> SHIFT;
+        let base = self.nodes.load(Ordering::Acquire);
+        unsafe { *base.add(idx) }
+    }
+}
 
 pub struct Segment {
     next: *mut Segment,
@@ -87,7 +127,7 @@ pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     latest_segment: AtomicPtr<Segment>,
     lock: AtomicBool,
-    latest: AtomicPtr<Segment>,
+    radix_tree: RadixTree,
 }
 
 impl VaBitmap {
@@ -96,43 +136,18 @@ impl VaBitmap {
             map: AtomicPtr::new(null_mut()),
             latest_segment: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
-            latest: AtomicPtr::new(null_mut()),
+            radix_tree: RadixTree {
+                nodes: const { AtomicPtr::new(null_mut()) },
+            },
         }
     }
 
     #[inline(always)]
-    pub unsafe fn is_ours(&self, addr: usize, thread_local: Option<&ThreadLocalEngine>) -> bool {
-        let latest_segment = if let Some(thread) = thread_local {
-            thread.latest_segment.load(Ordering::Relaxed)
-        } else {
-            self.latest.load(Ordering::Relaxed)
-        };
-
-        if !latest_segment.is_null() {
-            let s = &*latest_segment;
-            if addr >= s.va_start && addr < s.va_end {
-                return true;
-            }
-        }
-
-        let mut curr = self.map.load(Ordering::Acquire);
-        while !curr.is_null() {
-            let s = &*curr;
-            if addr >= s.va_start && addr < s.va_end {
-                if let Some(thread) = thread_local {
-                    thread.latest_segment.store(curr, Ordering::Relaxed);
-                } else {
-                    self.latest.store(curr, Ordering::Relaxed);
-                }
-                return true;
-            }
-            curr = s.next;
-        }
-
-        false
+    pub unsafe fn is_ours(&self, addr: usize) -> bool {
+        self.radix_tree.get_node_id(addr) != EMPTY
     }
 
-    pub unsafe fn grow(&self) -> Option<*mut Segment> {
+    pub unsafe fn grow(&mut self) -> Option<*mut Segment> {
         while self
             .lock
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -145,6 +160,13 @@ impl VaBitmap {
         let bit_count = total_size / BLOCK_SIZE;
         let map_len = (bit_count + 63) / 64;
         let map_bytes = map_len * size_of::<u64>();
+
+        if self.radix_tree.nodes.load(Ordering::Relaxed).is_null() {
+            ONCE_PROTECTION.call_once(|| {
+                self.radix_tree = RadixTree::new();
+            });
+        }
+        self.radix_tree.set_range(user_va as usize, total_size);
 
         let map_raw = match mmap_anonymous(
             null_mut(),
@@ -191,7 +213,7 @@ impl VaBitmap {
         Some(seg_ptr)
     }
 
-    pub unsafe fn alloc(&self, size: usize) -> Option<usize> {
+    pub unsafe fn alloc(&mut self, size: usize) -> Option<usize> {
         if size == 0 {
             return None;
         }
@@ -485,6 +507,54 @@ impl Segment {
             Some(new_blocks * BLOCK_SIZE)
         } else {
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_segment_crossing() {
+        unsafe {
+            let size_1 = 1024 * 1024 * 1024 * 3; // 3GB
+            let size_2 = 1024 * 1024 * 1024 * 2; // 2GB
+
+            println!("Requesting first 3GB block...");
+            let addr_1 = VA_MAP.alloc(size_1).expect("Failed to allocate 3GB");
+
+            assert!(
+                VA_MAP.is_ours(addr_1),
+                "RadixTree failed to identify 3GB block"
+            );
+
+            println!("Requesting second 2GB block (should trigger grow())...");
+            let addr_2 = VA_MAP.alloc(size_2).expect("Failed to allocate 2GB");
+
+            assert!(
+                VA_MAP.is_ours(addr_2),
+                "RadixTree failed to identify 2GB block in new segment"
+            );
+
+            let idx_1 = addr_1 >> SHIFT;
+            let idx_2 = addr_2 >> SHIFT;
+
+            if idx_1 != idx_2 {
+                println!(
+                    "Success: Blocks are in different 4GB Radix chunks ({}, {})",
+                    idx_1, idx_2
+                );
+            } else {
+                println!(
+                    "Note: Blocks shared a chunk index ({}), likely adjacent in VA space",
+                    idx_1
+                );
+            }
+
+            println!("Cleaning up...");
+            VA_MAP.free(addr_1, size_1);
+            VA_MAP.free(addr_2, size_2);
         }
     }
 }

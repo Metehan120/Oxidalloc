@@ -1,4 +1,5 @@
 #![warn(clippy::nursery, clippy::pedantic)]
+#![allow(static_mut_refs)]
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 #![feature(native_link_modifiers_as_needed)]
@@ -24,6 +25,8 @@ pub enum Err {
     OutOfMemory,
 }
 
+pub static MAX_NUMA_NODES: usize = 1; // Adapt this to the number of NUMA nodes in your system
+
 pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
@@ -36,7 +39,6 @@ pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
 pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
-pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 64);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())

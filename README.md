@@ -4,6 +4,7 @@
 - Improved memory usage
 - Removed self-healing path
 - Segments for Bitmap
+- RADIX Tree
 - Many O(1) Optimizations
 - Nightly migration | For faster paths
 - Likely / Unlikely optimizations

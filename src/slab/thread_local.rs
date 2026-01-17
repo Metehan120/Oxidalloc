@@ -15,12 +15,8 @@ use std::{
 };
 
 use crate::{
-    OxHeader, OxidallocError,
-    slab::{
-        NUM_SIZE_CLASSES,
-        global::{GlobalHandler, MAX_NUMA_NODES},
-        xor_ptr_general,
-    },
+    MAX_NUMA_NODES, OxHeader, OxidallocError,
+    slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
     va::{bitmap::Segment, is_ours},
 };
 
@@ -353,7 +349,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             random_key,
         );
 
-        if !is_ours(head as usize, None) {
+        if !is_ours(head as usize) {
             continue;
         }
 
@@ -371,7 +367,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
                     break;
                 }
 
-                if !is_ours(next as usize, None) {
+                if !is_ours(next as usize) {
                     (*tail).next = null_mut();
                     break;
                 }
