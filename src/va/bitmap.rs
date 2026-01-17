@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{OxidallocError, va::bootstrap::boot_strap};
+use crate::{OX_MAX_RESERVATION, OxidallocError, va::bootstrap::boot_strap};
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
     hint::{likely, unlikely},
@@ -26,7 +26,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
         LATEST_TRIED.load(Ordering::Relaxed)
     } else {
         RESERVE.fetch_add(1, Ordering::Relaxed);
-        CHUNK_SIZE
+        OX_MAX_RESERVATION.load(Ordering::Relaxed)
     };
 
     let mut size = MAX_SIZE;
