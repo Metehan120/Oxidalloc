@@ -7,8 +7,8 @@ use crate::{
     },
     va::is_ours,
 };
-use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{ptr::null_mut, sync::atomic::AtomicBool};
 
 const TAG_BITS: usize = 4;
 const TAG_MASK: usize = (1 << TAG_BITS) - 1;
@@ -35,6 +35,7 @@ pub struct NumaGlobal {
     pub usage: [AtomicUsize; NUM_SIZE_CLASSES],
 }
 
+pub static GLOBAL_INIT: AtomicBool = AtomicBool::new(true);
 pub static GLOBAL: [NumaGlobal; MAX_NUMA_NODES] = [const {
     NumaGlobal {
         list: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
@@ -144,10 +145,11 @@ impl GlobalHandler {
 
             if !is_ours(head as usize) {
                 null_tries += 1;
-                if null_tries > (total_thread_count * 2) {
+                if null_tries > (total_thread_count * 2) || GLOBAL_INIT.load(Ordering::Relaxed) {
                     quarantine(head as usize);
                     GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
                     GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
+                    GLOBAL_INIT.store(false, Ordering::Relaxed);
                     return null_mut();
                 }
                 continue;
