@@ -322,8 +322,10 @@ impl VaBitmap {
         let segment = self.radix_tree.get_segment(addr);
         if likely(!segment.is_null()) {
             let s = &*segment;
-            let va_size = s.realloc_inplace(addr, old_size, new_size);
-            return va_size;
+            if addr >= s.va_start && addr < s.va_end {
+                let va_size = s.realloc_inplace(addr, old_size, new_size);
+                return va_size;
+            }
         }
 
         let mut curr = self.map.load(Ordering::Acquire);
