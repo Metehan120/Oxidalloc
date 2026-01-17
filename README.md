@@ -11,3 +11,6 @@
 
 # Found bugs:
 - Data race or Corruption in Global
+
+# Allocation speed of this branch:
+- Free + Malloc <= 7/8ns
