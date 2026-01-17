@@ -121,6 +121,7 @@ impl GlobalHandler {
     ) -> *mut OxHeader {
         self.pop_from_shard(numa_node_id, class, batch_size)
     }
+
     unsafe fn pop_from_shard(
         &self,
         numa_node_id: usize,
@@ -140,7 +141,8 @@ impl GlobalHandler {
 
             if !is_ours(head as usize, None) {
                 quarantine(head as usize);
-                GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
+                GLOBAL[numa_node_id].list[class]
+                    .store(null_mut() as *mut OxHeader as usize, Ordering::Relaxed);
                 GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
                 return null_mut();
             }
@@ -167,6 +169,7 @@ impl GlobalHandler {
                 .is_ok()
             {
                 GLOBAL[numa_node_id].usage[class].fetch_sub(count, Ordering::Relaxed);
+
                 let mut curr = head;
                 while curr != tail {
                     let next_enc = (*curr).next;
@@ -175,6 +178,7 @@ impl GlobalHandler {
                     curr = next_raw;
                 }
                 (*tail).next = null_mut();
+
                 return head;
             }
         }
