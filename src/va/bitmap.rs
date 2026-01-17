@@ -62,7 +62,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 pub const BLOCK_SIZE: usize = 4096;
 pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
-const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 8;
+const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
 
 pub struct RadixTree {
