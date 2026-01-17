@@ -12,7 +12,7 @@
 - Many preps before Alpha release
 
 # Found bugs:
-- Data race or Corruption in Global
+- Data race or Corruption in Global / Fixed
 
 # Allocation speed of this branch:
 - Free + Malloc <= 7/8ns
