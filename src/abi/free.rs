@@ -46,7 +46,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let magic = read_volatile(&(*header).magic);
     let in_use = read_volatile(&(*header).in_use);
 
-    if magic != MAGIC && magic != 0 {
+    if unlikely(magic != MAGIC && magic != 0) {
         OxidallocError::MemoryCorruption.log_and_abort(
             header as *mut c_void,
             "Possibly Double Free",
