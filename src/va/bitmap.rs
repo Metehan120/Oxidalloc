@@ -78,13 +78,19 @@ pub struct RadixTree {
 impl RadixTree {
     pub unsafe fn new() -> Self {
         let size = ENTRIES * size_of::<usize>();
-        let ptr = mmap_anonymous(
+        let ptr = match mmap_anonymous(
             null_mut(),
             size,
             ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::PRIVATE | MapFlags::NORESERVE,
-        )
-        .unwrap();
+            MapFlags::PRIVATE,
+        ) {
+            Ok(ptr) => ptr,
+            Err(err) => OxidallocError::VAIinitFailed.log_and_abort(
+                null_mut() as *mut c_void,
+                "Cannot allocate memory for RadixTree",
+                Some(err),
+            ),
+        };
 
         Self {
             nodes: ptr as *mut usize,
