@@ -104,7 +104,7 @@ impl RadixTree {
     }
 
     #[inline(always)]
-    pub fn get_node_id(&self, addr: usize) -> u8 {
+    pub fn is_ours(&self, addr: usize) -> u8 {
         let idx = addr >> SHIFT;
         let base = self.nodes.load(Ordering::Acquire);
         unsafe { *base.add(idx) }
@@ -144,7 +144,7 @@ impl VaBitmap {
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        self.radix_tree.get_node_id(addr) != EMPTY
+        self.radix_tree.is_ours(addr) != EMPTY
     }
 
     pub unsafe fn grow(&mut self) -> Option<*mut Segment> {
