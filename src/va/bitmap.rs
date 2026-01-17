@@ -69,7 +69,7 @@ pub const BLOCK_SIZE: usize = 4096;
 pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
 // If you change the entires DO NOT FORGOT TO CHANGE CHUNK_SIZE and OX_MAX_RESERVATION, or else allocator will hoard the memory
-const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
+pub const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 
 // User can change to their CPUs supported size:
 // Zen 4>: 58/57bit
