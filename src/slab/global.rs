@@ -144,7 +144,7 @@ impl GlobalHandler {
 
             if !is_ours(head as usize) {
                 null_tries += 1;
-                if null_tries > (5 * total_thread_count) {
+                if null_tries > (total_thread_count * 2) {
                     quarantine(head as usize);
                     GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
                     GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
