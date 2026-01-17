@@ -8,6 +8,7 @@
 - Many O(1) Optimizations
 - Nightly migration | For faster paths
 - Likely / Unlikely optimizations
+- Fast Big Allocation path
 - Many preps before Alpha release
 
 # Found bugs:
