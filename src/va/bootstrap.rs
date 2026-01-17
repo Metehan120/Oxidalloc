@@ -139,8 +139,7 @@ pub unsafe fn init_reverse() {
 
 static ONCE: Once = Once::new();
 
-#[cold]
-#[inline(never)]
+#[inline(always)]
 pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;

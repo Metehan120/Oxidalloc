@@ -4,33 +4,10 @@ use std::{
 };
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use oxidalloc::slab::{
-    bulk_allocation::bulk_fill, match_size_class, thread_local::ThreadLocalEngine,
-};
 
 unsafe extern "C" {
     fn malloc(size: libc::size_t) -> *mut libc::c_void;
     fn free(ptr: *mut libc::c_void);
-}
-
-fn bench_thread_engine(c: &mut Criterion) {
-    let mut group = c.benchmark_group("thread_engine_pop");
-    let class = match_size_class(64).unwrap();
-    let thread = unsafe { ThreadLocalEngine::get_or_init() };
-
-    // 64B
-    group.bench_function("64B", |b| {
-        b.iter(|| unsafe {
-            let engine = ThreadLocalEngine::get_or_init();
-            let ptr = black_box(engine.pop_from_thread(class));
-            if ptr.is_null() {
-                let _ = bulk_fill(thread, class);
-            }
-            black_box(engine.push_to_thread(class, ptr));
-        });
-    });
-
-    group.finish();
 }
 
 fn bench_alloc_free(c: &mut Criterion) {
@@ -105,23 +82,5 @@ fn bench_contention(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_size_class_lookup(c: &mut Criterion) {
-    let sizes = [16, 64, 256, 1024, 4096, 65536, 1048576];
-
-    c.bench_function("size_class_lookup", |b| {
-        b.iter(|| {
-            for &size in &sizes {
-                black_box(oxidalloc::slab::match_size_class(black_box(size)));
-            }
-        });
-    });
-}
-
-criterion_group!(
-    benches,
-    bench_thread_engine,
-    bench_alloc_free,
-    bench_contention,
-    bench_size_class_lookup,
-);
+criterion_group!(benches, bench_alloc_free, bench_contention,);
 criterion_main!(benches);

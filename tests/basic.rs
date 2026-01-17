@@ -1,9 +1,12 @@
-use oxidalloc::abi::{
-    align::posix_memalign,
-    free::free,
-    malloc::{malloc, malloc_usable_size},
-    realloc::realloc,
-};
+use std::os::raw::{c_int, c_void};
+
+unsafe extern "C" {
+    pub fn malloc(size: usize) -> *mut c_void;
+    pub fn free(ptr: *mut c_void);
+    pub fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
+    pub fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, size: usize) -> c_int;
+    pub fn malloc_usable_size(ptr: *mut c_void) -> usize;
+}
 
 #[test]
 fn smoke_global_reuse() {

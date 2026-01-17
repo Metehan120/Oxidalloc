@@ -2,4 +2,5 @@ rustflags = [
   "-C", "link-arg=-Wl,-Bsymbolic-functions",
   "-C", "link-arg=-Wl,--version-script=exports.map",
   "-C", "link-arg=-Wl,-z,now",
+  "-Z", "tls-model=local-exec",
 ]

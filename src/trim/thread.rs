@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::{
-    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU8, AtomicUsize, Ordering},
     time::Duration,
 };
 
@@ -18,7 +18,6 @@ pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
 
 pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
 pub static PTRIM_DECAY: AtomicU8 = AtomicU8::new(0);
-pub static PTRIMMER_TRIMMING: AtomicBool = AtomicBool::new(false);
 
 unsafe fn decide_global(decay: &TimeDecay) -> bool {
     if TOTAL_ALLOCATED.load(Ordering::Relaxed) == 0 {
@@ -123,7 +122,6 @@ pub unsafe fn spawn_gtrim_thread() {
         while !SHUTDOWN.load(Ordering::Acquire) {
             let decay = TimeDecay::from_u8(GLOBAL_DECAY.load(Ordering::Relaxed));
             std::thread::sleep(Duration::from_millis(decay.get_trim_time()));
-            PTRIMMER_TRIMMING.store(true, Ordering::Relaxed);
 
             TOTAL_TIME_GLOBAL.fetch_add(decay.get_trim_time() as usize, Ordering::Relaxed);
 
@@ -133,7 +131,6 @@ pub unsafe fn spawn_gtrim_thread() {
             if decide_global(&decay) {
                 GTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));
             }
-            PTRIMMER_TRIMMING.store(false, Ordering::Relaxed);
         }
     });
 }
