@@ -16,3 +16,6 @@
 
 # Allocation speed of this branch:
 - Free + Malloc <= 7/8ns
+
+# Known Incompatibilities:
+- rust-analyzer abort or panic or sigsev after a while / will be fixed soon

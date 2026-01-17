@@ -2,7 +2,7 @@
 
 use std::{
     alloc::Layout,
-    hint::unlikely,
+    hint::{likely, unlikely},
     os::raw::{c_int, c_void},
     ptr::null_mut,
     sync::{
@@ -27,6 +27,7 @@ use crate::{
         thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     },
     va::{
+        bitmap::CHUNK_SIZE,
         bootstrap::{IS_BOOTSTRAP, SHUTDOWN, boot_strap},
         is_ours,
     },
@@ -37,6 +38,7 @@ static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
+pub static mut HOT_READY: bool = false;
 
 #[cold]
 #[inline(never)]
@@ -79,29 +81,7 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 }
 
 #[inline(always)]
-// Separated allocation function for better scalability in future
-unsafe fn allocate(layout: &Layout) -> *mut u8 {
-    if unlikely(IS_BOOTSTRAP.load(Ordering::Relaxed)) {
-        boot_strap();
-    }
-    let size = layout.size();
-
-    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 1024 {
-        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
-    } else {
-        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
-            THREAD_SPAWNED.store(true, Ordering::Relaxed);
-            ONCE.call_once(|| {
-                spawn_ptrim_thread();
-                spawn_gtrim_thread();
-            });
-        }
-    }
-
-    let class = match match_size_class(size) {
-        Some(class) => class,
-        None => return big_malloc(size),
-    };
+unsafe fn allocate_hot(class: usize) -> *mut u8 {
     let thread = ThreadLocalEngine::get_or_init();
     let mut cache = thread.pop_from_thread(class);
 
@@ -122,11 +102,74 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
     (cache as *mut u8).add(HEADER_SIZE)
 }
 
+#[inline(always)]
+// Separated allocation function for better scalability in future
+unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
+    if unlikely(IS_BOOTSTRAP.load(Ordering::Relaxed)) {
+        boot_strap();
+    }
+
+    if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 1024 {
+        TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
+    } else {
+        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
+            THREAD_SPAWNED.store(true, Ordering::Relaxed);
+            ONCE.call_once(|| {
+                spawn_ptrim_thread();
+                spawn_gtrim_thread();
+                HOT_READY = true;
+            });
+        }
+    }
+
+    let thread = ThreadLocalEngine::get_or_init();
+    let mut cache = thread.pop_from_thread(class);
+
+    // Check if cache is null
+    if unlikely(cache.is_null()) {
+        cache = try_fill(thread, class);
+
+        if cache.is_null() {
+            return null_mut();
+        }
+    }
+
+    (*cache).next = null_mut();
+    (*cache).magic = MAGIC;
+    (*cache).in_use = 1;
+    (*cache).used_before = 1;
+
+    (cache as *mut u8).add(HEADER_SIZE)
+}
+
+#[cold]
+pub unsafe fn allocate_cold(size: usize) -> *mut u8 {
+    if unlikely(IS_BOOTSTRAP.load(Ordering::Relaxed)) {
+        boot_strap();
+    }
+
+    big_malloc(size)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
-    if let Ok(layout) = Layout::array::<u8>(size) {
-        return allocate(&layout) as *mut c_void;
+    if unlikely(size >= CHUNK_SIZE) {
+        *__errno_location() = ENOMEM;
+        return null_mut();
     }
+
+    if let Ok(layout) = Layout::array::<u8>(size) {
+        if let Some(class) = match_size_class(layout.size()) {
+            if likely(HOT_READY) {
+                return allocate_hot(class) as *mut c_void;
+            } else {
+                return allocate_boot_segment(class) as *mut c_void;
+            }
+        }
+
+        return allocate_cold(size) as *mut c_void;
+    }
+
     *__errno_location() = ENOMEM;
     null_mut()
 }
