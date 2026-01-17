@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
+use rustix::mm::{Advice, MapFlags, MprotectFlags, ProtFlags, madvise, mmap_anonymous, mprotect};
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
@@ -71,16 +71,9 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     (*header).magic = 0;
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
+    let _ = mprotect(header as *mut c_void, total_size, MprotectFlags::empty());
 
-    // If this fails (e.g. under a restrictive sandbox), fall back to `madvise(DONTNEED)`.
-    let is_mremap_failed = mmap_anonymous(
-        header as *mut c_void,
-        total_size,
-        ProtFlags::empty(),
-        MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
-    );
-
-    if is_failed.is_err() && is_mremap_failed.is_err() {
+    if is_failed.is_err() {
         // Security: Zero out the memory before freeing it so it wont leak the info
         write_bytes(header as *mut u8, 0, total_size);
     }
