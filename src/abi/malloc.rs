@@ -98,11 +98,11 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
         }
     }
 
-    let thread = ThreadLocalEngine::get_or_init();
     let class = match match_size_class(size) {
         Some(class) => class,
         None => return big_malloc(size),
     };
+    let thread = ThreadLocalEngine::get_or_init();
     let mut cache = thread.pop_from_thread(class);
 
     // Check if cache is null

@@ -12,6 +12,7 @@ use std::{
 };
 
 pub unsafe fn big_malloc(size: usize) -> *mut u8 {
+    eprintln!("big_malloc");
     // Align size to the page size so we don't explode later
     let aligned_total = align_to(size + HEADER_SIZE, 4096);
 
@@ -60,6 +61,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
 }
 
 pub unsafe fn big_free(ptr: *mut OxHeader) {
+    eprintln!("big_free");
     let header = ptr.sub(1);
     let payload_size = (*header).size as usize;
 
