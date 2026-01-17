@@ -39,7 +39,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
         let probe = mmap_anonymous(
             null_mut(),
             size,
-            ProtFlags::READ | ProtFlags::WRITE,
+            ProtFlags::empty(),
             MapFlags::PRIVATE | MapFlags::NORESERVE,
         );
 
