@@ -17,7 +17,7 @@ use std::{
 use crate::{
     MAX_NUMA_NODES, OxHeader, OxidallocError,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
-    va::{bitmap::Segment, is_ours},
+    va::is_ours,
 };
 
 pub struct ThreadNode {
@@ -118,7 +118,6 @@ pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
     pub numa_node_id: usize,
-    pub latest_segment: AtomicPtr<Segment>,
     #[cfg(feature = "hardened")]
     pub xor_key: usize,
 }
@@ -195,7 +194,6 @@ impl ThreadLocalEngine {
                 }; NUM_SIZE_CLASSES],
                 node: null_mut(),
                 numa_node_id: (numa % MAX_NUMA_NODES),
-                latest_segment: AtomicPtr::new(null_mut()),
                 #[cfg(feature = "hardened")]
                 xor_key: rand,
             },
