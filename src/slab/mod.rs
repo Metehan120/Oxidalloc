@@ -5,7 +5,6 @@ use crate::OxHeader;
 
 pub mod bulk_allocation;
 pub mod global;
-pub mod quarantine;
 pub mod thread_local;
 
 pub const SIZE_CLASSES: [usize; 34] = [

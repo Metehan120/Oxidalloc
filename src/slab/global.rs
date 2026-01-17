@@ -2,7 +2,7 @@
 
 use crate::{
     MAX_NUMA_NODES, OxHeader,
-    slab::{NUM_SIZE_CLASSES, quarantine::quarantine, xor_ptr_numa},
+    slab::{NUM_SIZE_CLASSES, thread_local::TOTAL_THREAD_COUNT, xor_ptr_numa},
     va::is_ours,
 };
 use std::ptr::null_mut;
@@ -127,6 +127,8 @@ impl GlobalHandler {
         class: usize,
         batch_size: usize,
     ) -> *mut OxHeader {
+        let mut null_tries = 0usize;
+        let total_thread_count = TOTAL_THREAD_COUNT.load(Ordering::Relaxed);
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
             let head_enc = unpack_ptr(cur);
@@ -139,10 +141,11 @@ impl GlobalHandler {
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize) {
-                quarantine(head as usize);
-                GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
-                GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
-                return null_mut();
+                null_tries += 1;
+                if null_tries > (5 * total_thread_count) {
+                    return null_mut();
+                }
+                continue;
             }
 
             let mut tail = head;

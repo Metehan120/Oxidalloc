@@ -20,6 +20,8 @@ use crate::{
     va::is_ours,
 };
 
+pub static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 pub struct ThreadNode {
     pub engine: AtomicPtr<ThreadLocalEngine>,
     pub next: AtomicPtr<ThreadNode>,
@@ -76,6 +78,7 @@ unsafe fn get_numa_node_id() -> usize {
 
     // get node id so we can use it for numa allocation
     libc::syscall(libc::SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
+    TOTAL_THREAD_COUNT.store(cpu, Ordering::Relaxed);
 
     node as usize
 }
