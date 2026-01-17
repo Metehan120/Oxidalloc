@@ -18,17 +18,17 @@ pub const SIZE_CLASSES: [usize; 34] = [
 ];
 
 pub const ITERATIONS: [usize; 34] = [
-    // TINY (Targets ~64KB / 16 Pages)
-    // 16B  -> Block 80B  -> 65536 / 80  = 819 (0 Waste)
-    // 32B  -> Block 96B  -> 65536 / 96  = 682 (64B Waste)
-    819, 682, 585, 511, 455, 307, 341,
-    // --- SMALL (Targets ~16KB / 4 Pages)
-    // 160B -> Block 224B -> 16384 / 224 = 73 (16B Waste)
-    73, 63, 51, 42, 36, 28,
-    // MEDIUM (Targets ~16KB or ~8KB)
-    // 768B -> Block 832B -> 16384 / 832 = 19 (560B Waste)
+    // TINY (Targets ~32KB / 8 Pages)
+    // 16B  -> Block 80B  -> 32768 / 80  = 409 (48B Waste)
+    // 32B  -> Block 96B  -> 32768 / 96  = 341 (32B Waste)
+    409, 341, 292, 255, 227, 153, 170,
+    // --- SMALL (Targets ~8KB / 2 Pages)
+    // 160B -> Block 224B -> 8192 / 224 = 36 (128B Waste)
+    36, 31, 25, 21, 18, 14,
+    // MEDIUM (Targets ~8KB or ~4KB)
+    // 768B -> Block 832B -> 8192 / 832 = 9 (704B Waste)
     // We drop to N=1 quickly for sizes > 2KB to prevent VIRT bloat
-    19, 15, 12, 5, 8, 7, 3, 5,
+    9, 7, 6, 2, 4, 3, 1, 2,
     // LARGE (Targets 1 Block)
     // For sizes > 3KB, we want Malloc/Free to be 1:1 with mmap/munmap logic
     // via bulk_fill to allow immediate reclamation by gtrim and ptrim
