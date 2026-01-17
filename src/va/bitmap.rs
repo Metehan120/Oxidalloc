@@ -66,7 +66,7 @@ const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
 
 pub struct RadixTree {
-    nodes: AtomicPtr<usize>,
+    nodes: *mut usize,
 }
 
 impl RadixTree {
@@ -81,7 +81,7 @@ impl RadixTree {
         .unwrap();
 
         Self {
-            nodes: AtomicPtr::new(ptr as *mut usize),
+            nodes: ptr as *mut usize,
         }
     }
 
@@ -90,7 +90,7 @@ impl RadixTree {
         let start_idx = start / CHUNK_SIZE;
         let end_idx = start.saturating_add(size.saturating_sub(1)) / CHUNK_SIZE;
         let count = end_idx.saturating_sub(start_idx) + 1;
-        let base = self.nodes.load(Ordering::Relaxed);
+        let base = self.nodes;
 
         unsafe {
             for i in 0..count {
@@ -102,8 +102,8 @@ impl RadixTree {
     #[inline(always)]
     pub fn get_segment(&self, addr: usize) -> *mut Segment {
         let idx = addr / CHUNK_SIZE;
-        let base = self.nodes.load(Ordering::Acquire);
-        if base.is_null() {
+        let base = self.nodes;
+        if unlikely(base.is_null()) {
             return null_mut();
         }
         unsafe { *base.add(idx) as *mut Segment }
@@ -136,22 +136,20 @@ impl VaBitmap {
             latest_segment: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
             radix_tree: RadixTree {
-                nodes: const { AtomicPtr::new(null_mut()) },
+                nodes: const { null_mut() },
             },
         }
     }
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        if unlikely(self.radix_tree.nodes.load(Ordering::Relaxed).is_null()) {
+        if unlikely(self.radix_tree.nodes.is_null()) {
             return false;
         }
         let segment = self.radix_tree.get_segment(addr);
-
         if unlikely(segment.is_null()) {
             return false;
         }
-
         if addr >= (*segment).va_start && addr < (*segment).va_end {
             return true;
         }
@@ -172,7 +170,7 @@ impl VaBitmap {
         let map_len = (bit_count + 63) / 64;
         let map_bytes = map_len * size_of::<u64>();
 
-        if self.radix_tree.nodes.load(Ordering::Relaxed).is_null() {
+        if self.radix_tree.nodes.is_null() {
             ONCE_PROTECTION.call_once(|| {
                 self.radix_tree = RadixTree::new();
             });
