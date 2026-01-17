@@ -2,7 +2,7 @@
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, quarantine::quarantine, xor_ptr_numa},
+    slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
     va::is_ours,
 };
 use std::ptr::null_mut;
@@ -88,11 +88,11 @@ impl GlobalHandler {
 
     pub unsafe fn pop_from_global(
         &self,
-        preffered_node: usize,
+        preferred_node: usize,
         class: usize,
         batch_size: usize,
     ) -> *mut OxHeader {
-        let res = self.pop_from_shard(preffered_node, class, batch_size);
+        let res = self.pop_from_shard(preferred_node, class, batch_size);
         if !res.is_null() {
             return res;
         }
@@ -103,7 +103,7 @@ impl GlobalHandler {
         // The caller must ensure `preffered_node` is a valid index within `MAX_NUMA_NODES`.
         // Returns `null_mut()` if no blocks are available in any NUMA shard.
         for i in 1..MAX_NUMA_NODES {
-            let neighbor = (preffered_node + i) % MAX_NUMA_NODES;
+            let neighbor = (preferred_node + i) % MAX_NUMA_NODES;
             let res = self.pop_from_shard(neighbor, class, batch_size);
             if !res.is_null() {
                 return res;
@@ -133,18 +133,33 @@ impl GlobalHandler {
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
 
-            if head_enc.is_null() {
+            if head_enc.is_null() || tag == 0 {
                 return null_mut();
             }
 
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize, None) {
-                quarantine(head as usize);
-                GLOBAL[numa_node_id].list[class]
-                    .store(null_mut() as *mut OxHeader as usize, Ordering::Relaxed);
-                GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
-                return null_mut();
+                #[cfg(feature = "hardened")]
+                {
+                    use std::os::raw::c_void;
+
+                    crate::OxidallocError::SecurityViolation.log_and_abort(
+                        head as *mut c_void,
+                        "Corruption or Attack detected in Global | Aborting Process",
+                        None,
+                    )
+                }
+
+                #[cfg(not(feature = "hardened"))]
+                {
+                    use crate::slab::quarantine::quarantine;
+
+                    quarantine(head as usize);
+                    GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
+                    GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
+                    return null_mut();
+                }
             }
 
             let mut tail = head;
