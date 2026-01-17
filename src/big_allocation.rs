@@ -59,6 +59,7 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
     if is_failed.is_err() {
+        // Security: Zero out the memory to prevent information leakage.
         write_bytes(header as *mut u8, 0, total_size);
     }
 
