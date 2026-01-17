@@ -125,9 +125,6 @@ pub struct Segment {
     pub map_len: usize,
 }
 
-// Half of written by AI, I was not able to complete it at the time so there should be many ways to improve it.
-// TODO: Catch errors and optimize it
-// - Metehan
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     latest_segment: AtomicPtr<Segment>,
