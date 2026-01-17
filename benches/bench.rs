@@ -4,10 +4,33 @@ use std::{
 };
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use oxidalloc::slab::{
+    bulk_allocation::bulk_fill, match_size_class, thread_local::ThreadLocalEngine,
+};
 
 unsafe extern "C" {
     fn malloc(size: libc::size_t) -> *mut libc::c_void;
     fn free(ptr: *mut libc::c_void);
+}
+
+fn bench_thread_engine(c: &mut Criterion) {
+    let mut group = c.benchmark_group("thread_engine_pop");
+    let class = match_size_class(64).unwrap();
+    let thread = unsafe { ThreadLocalEngine::get_or_init() };
+
+    // 64B
+    group.bench_function("64B", |b| {
+        b.iter(|| unsafe {
+            let engine = ThreadLocalEngine::get_or_init();
+            let ptr = black_box(engine.pop_from_thread(class));
+            if ptr.is_null() {
+                let _ = bulk_fill(thread, class);
+            }
+            black_box(engine.push_to_thread(class, ptr));
+        });
+    });
+
+    group.finish();
 }
 
 fn bench_alloc_free(c: &mut Criterion) {
@@ -17,6 +40,7 @@ fn bench_alloc_free(c: &mut Criterion) {
     group.bench_function("64B", |b| {
         b.iter(|| unsafe {
             let ptr = black_box(malloc(64));
+            (ptr as *mut u8).add(1).write(1);
             black_box(free(ptr));
         });
     });
@@ -25,6 +49,7 @@ fn bench_alloc_free(c: &mut Criterion) {
     group.bench_function("4KB", |b| {
         b.iter(|| unsafe {
             let ptr = black_box(malloc(4096));
+            (ptr as *mut u8).add(1).write(1);
             black_box(free(ptr));
         });
     });
@@ -33,6 +58,7 @@ fn bench_alloc_free(c: &mut Criterion) {
     group.bench_function("1MB", |b| {
         b.iter(|| unsafe {
             let ptr = black_box(malloc(1024 * 1024));
+            (ptr as *mut u8).add(1).write(1);
             black_box(free(ptr));
         });
     });
@@ -93,8 +119,9 @@ fn bench_size_class_lookup(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_thread_engine,
     bench_alloc_free,
     bench_contention,
-    bench_size_class_lookup
+    bench_size_class_lookup,
 );
 criterion_main!(benches);

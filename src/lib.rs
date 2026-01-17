@@ -1,5 +1,7 @@
 #![warn(clippy::nursery, clippy::pedantic)]
 #![feature(thread_local)]
+#![feature(likely_unlikely)]
+#![feature(native_link_modifiers_as_needed)]
 
 use rustix::io::Errno;
 use std::{
@@ -35,7 +37,6 @@ pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
 pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 64);
-pub static OX_ENABLE_EXPERIMENTAL_HEALING: AtomicBool = AtomicBool::new(false);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
@@ -55,11 +56,11 @@ pub struct OxHeader {
     pub next: *mut OxHeader,
     pub size: usize,
     pub magic: u64,
-    pub flag: i32,
-    pub life_time: usize,
     pub in_use: u8,
     pub used_before: u8,
+    pub life_time: usize,
     pub metadata: *mut MetaData,
+    pub flag: i32,
 }
 
 #[cfg(feature = "hardened")]

@@ -11,8 +11,7 @@ use std::{
 use libc::getrandom;
 
 use crate::{
-    OX_ENABLE_EXPERIMENTAL_HEALING, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
-    OxidallocError,
+    OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
     slab::{
         global::MAX_NUMA_NODES,
         thread_local::{THREAD_REGISTER, ThreadLocalEngine},
@@ -93,29 +92,6 @@ pub unsafe fn init_thp() {
     }
 }
 
-pub unsafe fn init_healing() {
-    let key = b"OX_ENABLE_EXPERIMENTAL_HEALING\0";
-    let value_ptr = libc::getenv(key.as_ptr() as *const i8);
-
-    if !value_ptr.is_null() {
-        let mut val = 0usize;
-        let mut ptr = value_ptr as *const u8;
-
-        while *ptr != 0 {
-            if *ptr >= b'0' && *ptr <= b'9' {
-                val = val * 10 + (*ptr - b'0') as usize;
-            } else {
-                break;
-            }
-            ptr = ptr.add(1);
-        }
-
-        if val == 1 {
-            OX_ENABLE_EXPERIMENTAL_HEALING.store(true, Ordering::Relaxed);
-        }
-    }
-}
-
 pub unsafe fn init_threshold() {
     let key = b"OX_TRIM_THRESHOLD\0";
     let value_ptr = libc::getenv(key.as_ptr() as *const i8);
@@ -167,6 +143,8 @@ pub unsafe fn init_reverse() {
 
 static ONCE: Once = Once::new();
 
+#[cold]
+#[inline(never)]
 pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
@@ -190,7 +168,6 @@ pub unsafe fn boot_strap() {
         init_reverse();
         init_threshold();
         init_thp();
-        init_healing();
         init_random();
         #[cfg(feature = "hardened")]
         _init_random_numa();

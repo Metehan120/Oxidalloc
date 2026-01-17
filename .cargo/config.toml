@@ -1,0 +1,10 @@
+rustflags = [
+  "-C", "link-arg=-Wl,-Bsymbolic-functions",
+  "-C", "link-arg=-Wl,--version-script=exports.map",
+  "-C", "link-arg=-Wl,-z,now",
+]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+  "-C", "link-arg=-ftls-model=initial-exec",
+]

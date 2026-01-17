@@ -9,7 +9,7 @@ use crate::{
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::is_ours,
 };
-use std::{alloc::Layout, os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
+use std::{hint::unlikely, os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         );
     }
 
-    if in_use == 0 {
+    if unlikely(in_use == 0) {
         OxidallocError::DoubleFree.log_and_abort(
             header as *mut c_void,
             "Pointer is tagged as in_use",
@@ -63,20 +63,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     }
 
     let size = (*header).size as usize;
-    match Layout::array::<u8>(size) {
-        Ok(layout) => free_inner(&layout, header, thread, header_search_ptr),
-        Err(_) => return,
-    };
-}
-
-#[inline(always)]
-unsafe fn free_inner(
-    layout: &Layout,
-    header: *mut OxHeader,
-    thread: &ThreadLocalEngine,
-    header_search_ptr: *mut c_void,
-) {
-    let class = match match_size_class(layout.size()) {
+    let class = match match_size_class(size) {
         Some(class) => class,
         None => {
             big_free(header_search_ptr as *mut OxHeader);

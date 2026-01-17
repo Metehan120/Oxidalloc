@@ -139,7 +139,7 @@ impl GlobalHandler {
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize, None) {
-                quarantine(None, head as usize, class, false);
+                quarantine(head as usize);
                 GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
                 GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
                 return null_mut();

@@ -5,6 +5,7 @@ use libc::getrandom;
 use libc::pthread_setspecific;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
+    hint::{likely, unlikely},
     os::raw::c_void,
     ptr::null_mut,
     sync::{
@@ -14,11 +15,10 @@ use std::{
 };
 
 use crate::{
-    OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
+    OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES,
         global::{GlobalHandler, MAX_NUMA_NODES},
-        quarantine::quarantine,
         xor_ptr_general,
     },
     va::{bitmap::Segment, is_ours},
@@ -117,6 +117,7 @@ pub struct TlsBin {
     pub latest_next: AtomicPtr<OxHeader>,
 }
 
+#[repr(C, align(64))]
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
@@ -127,14 +128,14 @@ pub struct ThreadLocalEngine {
 }
 
 #[thread_local]
-static mut TLS: *mut ThreadLocalEngine = null_mut();
+pub static mut TLS: *mut ThreadLocalEngine = null_mut();
 
 impl ThreadLocalEngine {
     #[inline(always)]
-    unsafe fn xor_ptr(&self, ptr: *mut OxHeader) -> *mut OxHeader {
+    pub unsafe fn xor_ptr(&self, ptr: *mut OxHeader) -> *mut OxHeader {
         #[cfg(feature = "hardened")]
         {
-            if ptr.is_null() {
+            if unlikely(ptr.is_null()) {
                 return null_mut();
             }
             ((ptr as usize) ^ self.xor_key) as *mut OxHeader
@@ -213,10 +214,16 @@ impl ThreadLocalEngine {
 
     #[inline(always)]
     pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
-        if !TLS.is_null() {
+        if likely(!TLS.is_null()) {
             return &*TLS;
         }
 
+        Self::get_or_init_cold()
+    }
+
+    #[inline(never)]
+    #[cold]
+    pub unsafe fn get_or_init_cold() -> &'static ThreadLocalEngine {
         let key = if !THREAD_INIT.load(Ordering::Acquire) {
             THREAD_KEY.load(Ordering::Acquire)
         } else {
@@ -235,47 +242,29 @@ impl ThreadLocalEngine {
 
     #[inline(always)]
     pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
-        loop {
-            let current_header = self.tls[class].head.load(Ordering::Relaxed);
-            let mut header = self.xor_ptr(current_header);
+        let bin = &self.tls[class];
 
-            if header.is_null() {
+        loop {
+            let current_header = bin.head.load(Ordering::Relaxed);
+            let header = self.xor_ptr(current_header);
+
+            if unlikely(header.is_null()) {
                 return null_mut();
             }
 
-            // Check if the header is ours
-            if !is_ours(header as usize, Some(self)) {
-                // Try to recover, if fails return null
-                if !quarantine(
-                    Some(self),
-                    header as usize,
-                    class,
-                    OX_ENABLE_EXPERIMENTAL_HEALING.load(Ordering::Relaxed),
-                ) {
-                    self.tls[class].usage.store(0, Ordering::Relaxed);
-                    self.tls[class].head.store(null_mut(), Ordering::Relaxed);
-                    return null_mut();
-                }
-                header = self.xor_ptr(self.tls[class].head.load(Ordering::Relaxed));
-                // Check if data is still valid
-                if header.is_null() || !is_ours(header as usize, Some(self)) {
-                    return null_mut();
-                }
-            }
-
             let next = (*header).next;
-            if !next.is_null() {
+            if likely(!next.is_null()) {
                 prefetch(next as *const u8);
             }
 
-            if self.tls[class]
+            if bin
                 .head
                 .compare_exchange(current_header, next, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
-                self.tls[class].latest_next.store(next, Ordering::Relaxed);
-                let usage = self.tls[class].usage.fetch_sub(1, Ordering::Relaxed);
-                self.tls[class].latest_usage.store(usage, Ordering::Relaxed);
+                bin.latest_next.store(next, Ordering::Relaxed);
+                let usage = bin.usage.fetch_sub(1, Ordering::Relaxed);
+                bin.latest_usage.store(usage, Ordering::Relaxed);
                 return header;
             }
         }
@@ -283,11 +272,13 @@ impl ThreadLocalEngine {
 
     #[inline(always)]
     pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
+        let bin = &self.tls[class];
+
         loop {
-            let current = self.tls[class].head.load(Ordering::Relaxed);
+            let current = bin.head.load(Ordering::Relaxed);
             (*head).next = current;
 
-            if self.tls[class]
+            if bin
                 .head
                 .compare_exchange(
                     current,
@@ -297,7 +288,7 @@ impl ThreadLocalEngine {
                 )
                 .is_ok()
             {
-                self.tls[class].usage.fetch_add(1, Ordering::Relaxed);
+                bin.usage.fetch_add(1, Ordering::Relaxed);
                 return;
             }
         }
@@ -310,6 +301,8 @@ impl ThreadLocalEngine {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
+        let bin = &self.tls[class];
+
         #[cfg(feature = "hardened")]
         {
             let mut curr = head;
@@ -321,10 +314,10 @@ impl ThreadLocalEngine {
         }
 
         loop {
-            let current_header = self.tls[class].head.load(Ordering::Relaxed);
+            let current_header = bin.head.load(Ordering::Relaxed);
             (*tail).next = current_header;
 
-            if self.tls[class]
+            if bin
                 .head
                 .compare_exchange(
                     current_header,
@@ -334,9 +327,7 @@ impl ThreadLocalEngine {
                 )
                 .is_ok()
             {
-                self.tls[class]
-                    .usage
-                    .fetch_add(batch_size, Ordering::Relaxed);
+                bin.usage.fetch_add(batch_size, Ordering::Relaxed);
                 return;
             }
         }

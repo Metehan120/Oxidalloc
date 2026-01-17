@@ -2,6 +2,7 @@
 
 use std::{
     alloc::Layout,
+    hint::unlikely,
     os::raw::{c_int, c_void},
     ptr::null_mut,
     sync::{
@@ -26,7 +27,7 @@ use crate::{
         thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     },
     va::{
-        bootstrap::{SHUTDOWN, boot_strap},
+        bootstrap::{IS_BOOTSTRAP, SHUTDOWN, boot_strap},
         is_ours,
     },
 };
@@ -38,7 +39,7 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 
 #[cold]
-#[inline(always)]
+#[inline(never)]
 unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
@@ -83,7 +84,9 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 #[inline(always)]
 // Separated allocation function for better scalability in future
 unsafe fn allocate(layout: &Layout) -> *mut u8 {
-    boot_strap();
+    if unlikely(IS_BOOTSTRAP.load(Ordering::Relaxed)) {
+        boot_strap();
+    }
     let size = layout.size();
 
     if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 1024 {
@@ -107,12 +110,12 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
     let mut cache = thread.pop_from_thread(class);
 
     // Check if cache is null
-    if cache.is_null() {
-        cache = try_fill(thread, class)
-    }
+    if unlikely(cache.is_null()) {
+        cache = try_fill(thread, class);
 
-    if cache.is_null() {
-        return null_mut();
+        if cache.is_null() {
+            return null_mut();
+        }
     }
 
     (*cache).next = null_mut();
@@ -125,13 +128,11 @@ unsafe fn allocate(layout: &Layout) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
-    match Layout::array::<u8>(size) {
-        Ok(layout) => allocate(&layout) as *mut c_void,
-        Err(_) => {
-            *__errno_location() = ENOMEM;
-            null_mut()
-        }
+    if let Ok(layout) = Layout::array::<u8>(size) {
+        return allocate(&layout) as *mut c_void;
     }
+    *__errno_location() = ENOMEM;
+    null_mut()
 }
 
 #[unsafe(no_mangle)]

@@ -1,5 +1,5 @@
 #![allow(unsafe_op_in_unsafe_fn)]
-use std::sync::OnceLock;
+use std::{hint::unlikely, sync::OnceLock};
 
 use crate::OxHeader;
 
@@ -63,17 +63,25 @@ pub fn get_size_4096_class() -> usize {
 
 #[inline(always)]
 pub fn match_size_class(size: usize) -> Option<usize> {
-    if size > 0 && size <= 1024 {
-        let index = (size - 1) >> 4;
-        return Some(SIZE_LUT[index] as usize);
+    if unlikely(size == 0 || size > 2097152) {
+        return None;
     }
 
+    if size <= 1024 {
+        let index = (size - 1) >> 4;
+        return Some(unsafe { *SIZE_LUT.get_unchecked(index) as usize });
+    }
+
+    slow_path_match(size)
+}
+
+#[inline(always)]
+fn slow_path_match(size: usize) -> Option<usize> {
     for i in 15..NUM_SIZE_CLASSES {
         if size <= SIZE_CLASSES[i] {
             return Some(i);
         }
     }
-
     None
 }
 
@@ -81,7 +89,7 @@ pub fn match_size_class(size: usize) -> Option<usize> {
 pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader {
     #[cfg(feature = "hardened")]
     {
-        if ptr.is_null() {
+        if unlikely(ptr.is_null()) {
             return std::ptr::null_mut();
         }
         ((ptr as usize) ^ _key) as *mut OxHeader
@@ -99,7 +107,7 @@ pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
     {
         use crate::va::bootstrap::PER_NUMA_KEY;
 
-        if ptr.is_null() {
+        if unlikely(ptr.is_null()) {
             return std::ptr::null_mut();
         }
         ((ptr as usize) ^ PER_NUMA_KEY[_numa]) as *mut OxHeader
