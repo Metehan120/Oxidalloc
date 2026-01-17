@@ -251,7 +251,7 @@ impl ThreadLocalEngine {
 
             let next = (*header).next;
             if likely(!next.is_null()) {
-                prefetch(next as *const u8);
+                prefetch(self.xor_ptr(next) as *const u8);
             }
 
             if bin
