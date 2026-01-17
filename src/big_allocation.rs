@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
+use rustix::mm::{Advice, madvise};
 
 use crate::{
     HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
@@ -16,22 +16,9 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     let aligned_total = align_to(size + HEADER_SIZE, 4096);
 
     // Reserve virtual space first
-    let hint = match VA_MAP.alloc(aligned_total) {
+    let actual_ptr = match VA_MAP.alloc(aligned_total) {
         Some(hint) => hint,
         None => return null_mut(),
-    };
-
-    let actual_ptr = match mmap_anonymous(
-        hint as *mut c_void,
-        aligned_total,
-        ProtFlags::WRITE | ProtFlags::READ,
-        MapFlags::PRIVATE | MapFlags::FIXED,
-    ) {
-        Ok(ptr) => ptr,
-        Err(_) => {
-            VA_MAP.free(hint, aligned_total);
-            return null_mut();
-        }
     } as *mut OxHeader;
 
     if OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
@@ -71,16 +58,7 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     (*header).magic = 0;
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
-
-    // If this fails (e.g. under a restrictive sandbox), fall back to `madvise(DONTNEED)`.
-    let is_mremap_failed = mmap_anonymous(
-        header as *mut c_void,
-        total_size,
-        ProtFlags::empty(),
-        MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
-    );
-
-    if is_failed.is_err() && is_mremap_failed.is_err() {
+    if is_failed.is_err() {
         write_bytes(header as *mut u8, 0, total_size);
     }
 
