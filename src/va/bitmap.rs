@@ -21,7 +21,13 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     boot_strap();
 
     const MIN_RESERVE: usize = 1024 * 1024 * 256;
-    const MAX_SIZE: usize = CHUNK_SIZE;
+    #[allow(non_snake_case)]
+    let MAX_SIZE: usize = if RESERVE.load(Ordering::Relaxed) > 3 {
+        LATEST_TRIED.load(Ordering::Relaxed)
+    } else {
+        RESERVE.fetch_add(1, Ordering::Relaxed);
+        CHUNK_SIZE
+    };
 
     let mut size = MAX_SIZE;
 
@@ -165,16 +171,16 @@ impl VaBitmap {
             std::hint::spin_loop();
         }
 
-        let (user_va, end, total_size) = get_va_from_kernel();
-        let bit_count = total_size / BLOCK_SIZE;
-        let map_len = (bit_count + 63) / 64;
-        let map_bytes = map_len * size_of::<u64>();
-
         if self.radix_tree.nodes.is_null() {
             ONCE_PROTECTION.call_once(|| {
                 self.radix_tree = RadixTree::new();
             });
         }
+
+        let (user_va, end, total_size) = get_va_from_kernel();
+        let bit_count = total_size / BLOCK_SIZE;
+        let map_len = (bit_count + 63) / 64;
+        let map_bytes = map_len * size_of::<u64>();
 
         let map_raw = match mmap_anonymous(
             null_mut(),
