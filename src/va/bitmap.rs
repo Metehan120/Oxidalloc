@@ -120,6 +120,19 @@ impl RadixTree {
         }
         unsafe { *base.add(idx) as *mut Segment }
     }
+
+    pub unsafe fn check_collision(&self, start: usize, size: usize) -> bool {
+        let start_idx = start / CHUNK_SIZE;
+        let end_idx = start.saturating_add(size.saturating_sub(1)) / CHUNK_SIZE;
+        let base = self.nodes;
+
+        for i in start_idx..=end_idx {
+            if *base.add(i) != 0 {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 pub struct Segment {
@@ -181,6 +194,14 @@ impl VaBitmap {
         }
 
         let (user_va, end, total_size) = get_va_from_kernel();
+        if self
+            .radix_tree
+            .check_collision(user_va as usize, total_size)
+        {
+            self.lock.store(false, Ordering::Release);
+            return None;
+        }
+
         let bit_count = total_size / BLOCK_SIZE;
         let map_len = (bit_count + 63) / 64;
         let map_bytes = map_len * size_of::<u64>();
@@ -284,9 +305,19 @@ impl VaBitmap {
             curr = unsafe { (*curr).next };
         }
 
-        let new_seg_ptr = self.grow()?;
-        self.latest_segment.store(new_seg_ptr, Ordering::Release);
-        let new_seg = unsafe { &*new_seg_ptr };
+        let mut tried = 0usize;
+        let mut new_seg_ptr = None;
+        while tried < 10 {
+            if let Some(seg) = self.grow() {
+                new_seg_ptr = Some(seg);
+                break;
+            }
+            tried += 1;
+            std::hint::spin_loop();
+        }
+        let seg_ptr = new_seg_ptr?;
+        self.latest_segment.store(seg_ptr, Ordering::Release);
+        let new_seg = &*seg_ptr;
         if needed == 1 {
             new_seg.alloc_single()
         } else {
