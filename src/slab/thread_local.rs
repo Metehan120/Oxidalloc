@@ -112,8 +112,6 @@ static THREAD_INIT: AtomicBool = AtomicBool::new(true);
 pub struct TlsBin {
     pub head: AtomicPtr<OxHeader>,
     pub usage: AtomicUsize,
-    pub latest_usage: AtomicUsize,
-    pub latest_next: AtomicPtr<OxHeader>,
 }
 
 #[repr(C, align(64))]
@@ -191,8 +189,6 @@ impl ThreadLocalEngine {
                     TlsBin {
                         head: AtomicPtr::new(null_mut()),
                         usage: AtomicUsize::new(0),
-                        latest_usage: AtomicUsize::new(0),
-                        latest_next: AtomicPtr::new(null_mut()),
                     }
                 }; NUM_SIZE_CLASSES],
                 node: null_mut(),
@@ -259,9 +255,7 @@ impl ThreadLocalEngine {
                 .compare_exchange(current_header, next, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
-                bin.latest_next.store(next, Ordering::Relaxed);
-                let usage = bin.usage.fetch_sub(1, Ordering::Relaxed);
-                bin.latest_usage.store(usage, Ordering::Relaxed);
+                bin.usage.fetch_sub(1, Ordering::Relaxed);
                 return header;
             }
         }
