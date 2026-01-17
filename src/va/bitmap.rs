@@ -80,8 +80,6 @@ impl RadixTree {
         )
         .unwrap();
 
-        std::ptr::write_bytes(ptr as *mut u8, 0, size);
-
         Self {
             nodes: AtomicPtr::new(ptr as *mut usize),
         }
