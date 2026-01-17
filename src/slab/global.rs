@@ -2,7 +2,7 @@
 
 use crate::{
     OxHeader,
-    slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
+    slab::{NUM_SIZE_CLASSES, quarantine::quarantine, xor_ptr_numa},
     va::is_ours,
 };
 use std::ptr::null_mut;
@@ -133,33 +133,17 @@ impl GlobalHandler {
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
 
-            if head_enc.is_null() || tag == 0 {
+            if head_enc.is_null() || cur == 0 {
                 return null_mut();
             }
 
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize, None) {
-                #[cfg(feature = "hardened")]
-                {
-                    use std::os::raw::c_void;
-
-                    crate::OxidallocError::SecurityViolation.log_and_abort(
-                        head as *mut c_void,
-                        "Corruption or Attack detected in Global | Aborting Process",
-                        None,
-                    )
-                }
-
-                #[cfg(not(feature = "hardened"))]
-                {
-                    use crate::slab::quarantine::quarantine;
-
-                    quarantine(head as usize);
-                    GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
-                    GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
-                    return null_mut();
-                }
+                quarantine(head as usize);
+                GLOBAL[numa_node_id].list[class].store(0, Ordering::Relaxed);
+                GLOBAL[numa_node_id].usage[class].store(0, Ordering::Relaxed);
+                return null_mut();
             }
 
             let mut tail = head;
