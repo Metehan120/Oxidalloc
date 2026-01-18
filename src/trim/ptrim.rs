@@ -108,6 +108,7 @@ impl PTrim {
                 }
 
                 for class in 0..class_4096 {
+                    let engine = (*node).engine.load(Ordering::Acquire);
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -118,6 +119,7 @@ impl PTrim {
                     }
 
                     for _ in 0..usage / 2 {
+                        let engine = (*node).engine.load(Ordering::Acquire);
                         let (cache, is_ok) = self.pop_from_thread(engine, class);
                         if !is_ok || cache.is_null() {
                             break;
@@ -143,6 +145,7 @@ impl PTrim {
                 }
 
                 for class in class_4096..NUM_SIZE_CLASSES {
+                    let engine = (*node).engine.load(Ordering::Acquire);
                     if total_freed >= pad && pad != 0 {
                         return (1, total_freed);
                     }
@@ -155,6 +158,7 @@ impl PTrim {
                     }
 
                     for _ in 0..usage {
+                        let engine = (*node).engine.load(Ordering::Acquire);
                         let (cache, is_ok) = self.pop_from_thread(engine, class);
                         if !is_ok || cache.is_null() {
                             break;
