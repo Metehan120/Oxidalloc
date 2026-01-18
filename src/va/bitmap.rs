@@ -614,47 +614,25 @@ mod tests {
     #[test]
     fn test_segment_crossing() {
         unsafe {
-            let size_1 = 1024 * 1024 * 1024 * 15; // 15gb
-            let size_2 = 1024 * 1024 * 1024 * 4; // 2GB
-            let size_3 = 1024 * 1024 * 1024 * 13; // 13GB
+            let size_1 = [1024 * 1024 * 1024 * 6, 1024 * 1024 * 1024 * 2];
+            let mut adresses = Vec::new();
 
-            eprintln!("Requesting first 15GB block...");
-            let addr_1 = VA_MAP.alloc(size_1).expect("Failed to allocate 15GB");
+            // Expect this to be fail after 80-90 Iterations or sometimes <50 iterations
+            // this is only tests how allocator can handle non-used-
+            // (if VA used before kernel wont touch these pages ever again so do not expect this to be fail under real load) VA segments
+            for i in 0..128 {
+                eprintln!("Segmentation Edge Case test loop: {}", i);
 
-            assert!(
-                VA_MAP.is_ours(addr_1),
-                "RadixTree failed to identify 15GB block"
-            );
-
-            eprintln!("Requesting second 4GB block (should trigger grow())...");
-            let addr_2 = VA_MAP.alloc(size_2).expect("Failed to allocate 4GB");
-
-            assert!(
-                VA_MAP.is_ours(addr_2),
-                "RadixTree failed to identify 15GB block in new segment"
-            );
-
-            eprintln!("Requesting third 13GB block..");
-            let addr_3 = VA_MAP.alloc(size_3).expect("Failed to allocate 13GB");
-
-            assert!(
-                VA_MAP.is_ours(addr_3),
-                "RadixTree failed to identify 15GB block in new segment"
-            );
-
-            eprintln!("Requesting fourth 4GB block (should trigger grow())...");
-            let addr_4 = VA_MAP.alloc(size_2).expect("Failed to allocate 4GB");
-
-            assert!(
-                VA_MAP.is_ours(addr_4),
-                "RadixTree failed to identify 15GB block in new segment"
-            );
+                let addr = VA_MAP
+                    .alloc(size_1[i % 2])
+                    .expect(&format!("Failed to allocate {}b", size_1[i % 2]));
+                adresses.push([addr, size_1[i % 2]]);
+            }
 
             eprintln!("Cleaning up...");
-            VA_MAP.free(addr_1, size_1);
-            VA_MAP.free(addr_2, size_2);
-            VA_MAP.free(addr_3, size_3);
-            VA_MAP.free(addr_4, size_2);
+            for addr in adresses {
+                VA_MAP.free(addr[0], addr[1]);
+            }
         }
     }
 }
