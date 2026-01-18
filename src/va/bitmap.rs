@@ -615,7 +615,8 @@ mod tests {
     fn test_segment_crossing() {
         unsafe {
             let size_1 = 1024 * 1024 * 1024 * 15; // 15gb
-            let size_2 = 1024 * 1024 * 1024 * 2; // 2GB
+            let size_2 = 1024 * 1024 * 1024 * 4; // 2GB
+            let size_3 = 1024 * 1024 * 1024 * 13; // 13GB
 
             eprintln!("Requesting first 15GB block...");
             let addr_1 = VA_MAP.alloc(size_1).expect("Failed to allocate 15GB");
@@ -625,17 +626,35 @@ mod tests {
                 "RadixTree failed to identify 15GB block"
             );
 
-            eprintln!("Requesting second 2GB block (should trigger grow())...");
-            let addr_2 = VA_MAP.alloc(size_2).expect("Failed to allocate 2GB");
+            eprintln!("Requesting second 4GB block (should trigger grow())...");
+            let addr_2 = VA_MAP.alloc(size_2).expect("Failed to allocate 4GB");
 
             assert!(
                 VA_MAP.is_ours(addr_2),
-                "RadixTree failed to identify 2GB block in new segment"
+                "RadixTree failed to identify 15GB block in new segment"
+            );
+
+            eprintln!("Requesting third 13GB block..");
+            let addr_3 = VA_MAP.alloc(size_3).expect("Failed to allocate 13GB");
+
+            assert!(
+                VA_MAP.is_ours(addr_3),
+                "RadixTree failed to identify 15GB block in new segment"
+            );
+
+            eprintln!("Requesting fourth 4GB block (should trigger grow())...");
+            let addr_4 = VA_MAP.alloc(size_2).expect("Failed to allocate 4GB");
+
+            assert!(
+                VA_MAP.is_ours(addr_4),
+                "RadixTree failed to identify 15GB block in new segment"
             );
 
             eprintln!("Cleaning up...");
             VA_MAP.free(addr_1, size_1);
             VA_MAP.free(addr_2, size_2);
+            VA_MAP.free(addr_3, size_3);
+            VA_MAP.free(addr_4, size_2);
         }
     }
 }
