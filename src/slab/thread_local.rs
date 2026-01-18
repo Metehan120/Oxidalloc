@@ -198,6 +198,15 @@ impl ThreadLocalEngine {
             },
         );
 
+        #[cfg(feature = "hardened")]
+        {
+            let _ = rustix::mm::madvise(
+                cache as *mut c_void,
+                total_size,
+                rustix::mm::Advice::LinuxDontDump,
+            );
+        }
+
         (*cache).node = register_node(cache);
         pthread_setspecific(key, cache as *mut c_void);
         TLS = cache;
