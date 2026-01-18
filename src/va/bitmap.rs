@@ -614,7 +614,7 @@ mod tests {
     #[test]
     fn test_segment_crossing() {
         unsafe {
-            let size_1 = [1024 * 1024 * 1024 * 3, 1024 * 1024 * 1024 * 3];
+            let size_1 = [1024 * 1024 * 1024 * 3, 1024 * 1024 * 1024 * 2];
             let mut adresses = Vec::new();
 
             // Expect this to be fail after 80-90 Iterations or sometimes <50 iterations or never fails | depends
