@@ -127,13 +127,16 @@ pub unsafe fn init_reverse() {
             } else {
                 break;
             }
-            ptr = ptr.add(1);
+            ptr = ptr.wrapping_add(1);
         }
 
-        if val == 0 || val < 1024 * 1024 * 1024 * 16 {
-            val = 1024 * 1024 * 1024 * 16;
-        }
-        OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
+        let next_power_of_two = val
+            .checked_next_power_of_two()
+            .unwrap_or(1024 * 1024 * 1024 * 16)
+            .max(1024 * 1024 * 1024 * 16)
+            .min(1024 * 1024 * 1024 * 1024 * 256);
+
+        OX_MAX_RESERVATION.store(next_power_of_two, Ordering::Relaxed);
     }
 }
 
