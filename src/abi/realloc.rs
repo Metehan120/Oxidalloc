@@ -22,8 +22,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     }
 
     if !is_ours(ptr as usize) {
-        realloc_fallback(ptr, new_size);
-        return null_mut();
+        return realloc_fallback(ptr, new_size);
     }
 
     if new_size == 0 {
