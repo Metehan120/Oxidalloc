@@ -71,12 +71,12 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     (*header).magic = 0;
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
-    let _ = mprotect(header as *mut c_void, total_size, MprotectFlags::empty());
-
     if is_failed.is_err() {
         // Security: Zero out the memory before freeing it so it wont leak the info
         write_bytes(header as *mut u8, 0, total_size);
     }
+
+    let _ = mprotect(header as *mut c_void, total_size, MprotectFlags::empty());
 
     VA_MAP.free(header as usize, total_size);
 }
