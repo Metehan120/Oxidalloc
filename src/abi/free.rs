@@ -25,7 +25,6 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         return;
     }
 
-    let thread = ThreadLocalEngine::get_or_init();
     if !is_ours(ptr as usize) {
         free_fallback(ptr);
         return;
@@ -77,6 +76,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).magic = 0;
     (*header).life_time = stamp;
 
+    let thread = ThreadLocalEngine::get_or_init();
     thread.push_to_thread(class, header);
 }
 

@@ -5,7 +5,7 @@ use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
     hint::{likely, unlikely},
     os::raw::c_void,
-    ptr::{null_mut, write},
+    ptr::{null_mut, write, write_bytes},
     sync::{
         Once,
         atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
@@ -16,11 +16,14 @@ pub static LATEST_TRIED: AtomicUsize = AtomicUsize::new(0);
 pub static RESERVE: AtomicU8 = AtomicU8::new(0);
 pub static ONCE: Once = Once::new();
 pub static ONCE_PROTECTION: Once = Once::new();
+pub static mut BASE_HINT: usize = 0;
+pub static mut BASE_INIT: bool = false;
+pub static mut LOOP: u8 = 0;
 
 pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     boot_strap();
 
-    const MIN_RESERVE: usize = 1024 * 1024 * 256;
+    const MIN_RESERVE: usize = CHUNK_SIZE;
     #[allow(non_snake_case)]
     let MAX_SIZE: usize = if RESERVE.load(Ordering::Relaxed) > 3 {
         LATEST_TRIED.load(Ordering::Relaxed)
@@ -36,28 +39,52 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     }
 
     loop {
-        let probe = mmap_anonymous(
-            null_mut(),
-            size,
-            ProtFlags::empty(),
-            MapFlags::PRIVATE | MapFlags::NORESERVE,
-        );
+        let base_hint = BASE_HINT;
+
+        let probe = if BASE_INIT {
+            mmap_anonymous(
+                base_hint as *mut c_void,
+                size,
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE | MapFlags::NORESERVE | MapFlags::FIXED_NOREPLACE,
+            )
+        } else {
+            mmap_anonymous(
+                null_mut(),
+                size,
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE | MapFlags::NORESERVE,
+            )
+        };
 
         match probe {
             Ok(output) => {
                 if size > LATEST_TRIED.load(Ordering::Relaxed) {
                     LATEST_TRIED.store(size, Ordering::Relaxed);
                 }
+
+                if !BASE_INIT {
+                    BASE_HINT = output as usize;
+                    BASE_INIT = true;
+                } else {
+                    BASE_HINT += size;
+                }
+
                 return (output, (output as usize) + size, size);
             }
             Err(err) => {
-                if size <= MIN_RESERVE {
+                if (size <= MIN_RESERVE) && !BASE_INIT {
                     OxidallocError::VAIinitFailed.log_and_abort(
                         0 as *mut c_void,
                         "Init failed during Segment Allocation: No available VA reserve",
                         Some(err),
                     )
+                } else if size <= MIN_RESERVE {
+                    BASE_INIT = false;
+                    return (null_mut(), 0, 0);
                 }
+
+                BASE_HINT += size;
 
                 size /= 2;
             }
@@ -98,6 +125,8 @@ impl RadixTree {
             ),
         };
 
+        write_bytes(ptr, 0, size);
+
         Self {
             nodes: ptr as *mut usize,
         }
@@ -137,6 +166,7 @@ impl RadixTree {
                 return true;
             }
         }
+
         false
     }
 }
@@ -200,6 +230,12 @@ impl VaBitmap {
         }
 
         let (user_va, end, total_size) = get_va_from_kernel();
+
+        if user_va.is_null() {
+            self.lock.store(false, Ordering::Release);
+            return None;
+        }
+
         if self
             .radix_tree
             .check_collision(user_va as usize, total_size)
@@ -251,12 +287,12 @@ impl VaBitmap {
                 map_len,
             },
         );
+
         self.radix_tree
             .set_range(user_va as usize, total_size, seg_ptr);
-
         self.map.store(seg_ptr, Ordering::Release);
-
         self.lock.store(false, Ordering::Release);
+
         Some(seg_ptr)
     }
 
@@ -264,8 +300,8 @@ impl VaBitmap {
         if size == 0 {
             return None;
         }
-        let needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
+        let needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let hint_ptr = self.latest_segment.load(Ordering::Relaxed);
         if !hint_ptr.is_null() {
             let segment = &*hint_ptr;
@@ -314,6 +350,7 @@ impl VaBitmap {
 
         let mut tried = 0usize;
         let mut new_seg_ptr = None;
+
         while tried < 10 {
             if let Some(seg) = self.grow() {
                 new_seg_ptr = Some(seg);
@@ -322,8 +359,10 @@ impl VaBitmap {
             tried += 1;
             std::hint::spin_loop();
         }
+
         let seg_ptr = new_seg_ptr?;
         self.latest_segment.store(seg_ptr, Ordering::Release);
+
         let new_seg = &*seg_ptr;
         if needed == 1 {
             new_seg.alloc_single()
@@ -336,12 +375,13 @@ impl VaBitmap {
         if addr == 0 || size == 0 {
             return;
         }
+
         let segment = self.radix_tree.get_segment(addr);
         if likely(!segment.is_null()) {
             let s = &*segment;
             if addr >= s.va_start && addr < s.va_end {
-                let s = &*segment;
                 s.free(addr, size);
+                return;
             }
         }
 
@@ -574,18 +614,18 @@ mod tests {
     #[test]
     fn test_segment_crossing() {
         unsafe {
-            let size_1 = 1024 * 1024 * 1024 * 3; // 3GB
+            let size_1 = 1024 * 1024 * 1024 * 15; // 15gb
             let size_2 = 1024 * 1024 * 1024 * 2; // 2GB
 
-            println!("Requesting first 3GB block...");
-            let addr_1 = VA_MAP.alloc(size_1).expect("Failed to allocate 3GB");
+            eprintln!("Requesting first 15GB block...");
+            let addr_1 = VA_MAP.alloc(size_1).expect("Failed to allocate 15GB");
 
             assert!(
                 VA_MAP.is_ours(addr_1),
-                "RadixTree failed to identify 3GB block"
+                "RadixTree failed to identify 15GB block"
             );
 
-            println!("Requesting second 2GB block (should trigger grow())...");
+            eprintln!("Requesting second 2GB block (should trigger grow())...");
             let addr_2 = VA_MAP.alloc(size_2).expect("Failed to allocate 2GB");
 
             assert!(
@@ -593,7 +633,7 @@ mod tests {
                 "RadixTree failed to identify 2GB block in new segment"
             );
 
-            println!("Cleaning up...");
+            eprintln!("Cleaning up...");
             VA_MAP.free(addr_1, size_1);
             VA_MAP.free(addr_2, size_2);
         }

@@ -95,7 +95,7 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
-pub unsafe fn get_or_init() {
+pub unsafe fn get_or_init_key() {
     THREAD_ONCE.call_once(|| {
         let mut key = 0;
         libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
@@ -220,7 +220,7 @@ impl ThreadLocalEngine {
         let key = if !THREAD_INIT.load(Ordering::Acquire) {
             THREAD_KEY.load(Ordering::Acquire)
         } else {
-            get_or_init();
+            get_or_init_key();
             THREAD_KEY.load(Ordering::Acquire)
         };
 
@@ -327,7 +327,10 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
+    let key = THREAD_KEY.load(Ordering::Acquire);
     TLS = null_mut();
+    pthread_setspecific(key, null_mut());
+
     let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;

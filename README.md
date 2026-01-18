@@ -9,6 +9,8 @@
 - Nightly migration | For faster paths
 - Likely / Unlikely optimizations
 - Fast Big Allocation path
+- Kernel Edge Case handling
+- More robust segmentation handling
 - Many preps before Alpha release
 
 # Found bugs:
@@ -18,4 +20,4 @@
 - Free + Malloc <= 7/8ns
 
 # Known Incompatibilities:
-- rust-analyzer abort or panic or sigsev after a while / will be fixed soon
+- rust-analyzer abort or panic or sigsev after a while / should be fixed after edge case handling

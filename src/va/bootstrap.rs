@@ -130,8 +130,8 @@ pub unsafe fn init_reverse() {
             ptr = ptr.add(1);
         }
 
-        if val == 0 || val < 1024 * 1024 * 256 {
-            val = 1024 * 1024 * 256;
+        if val == 0 || val < 1024 * 1024 * 1024 * 16 {
+            val = 1024 * 1024 * 1024 * 16;
         }
         OX_MAX_RESERVATION.store(val.next_power_of_two(), Ordering::Relaxed);
     }
