@@ -107,6 +107,17 @@ unsafe fn allocate_hot(class: usize) -> *mut u8 {
         }
     }
 
+    #[cfg(feature = "hardened")]
+    {
+        if unlikely(!is_ours(cache as usize)) {
+            OxidallocError::AttackOrCorruption.log_and_abort(
+                null_mut() as *mut c_void,
+                "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
+                None,
+            )
+        }
+    }
+
     validate_ptr(cache);
 
     (*cache).next = null_mut();
@@ -146,6 +157,17 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
 
         if cache.is_null() {
             return null_mut();
+        }
+    }
+
+    #[cfg(feature = "hardened")]
+    {
+        if unlikely(!is_ours(cache as usize)) {
+            OxidallocError::AttackOrCorruption.log_and_abort(
+                null_mut() as *mut c_void,
+                "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
+                None,
+            )
         }
     }
 
