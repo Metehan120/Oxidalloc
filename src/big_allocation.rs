@@ -3,7 +3,7 @@
 use rustix::mm::{Advice, MapFlags, MprotectFlags, ProtFlags, madvise, mmap_anonymous, mprotect};
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
     va::{align_to, bitmap::VA_MAP},
 };
 use std::{
@@ -48,7 +48,6 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
             next: null_mut(),
             size,
             magic: MAGIC,
-            flag: 0,
             life_time: 0,
             in_use: 1,
             used_before: 1,
@@ -68,7 +67,7 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
 
     // Make the header look free before we potentially lose write access.
     (*header).in_use = 0;
-    (*header).magic = 0;
+    (*header).magic = FREED_MAGIC;
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
     if is_failed.is_err() {

@@ -30,7 +30,8 @@ pub static MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes 
 pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
-pub const MAGIC: u64 = 0x01B01698BF0BEEF;
+pub static mut MAGIC: u64 = 0x01B01698BF0BEEF;
+pub static mut FREED_MAGIC: u64 = 0x12BE34FF09EBEAFF;
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
@@ -63,7 +64,6 @@ pub struct OxHeader {
     pub used_before: u8,
     pub life_time: usize,
     pub metadata: *mut MetaData,
-    pub flag: i32,
 }
 
 #[cfg(feature = "hardened")]
@@ -76,7 +76,6 @@ pub struct OxHeader {
     pub in_use: u8,
     pub used_before: u8,
     pub metadata: *mut MetaData,
-    pub flag: i32,
 }
 
 #[repr(u32)]
@@ -92,6 +91,7 @@ pub enum OxidallocError {
     DoubleQuarantine = 0x1008,
     ReservationExceeded = 0x1009,
     SecurityViolation = 0x100A,
+    AttackOrCorruption = 0x100B,
 }
 
 impl Debug for OxidallocError {
@@ -108,6 +108,7 @@ impl Debug for OxidallocError {
             OxidallocError::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
             OxidallocError::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
             OxidallocError::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
+            OxidallocError::AttackOrCorruption => write!(f, "AttackOrCorruption (0x100B)"),
         }
     }
 }

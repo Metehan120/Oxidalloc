@@ -11,7 +11,8 @@ use std::{
 use libc::getrandom;
 
 use crate::{
-    MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP, OxidallocError,
+    FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
+    OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
 };
 
@@ -28,6 +29,20 @@ extern "C" fn allocator_shutdown() {
 
 pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
+}
+
+pub(crate) unsafe fn init_magic() {
+    let mut rand: [u64; 2] = [0; 2];
+    let ret = getrandom(rand.as_mut_ptr() as *mut c_void, size_of::<u64>() * 2, 0);
+    if ret as usize != (size_of::<u64>() * 2) {
+        OxidallocError::SecurityViolation.log_and_abort(
+            null_mut(),
+            "Failed to initialize random number generator",
+            None,
+        );
+    }
+    MAGIC = rand[0];
+    FREED_MAGIC = rand[1];
 }
 
 pub(crate) unsafe fn _init_random_numa() {
@@ -167,6 +182,7 @@ pub unsafe fn boot_strap() {
         init_threshold();
         init_thp();
         init_random();
+        init_magic();
         #[cfg(feature = "hardened")]
         _init_random_numa();
     });

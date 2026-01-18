@@ -7,8 +7,8 @@ use std::{
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
-    Err, HEADER_SIZE, MAGIC, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader, OxidallocError,
-    TOTAL_ALLOCATED,
+    Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader,
+    OxidallocError, TOTAL_ALLOCATED,
     slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
     va::{align_to, bitmap::VA_MAP},
 };
@@ -63,8 +63,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
             OxHeader {
                 next: prev,
                 size: payload_size,
-                magic: MAGIC,
-                flag: 0,
+                magic: FREED_MAGIC,
                 life_time: current_stamp,
                 in_use: 0,
                 used_before: 0,

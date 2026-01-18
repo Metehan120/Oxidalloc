@@ -4,7 +4,7 @@ use std::{
     alloc::Layout,
     hint::{likely, unlikely},
     os::raw::{c_int, c_void},
-    ptr::null_mut,
+    ptr::{null_mut, read_volatile},
     sync::{
         Once,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -14,7 +14,7 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
@@ -39,6 +39,19 @@ const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 pub static mut HOT_READY: bool = false;
+
+#[inline(always)]
+pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
+    let magic = read_volatile(&(*ptr).magic);
+
+    if unlikely(magic != MAGIC && magic != FREED_MAGIC) {
+        OxidallocError::AttackOrCorruption.log_and_abort(
+            null_mut() as *mut c_void,
+            "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
+            None,
+        )
+    }
+}
 
 #[cold]
 #[inline(never)]
@@ -94,6 +107,8 @@ unsafe fn allocate_hot(class: usize) -> *mut u8 {
         }
     }
 
+    validate_ptr(cache);
+
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
@@ -133,6 +148,8 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
             return null_mut();
         }
     }
+
+    validate_ptr(cache);
 
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;

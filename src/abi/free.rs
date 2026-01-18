@@ -3,8 +3,11 @@
 use libc::size_t;
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
-    abi::{fallback::free_fallback, malloc::TOTAL_MALLOC_FREE},
+    FREED_MAGIC, HEADER_SIZE, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    abi::{
+        fallback::free_fallback,
+        malloc::{TOTAL_MALLOC_FREE, validate_ptr},
+    },
     big_allocation::big_free,
     slab::{match_size_class, thread_local::ThreadLocalEngine},
     va::is_ours,
@@ -42,16 +45,9 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 
     let header_addr = (header_search_ptr as usize).wrapping_sub(HEADER_SIZE);
     let header = header_addr as *mut OxHeader;
-    let magic = read_volatile(&(*header).magic);
     let in_use = read_volatile(&(*header).in_use);
 
-    if unlikely(magic != MAGIC && magic != 0) {
-        OxidallocError::MemoryCorruption.log_and_abort(
-            header as *mut c_void,
-            "Possibly Double Free",
-            None,
-        );
-    }
+    validate_ptr(header);
 
     if unlikely(in_use == 0) {
         OxidallocError::DoubleFree.log_and_abort(
@@ -73,7 +69,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     let stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
 
     (*header).in_use = 0;
-    (*header).magic = 0;
+    (*header).magic = FREED_MAGIC;
     (*header).life_time = stamp;
 
     let thread = ThreadLocalEngine::get_or_init();
