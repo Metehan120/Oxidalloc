@@ -1,5 +1,6 @@
 # Current branch status:
 - Optimized paths
+- NUMA-awareness
 - Added hardening without slowing down the allocator
 - Improved memory usage
 - Removed self-healing path
