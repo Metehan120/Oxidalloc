@@ -130,6 +130,10 @@ impl GlobalHandler {
     ) -> *mut OxHeader {
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
+            if (cur as *mut OxHeader).is_null() {
+                return null_mut();
+            }
+
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
 
