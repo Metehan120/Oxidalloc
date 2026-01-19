@@ -142,7 +142,7 @@ impl GlobalHandler {
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize) {
-                if null_tries > (total_thread_count * 2) || GLOBAL_INIT.load(Ordering::Relaxed) {
+                if null_tries > (total_thread_count * 4) || GLOBAL_INIT.load(Ordering::Relaxed) {
                     return null_mut();
                 }
                 continue;
