@@ -165,7 +165,7 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
         if unlikely(!is_ours(cache as usize)) {
             OxidallocError::AttackOrCorruption.log_and_abort(
                 null_mut() as *mut c_void,
-                "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
+                "Attack or corruption detected; aborting process. External system access and RAM module checks highly recommended.",
                 None,
             )
         }
