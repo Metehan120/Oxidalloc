@@ -76,14 +76,16 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         }
 
         if new_total < old_total {
-            let _ = mremap(
+            if mremap(
                 header as *mut c_void,
                 old_total,
                 new_total,
                 MremapFlags::empty(),
-            );
-
-            VA_MAP.free((header as usize) + new_total, old_total - new_total);
+            )
+            .is_ok()
+            {
+                VA_MAP.free((header as usize) + new_total, old_total - new_total);
+            };
 
             (*header).size = new_size;
             return ptr;
