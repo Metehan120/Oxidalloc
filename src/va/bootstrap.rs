@@ -9,6 +9,7 @@ use std::{
 };
 
 use libc::getrandom;
+#[cfg(feature = "hardened")]
 use rustix::mm::{Advice, madvise};
 
 use crate::{
