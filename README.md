@@ -1,7 +1,7 @@
 # Current branch status:
 - Optimized paths
 - NUMA-awareness
-- Added hardening without slowing down the allocator
+- Added hardening / Expect slow downs on real workloads - according to stress-ng test 8-9x
 - Improved memory usage
 - Removed self-healing path
 - Segments for Bitmap
