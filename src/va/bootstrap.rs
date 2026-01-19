@@ -9,6 +9,7 @@ use std::{
 };
 
 use libc::getrandom;
+use rustix::mm::{Advice, madvise};
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
@@ -45,7 +46,8 @@ pub(crate) unsafe fn init_magic() {
     FREED_MAGIC = rand[1];
 }
 
-pub(crate) unsafe fn _init_random_numa() {
+#[cfg(feature = "hardened")]
+pub(crate) unsafe fn init_random_numa() {
     unsafe {
         let mut rand: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
         let ret = getrandom(
@@ -60,6 +62,13 @@ pub(crate) unsafe fn _init_random_numa() {
                 None,
             );
         }
+
+        let _ = madvise(
+            PER_NUMA_KEY.as_ptr() as *mut c_void,
+            size_of::<usize>() * MAX_NUMA_NODES,
+            Advice::LinuxDontDump,
+        );
+
         PER_NUMA_KEY = rand;
     }
 }
@@ -184,6 +193,6 @@ pub unsafe fn boot_strap() {
         init_random();
         init_magic();
         #[cfg(feature = "hardened")]
-        _init_random_numa();
+        init_random_numa();
     });
 }
