@@ -128,6 +128,7 @@ impl GlobalHandler {
         class: usize,
         batch_size: usize,
     ) -> *mut OxHeader {
+        let mut retry = 0;
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
             if (cur as *mut OxHeader).is_null() {
@@ -144,6 +145,10 @@ impl GlobalHandler {
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             if !is_ours(head as usize) {
+                retry += 1;
+                if retry >= u32::MAX {
+                    return null_mut();
+                }
                 continue;
             }
 
