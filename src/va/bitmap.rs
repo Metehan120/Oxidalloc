@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{OX_MAX_RESERVATION, OxidallocError, va::bootstrap::boot_strap};
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
+use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     hint::{likely, unlikely},
     os::raw::c_void,
@@ -240,7 +240,6 @@ impl VaBitmap {
             .radix_tree
             .check_collision(user_va as usize, total_size)
         {
-            let _ = munmap(user_va, total_size);
             self.lock.store(false, Ordering::Release);
             return None;
         }
