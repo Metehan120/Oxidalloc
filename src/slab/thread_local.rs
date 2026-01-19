@@ -248,6 +248,13 @@ impl ThreadLocalEngine {
 
         loop {
             let current_header = bin.head.load(Ordering::Relaxed);
+            #[cfg(feature = "hardened")]
+            {
+                if unlikely(current_header == !0) {
+                    return null_mut();
+                }
+            }
+
             let header = self.xor_ptr(current_header);
 
             if unlikely(header.is_null()) {
