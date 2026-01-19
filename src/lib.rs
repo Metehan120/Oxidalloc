@@ -52,6 +52,7 @@ pub const HEADER_SIZE: usize = size_of::<OxHeader>();
 pub struct MetaData {
     pub start: usize,
     pub end: usize,
+    pub next: usize,
 }
 
 #[cfg(not(feature = "hardened"))]

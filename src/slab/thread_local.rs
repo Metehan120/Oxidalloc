@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::{
-    MAX_NUMA_NODES, OxHeader, OxidallocError,
+    MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
     va::is_ours,
 };
@@ -139,6 +139,7 @@ pub struct TlsBin {
 #[repr(C, align(64))]
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
+    pub pending: [AtomicPtr<MetaData>; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
     pub numa_node_id: usize,
     #[cfg(feature = "hardened")]
@@ -213,6 +214,7 @@ impl ThreadLocalEngine {
                         usage: AtomicUsize::new(0),
                     }
                 }; NUM_SIZE_CLASSES],
+                pending: [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES],
                 node: null_mut(),
                 numa_node_id: (numa % MAX_NUMA_NODES),
                 #[cfg(feature = "hardened")]

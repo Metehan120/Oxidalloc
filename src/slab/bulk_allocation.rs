@@ -13,11 +13,81 @@ use crate::{
     va::{align_to, bitmap::VA_MAP},
 };
 
+const LAZY_INIT_MAX: usize = 16;
+
+#[inline(always)]
+unsafe fn remaining_blocks(metadata: *mut MetaData, block_size: usize) -> usize {
+    let remaining_bytes = (*metadata).end.saturating_sub((*metadata).next);
+    remaining_bytes / block_size
+}
+
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn init_blocks(
+    metadata: *mut MetaData,
+    block_size: usize,
+    payload_size: usize,
+    max_blocks: usize,
+    current_stamp: usize,
+) -> (*mut OxHeader, *mut OxHeader, usize) {
+    let remaining = remaining_blocks(metadata, block_size);
+    if remaining == 0 {
+        return (null_mut(), null_mut(), 0);
+    }
+
+    let count = remaining.min(max_blocks);
+    let base = (*metadata).next;
+    let mut head = null_mut();
+    let mut tail = null_mut();
+
+    for i in (0..count).rev() {
+        let current_header = (base + i * block_size) as *mut OxHeader;
+
+        write(
+            current_header,
+            OxHeader {
+                next: head,
+                size: payload_size,
+                magic: FREED_MAGIC,
+                life_time: current_stamp,
+                in_use: 0,
+                used_before: 0,
+                metadata: metadata,
+            },
+        );
+
+        if head.is_null() {
+            tail = current_header;
+        }
+        head = current_header;
+    }
+
+    (*metadata).next = base + (count * block_size);
+
+    (head, tail, count)
+}
+
 #[allow(unsafe_op_in_unsafe_fn)]
 pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
+    let max_init = num_blocks.min(LAZY_INIT_MAX).max(1);
+    let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+
+    let pending = thread.pending[class].load(Ordering::Relaxed);
+    if !pending.is_null() {
+        let (head, tail, count) =
+            init_blocks(pending, block_size, payload_size, max_init, current_stamp);
+        if count > 0 {
+            thread.push_to_thread_tailed(class, head, tail, count);
+            if remaining_blocks(pending, block_size) == 0 {
+                thread.pending[class].store(null_mut(), Ordering::Relaxed);
+            }
+            return Ok(());
+        }
+        thread.pending[class].store(null_mut(), Ordering::Relaxed);
+    }
+
     let total = size_of::<MetaData>() + (block_size * num_blocks);
 
     let hint = VA_MAP.alloc(total).unwrap_or_else(|| {
@@ -45,6 +115,7 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         MetaData {
             start: mem as usize,
             end: (mem as usize) + total,
+            next: (mem as usize) + size_of::<MetaData>(),
         },
     );
 
@@ -52,35 +123,18 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
-    let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
-    let mut prev = null_mut();
-    for i in (0..num_blocks).rev() {
-        let offset = size_of::<MetaData>() + (i * block_size);
-        let current_header = (mem as usize + offset) as *mut OxHeader;
-
-        write(
-            current_header,
-            OxHeader {
-                next: prev,
-                size: payload_size,
-                magic: FREED_MAGIC,
-                life_time: current_stamp,
-                in_use: 0,
-                used_before: 0,
-                metadata: metadata,
-            },
-        );
-
-        prev = current_header;
+    let (head, tail, count) =
+        init_blocks(metadata, block_size, payload_size, max_init, current_stamp);
+    if count == 0 {
+        return Err(Err::OutOfMemory);
     }
 
-    let mut tail = prev;
-    for _ in 0..num_blocks - 1 {
-        tail = (*tail).next;
-    }
-
-    thread.push_to_thread_tailed(class, prev, tail, num_blocks);
+    thread.push_to_thread_tailed(class, head, tail, count);
     TOTAL_ALLOCATED.fetch_add(num_blocks, Ordering::Relaxed);
+
+    if remaining_blocks(metadata, block_size) > 0 {
+        thread.pending[class].store(metadata, Ordering::Relaxed);
+    }
 
     Ok(())
 }

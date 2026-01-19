@@ -2,6 +2,7 @@
 - Optimized paths
 - NUMA-awareness
 - Added hardening / Expect slow downs on real workloads - according to stress-ng test 8-9x
+- Lazy block initialization for better RSS (Extreme drops of memory usage on some workloads)
 - Improved memory usage
 - Removed self-healing path
 - Segments for Bitmap
