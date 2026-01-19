@@ -29,8 +29,30 @@ pub struct ThreadNode {
 
 pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
 
+unsafe fn try_reuse_node(ptr: *mut ThreadLocalEngine) -> Option<*mut ThreadNode> {
+    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
+    while !node.is_null() {
+        if (*node).engine.load(Ordering::Acquire).is_null()
+            && (*node)
+                .engine
+                .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            return Some(node);
+        }
+
+        node = (*node).next.load(Ordering::Acquire);
+    }
+
+    None
+}
+
 // Register a new thread node with the given, need for trimming
 unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
+    if let Some(node) = try_reuse_node(ptr) {
+        return node;
+    }
+
     let node = match mmap_anonymous(
         null_mut(),
         size_of::<ThreadNode>(),
