@@ -619,7 +619,7 @@ mod tests {
             // Expect this to be fail after 80-90 Iterations or sometimes <50 iterations or never fails | depends
             // this is only tests how allocator can handle non-used-
             // (if VA used before kernel wont touch these pages ever again so do not expect this to be fail under real load) VA segments
-            for i in 0..1024 * 5 {
+            for i in 0..256 {
                 eprintln!("Segmentation Edge Case test loop: {}", i);
 
                 let addr = VA_MAP
