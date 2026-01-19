@@ -27,7 +27,6 @@ use crate::{
         thread::{spawn_gtrim_thread, spawn_ptrim_thread},
     },
     va::{
-        bitmap::CHUNK_SIZE,
         bootstrap::{IS_BOOTSTRAP, SHUTDOWN, boot_strap},
         is_ours,
     },
@@ -192,7 +191,7 @@ pub unsafe fn allocate_cold(size: usize) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
-    if unlikely(size >= CHUNK_SIZE) {
+    if unlikely(size > 1024 * 1024 * 1024 * 3) {
         *__errno_location() = ENOMEM;
         return null_mut();
     }
