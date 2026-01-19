@@ -244,6 +244,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
     raw_usable.saturating_sub(offset) as size_t
 }
 
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc_trim(pad: size_t) -> c_int {
     let is_ok_p = PTrim.trim(pad);
     let is_ok_g = if is_ok_p.0 == 0 {
