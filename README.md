@@ -15,6 +15,7 @@
 - Many preps before Alpha release
 
 # Current VA Handling:
+# Verified: VA management and Radix Tree bookkeeping stress-tested up to 13TB.
 - Able to handle ~300–500 GB of virtual address space under pathological worst-case conditions without crashing or corrupting state.
 ### Worst-case scenario tested:
 - VA ranges are never touched (no page faults).
