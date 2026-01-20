@@ -1,6 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-#[cfg(feature = "hardened")]
+#[cfg(feature = "hardened-linked-list")]
 use libc::getrandom;
 use libc::pthread_setspecific;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
@@ -142,7 +142,7 @@ pub struct ThreadLocalEngine {
     pub pending: [AtomicPtr<MetaData>; NUM_SIZE_CLASSES],
     pub node: *mut ThreadNode,
     pub numa_node_id: usize,
-    #[cfg(feature = "hardened")]
+    #[cfg(feature = "hardened-linked-list")]
     pub xor_key: usize,
     pub lock_tls: AtomicBool,
 }
@@ -153,7 +153,7 @@ pub static mut TLS: *mut ThreadLocalEngine = null_mut();
 impl ThreadLocalEngine {
     #[inline(always)]
     pub unsafe fn xor_ptr(&self, ptr: *mut OxHeader) -> *mut OxHeader {
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         {
             if unlikely(ptr.is_null()) {
                 return null_mut();
@@ -161,7 +161,7 @@ impl ThreadLocalEngine {
             ((ptr as usize) ^ self.xor_key) as *mut OxHeader
         }
 
-        #[cfg(not(feature = "hardened"))]
+        #[cfg(not(feature = "hardened-linked-list"))]
         {
             ptr
         }
@@ -187,9 +187,9 @@ impl ThreadLocalEngine {
 
         let numa = get_numa_node_id();
 
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         let mut rand: usize = 0;
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         {
             let res = getrandom(
                 &mut rand as *mut usize as *mut c_void,
@@ -218,13 +218,13 @@ impl ThreadLocalEngine {
                 pending: [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES],
                 node: null_mut(),
                 numa_node_id: (numa % MAX_NUMA_NODES),
-                #[cfg(feature = "hardened")]
+                #[cfg(feature = "hardened-linked-list")]
                 xor_key: rand,
                 lock_tls: AtomicBool::new(false),
             },
         );
 
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         {
             let _ = rustix::mm::madvise(
                 cache as *mut c_void,
@@ -274,13 +274,6 @@ impl ThreadLocalEngine {
 
         loop {
             let current_header = bin.head.load(Ordering::Relaxed);
-            #[cfg(feature = "hardened")]
-            {
-                if unlikely(current_header == !0) {
-                    return null_mut();
-                }
-            }
-
             let header = self.xor_ptr(current_header);
 
             if unlikely(header.is_null()) {
@@ -337,7 +330,7 @@ impl ThreadLocalEngine {
     ) {
         let bin = &self.tls[class];
 
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         {
             let mut curr = head;
             while curr != tail {
@@ -379,9 +372,9 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     }
     destroy_node((*cache).node);
 
-    #[cfg(feature = "hardened")]
+    #[cfg(feature = "hardened-linked-list")]
     let random_key = (*cache).xor_key;
-    #[cfg(not(feature = "hardened"))]
+    #[cfg(not(feature = "hardened-linked-list"))]
     let random_key = 0;
 
     for class in 0..NUM_SIZE_CLASSES {

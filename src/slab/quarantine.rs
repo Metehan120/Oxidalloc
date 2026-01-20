@@ -5,7 +5,7 @@ use std::{
 
 use crate::{OxidallocError, va::bootstrap::GLOBAL_RANDOM};
 
-pub static MAX_QUARANTINE: usize = 1024 * 1024 * 10;
+pub static MAX_QUARANTINE: usize = 1024;
 
 pub static QUARANTINE: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_QUARANTINED: AtomicUsize = AtomicUsize::new(0);

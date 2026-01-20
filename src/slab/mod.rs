@@ -87,7 +87,7 @@ fn slow_path_match(size: usize) -> Option<usize> {
 
 #[inline(always)]
 pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader {
-    #[cfg(feature = "hardened")]
+    #[cfg(feature = "hardened-linked-list")]
     {
         if unlikely(ptr.is_null()) {
             return std::ptr::null_mut();
@@ -95,7 +95,7 @@ pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader 
         ((ptr as usize) ^ _key) as *mut OxHeader
     }
 
-    #[cfg(not(feature = "hardened"))]
+    #[cfg(not(feature = "hardened-linked-list"))]
     {
         ptr
     }
@@ -103,7 +103,7 @@ pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader 
 
 #[inline(always)]
 pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
-    #[cfg(feature = "hardened")]
+    #[cfg(feature = "hardened-linked-list")]
     {
         use crate::va::bootstrap::PER_NUMA_KEY;
 
@@ -113,7 +113,7 @@ pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
         ((ptr as usize) ^ PER_NUMA_KEY[_numa]) as *mut OxHeader
     }
 
-    #[cfg(not(feature = "hardened"))]
+    #[cfg(not(feature = "hardened-linked-list"))]
     {
         ptr
     }

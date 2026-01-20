@@ -56,7 +56,7 @@ pub struct MetaData {
     pub next: usize,
 }
 
-#[cfg(not(feature = "hardened"))]
+#[cfg(not(feature = "hardened-linked-list"))]
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
@@ -67,7 +67,7 @@ pub struct OxHeader {
     pub metadata: *mut MetaData,
 }
 
-#[cfg(feature = "hardened")]
+#[cfg(feature = "hardened-linked-list")]
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub magic: u64,

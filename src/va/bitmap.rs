@@ -1,6 +1,10 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::{OX_MAX_RESERVATION, OxidallocError, va::bootstrap::boot_strap};
+use crate::{
+    OX_MAX_RESERVATION, OxidallocError,
+    va::{align_to, bootstrap::boot_strap},
+};
+use libc::getrandom;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     hint::{likely, unlikely},
@@ -19,9 +23,46 @@ pub static ONCE_PROTECTION: Once = Once::new();
 pub static mut BASE_HINT: usize = 0;
 pub static mut BASE_INIT: bool = false;
 pub static mut LOOP: u8 = 0;
+pub static ALLOC_RNG: AtomicU64 = AtomicU64::new(0);
+
+#[inline(always)]
+fn alloc_random() -> usize {
+    let x = ALLOC_RNG.fetch_add(1, Ordering::Relaxed);
+    let mut z = x.wrapping_add(0x9E3779B97F4A7C15);
+    z ^= z >> 30;
+    z = z.wrapping_mul(0xbf58476d1ce4e5b9);
+    z ^= z >> 27;
+    z = z.wrapping_mul(0x94d049bb133111eb);
+    z ^= z >> 31;
+    z as usize
+}
+
+unsafe fn randomize_base_hint() {
+    let max = LATEST_TRIED.load(Ordering::Relaxed);
+    if max == 0 {
+        return;
+    }
+
+    let mut rand: usize = 0;
+    let ret = getrandom(
+        &mut rand as *mut usize as *mut c_void,
+        size_of::<usize>(),
+        0,
+    );
+    if ret as usize != size_of::<usize>() {
+        OxidallocError::SecurityViolation.log_and_abort(
+            null_mut(),
+            "Failed to initialize random number generator",
+            None,
+        );
+    }
+
+    BASE_HINT = BASE_HINT.wrapping_add(align_to(rand % max, 4096));
+}
 
 pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
     boot_strap();
+    randomize_base_hint();
 
     const MIN_RESERVE: usize = CHUNK_SIZE;
     #[allow(non_snake_case)]
@@ -274,6 +315,14 @@ impl VaBitmap {
             }
         };
 
+        let seed = {
+            let mut v = user_va as usize;
+            v ^= v >> 33;
+            v ^= v << 17;
+            v ^= v >> 7;
+            v
+        };
+
         let old_head = self.map.load(Ordering::Relaxed);
         write(
             seg_ptr,
@@ -282,7 +331,7 @@ impl VaBitmap {
                 va_start: user_va as usize,
                 va_end: end,
                 map: AtomicPtr::new(map_raw as *mut AtomicU64),
-                hint: AtomicUsize::new(0),
+                hint: AtomicUsize::new(seed % map_len),
                 map_len,
             },
         );
@@ -442,7 +491,9 @@ impl Segment {
         }
 
         let chunks = (total_bits + 63) / 64;
-        let start_chunk = self.hint.load(Ordering::Relaxed) % chunks;
+        let h = self.hint.load(Ordering::Relaxed);
+        let r = alloc_random();
+        let start_chunk = (h + (r as usize & 0xFF)) % chunks;
         let last_valid_bits = total_bits % 64;
 
         for (range_start, range_end) in [(start_chunk, chunks), (0, start_chunk)] {
@@ -461,6 +512,7 @@ impl Segment {
 
                 if (map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
                     self.hint.store(i, Ordering::Relaxed);
+
                     let global_idx = (i * 64) + bit as usize;
                     if global_idx >= total_bits {
                         map[i].fetch_and(!mask, Ordering::Release);
@@ -482,7 +534,9 @@ impl Segment {
             return None;
         }
 
-        let start_bit = (self.hint.load(Ordering::Relaxed) * 64) % total_bits;
+        let h = self.hint.load(Ordering::Relaxed);
+        let r = alloc_random();
+        let start_bit = (h * 64 + (r & 0x3FF)) % total_bits;
 
         for (range_start, range_end) in [(start_bit, total_bits), (0, start_bit)] {
             let mut current_run = 0;

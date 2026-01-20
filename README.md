@@ -1,7 +1,8 @@
 # Current branch status:
 - Optimized paths
 - NUMA-awareness
-- Added hardening / Expect slow downs on real workloads - according to stress-ng test 8-9x
+- Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled.
+- Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
 - Lazy block initialization for better RSS (Extreme drops of memory usage on some workloads)
 - Improved memory usage
 - Removed self-healing path

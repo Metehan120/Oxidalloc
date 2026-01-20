@@ -9,13 +9,14 @@ use std::{
 };
 
 use libc::getrandom;
-#[cfg(feature = "hardened")]
+#[cfg(feature = "hardened-linked-list")]
 use rustix::mm::{Advice, madvise};
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
     OxidallocError,
     slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
+    va::bitmap::ALLOC_RNG,
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -47,7 +48,7 @@ pub(crate) unsafe fn init_magic() {
     FREED_MAGIC = rand[1];
 }
 
-#[cfg(feature = "hardened")]
+#[cfg(feature = "hardened-linked-list")]
 pub(crate) unsafe fn init_random_numa() {
     unsafe {
         let mut rand: [usize; MAX_NUMA_NODES] = [0; MAX_NUMA_NODES];
@@ -89,6 +90,19 @@ unsafe fn init_random() {
         );
     }
     GLOBAL_RANDOM = rand;
+}
+
+unsafe fn init_alloc_random() {
+    let mut rand: u64 = 0;
+    let ret = getrandom(&mut rand as *mut u64 as *mut c_void, size_of::<u64>(), 0);
+    if ret as usize != size_of::<u64>() {
+        OxidallocError::SecurityViolation.log_and_abort(
+            null_mut(),
+            "Failed to initialize random number generator",
+            None,
+        );
+    }
+    ALLOC_RNG.store(rand, Ordering::Relaxed);
 }
 
 pub unsafe fn init_thp() {
@@ -193,7 +207,8 @@ pub unsafe fn boot_strap() {
         init_thp();
         init_random();
         init_magic();
-        #[cfg(feature = "hardened")]
+        init_alloc_random();
+        #[cfg(feature = "hardened-linked-list")]
         init_random_numa();
     });
 }

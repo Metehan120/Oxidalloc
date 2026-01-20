@@ -27,6 +27,8 @@ fn unpack_tag(val: usize) -> usize {
     val & TAG_MASK
 }
 
+// ----------------------------------
+
 #[repr(C, align(64))]
 pub struct NumaGlobal {
     pub list: [AtomicUsize; NUM_SIZE_CLASSES],
@@ -52,7 +54,7 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        #[cfg(feature = "hardened")]
+        #[cfg(feature = "hardened-linked-list")]
         {
             use crate::slab::xor_ptr_numa;
 
@@ -147,6 +149,10 @@ impl GlobalHandler {
             if !is_ours(head as usize) {
                 retry += 1;
                 if retry >= u32::MAX {
+                    #[cfg(feature = "quarantine")]
+                    {
+                        quarantine(head as usize);
+                    }
                     return null_mut();
                 }
                 continue;
