@@ -20,6 +20,7 @@ hardened-malloc = [
     "quarantine",
 ] # Note: this feature is not using hardened-linked-list, please be careful while using it
 quarantine = []
+no-reserve = []
 
 
 [[bench]]

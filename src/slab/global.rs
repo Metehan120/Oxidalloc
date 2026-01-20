@@ -3,9 +3,11 @@
 use crate::{
     MAX_NUMA_NODES, OxHeader,
     slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
-    va::is_ours,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    hint::unlikely,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use std::{ptr::null_mut, sync::atomic::AtomicBool};
 
 const TAG_BITS: usize = 4;
@@ -130,44 +132,24 @@ impl GlobalHandler {
         class: usize,
         batch_size: usize,
     ) -> *mut OxHeader {
-        let mut retry = 0;
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
-            if (cur as *mut OxHeader).is_null() {
-                return null_mut();
-            }
 
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
-
-            if head_enc.is_null() || cur == 0 {
+            if unlikely(head_enc.is_null() || cur == 0) {
                 return null_mut();
             }
-
             let head = xor_ptr_numa(head_enc, numa_node_id);
-
-            if !is_ours(head as usize) {
-                retry += 1;
-                if retry >= u32::MAX {
-                    #[cfg(feature = "quarantine")]
-                    {
-                        quarantine(head as usize);
-                    }
-                    return null_mut();
-                }
-                continue;
-            }
 
             let mut tail = head;
             let mut count = 1;
-
             while count < batch_size {
                 let next_enc = (*tail).next;
-                if next_enc.is_null() {
+                if unlikely(next_enc.is_null()) {
                     break;
                 }
                 let next_raw = xor_ptr_numa(next_enc, numa_node_id);
-
                 tail = next_raw;
                 count += 1;
             }
@@ -181,12 +163,15 @@ impl GlobalHandler {
             {
                 GLOBAL[numa_node_id].usage[class].fetch_sub(count, Ordering::Relaxed);
 
-                let mut curr = head;
-                while curr != tail {
-                    let next_enc = (*curr).next;
-                    let next_raw = xor_ptr_numa(next_enc, numa_node_id);
-                    (*curr).next = next_raw;
-                    curr = next_raw;
+                #[cfg(feature = "hardened-linked-list")]
+                {
+                    let mut curr = head;
+                    while curr != tail {
+                        let next_enc = (*curr).next;
+                        let next_raw = xor_ptr_numa(next_enc, numa_node_id);
+                        (*curr).next = next_raw;
+                        curr = next_raw;
+                    }
                 }
                 (*tail).next = null_mut();
 

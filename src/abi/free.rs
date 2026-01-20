@@ -9,7 +9,9 @@ use crate::{
         malloc::{TOTAL_MALLOC_FREE, validate_ptr},
     },
     big_allocation::big_free,
-    slab::{match_size_class, thread_local::ThreadLocalEngine},
+    slab::{
+        TLS_MAX_BLOCKS, global::GlobalHandler, match_size_class, thread_local::ThreadLocalEngine,
+    },
     va::is_ours,
 };
 use std::{hint::unlikely, os::raw::c_void, ptr::read_volatile, sync::atomic::Ordering};
@@ -73,6 +75,11 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).life_time = stamp;
 
     let thread = ThreadLocalEngine::get_or_init();
+    if thread.tls[class].usage.load(Ordering::Relaxed) > TLS_MAX_BLOCKS[class] {
+        GlobalHandler.push_to_global(class, thread.numa_node_id, header, header, 1);
+        return;
+    };
+
     thread.push_to_thread(class, header);
 }
 

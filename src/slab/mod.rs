@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 use std::{hint::unlikely, sync::OnceLock};
 
-use crate::OxHeader;
+use crate::{HEADER_SIZE, OxHeader, va::align_to};
 
 pub mod bulk_allocation;
 pub mod global;
@@ -38,6 +38,37 @@ pub const ITERATIONS: [usize; 34] = [
     // Always 1. Let the OS handle the pages.
     1, 1, 1, 1, 1, 1, 1,
 ];
+
+const TLS_CLASS_BYTES: usize = 128 * 1024;
+pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
+    let mut arr = [0; NUM_SIZE_CLASSES];
+    let mut i = 0;
+
+    while i < NUM_SIZE_CLASSES {
+        let payload = SIZE_CLASSES[i];
+        let block_size = align_to(payload + HEADER_SIZE, 16);
+
+        let mut blocks = if block_size > TLS_CLASS_BYTES {
+            1
+        } else {
+            TLS_CLASS_BYTES / block_size
+        };
+
+        let cap = ITERATIONS[i] * 2;
+        if blocks > cap {
+            blocks = cap;
+        }
+
+        if blocks == 0 {
+            blocks = 1;
+        }
+
+        arr[i] = blocks;
+        i += 1;
+    }
+
+    arr
+};
 
 static SIZE_LUT: [u8; 64] = {
     let mut lut = [0u8; 64];
@@ -77,7 +108,7 @@ pub fn match_size_class(size: usize) -> Option<usize> {
 
 #[inline(always)]
 fn slow_path_match(size: usize) -> Option<usize> {
-    for i in 15..NUM_SIZE_CLASSES {
+    for i in 0..NUM_SIZE_CLASSES {
         if size <= SIZE_CLASSES[i] {
             return Some(i);
         }

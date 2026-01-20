@@ -18,8 +18,8 @@ use crate::{
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
-        ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
-        match_size_class, thread_local::ThreadLocalEngine,
+        SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler, match_size_class,
+        thread_local::ThreadLocalEngine,
     },
     trim::{
         gtrim::GTrim,
@@ -57,27 +57,25 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
 unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
-    let batch = if class > 10 {
-        ITERATIONS[class] / 2
-    } else {
-        16
-    };
+    let batch = 32;
 
-    let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
+    if thread.pending[class].load(Ordering::Relaxed).is_null() {
+        let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
 
-    if !global_cache.is_null() {
-        let mut tail = global_cache;
-        let mut real = 1;
+        if !global_cache.is_null() {
+            let mut tail = global_cache;
+            let mut real = 1;
 
-        // Loop through cache and found the last header and set linked list to null
-        while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-            tail = (*tail).next;
-            real += 1;
+            // Loop through cache and found the last header and set linked list to null
+            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+                tail = (*tail).next;
+                real += 1;
+            }
+            (*tail).next = null_mut();
+
+            thread.push_to_thread_tailed(class, global_cache, tail, real);
+            return thread.pop_from_thread(class);
         }
-        (*tail).next = null_mut();
-
-        thread.push_to_thread_tailed(class, global_cache, tail, real);
-        return thread.pop_from_thread(class);
     }
 
     for i in 0..3 {
