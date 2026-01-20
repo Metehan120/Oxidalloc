@@ -2,7 +2,7 @@
 - Optimized paths
 - NUMA-awareness
 - Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled.
-- TLS usage caps - No more memory growing non-stop
+- TLS usage caps (Max 128KB) - No more memory growing non-stop
 - Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
 - Lazy block initialization for better RSS (Extreme drops of memory usage on some workloads)
 - Improved memory usage
