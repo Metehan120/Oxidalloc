@@ -12,6 +12,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize},
     },
     time::Instant,
+    usize,
 };
 
 pub mod abi;
@@ -62,7 +63,6 @@ pub struct OxHeader {
     pub size: usize,
     pub magic: u64,
     pub in_use: u8,
-    pub used_before: u8,
     pub life_time: usize,
     pub metadata: *mut MetaData,
 }
@@ -75,7 +75,6 @@ pub struct OxHeader {
     pub life_time: usize,
     pub next: *mut OxHeader,
     pub in_use: u8,
-    pub used_before: u8,
     pub metadata: *mut MetaData,
 }
 

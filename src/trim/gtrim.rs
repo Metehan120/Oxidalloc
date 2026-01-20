@@ -122,7 +122,6 @@ impl GTrim {
 
                     if (total_freed <= pad || pad == 0) || force_trim {
                         self.release_memory(to_trim, SIZE_CLASSES[class]);
-                        (*to_trim).used_before = 0;
                         total_freed += SIZE_CLASSES[class];
                     }
 

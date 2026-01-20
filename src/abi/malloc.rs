@@ -122,7 +122,6 @@ unsafe fn allocate_hot(class: usize) -> *mut u8 {
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
-    (*cache).used_before = 1;
 
     (cache as *mut u8).add(HEADER_SIZE)
 }
@@ -175,7 +174,6 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
     (*cache).in_use = 1;
-    (*cache).used_before = 1;
 
     (cache as *mut u8).add(HEADER_SIZE)
 }

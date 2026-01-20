@@ -144,6 +144,7 @@ pub struct ThreadLocalEngine {
     pub numa_node_id: usize,
     #[cfg(feature = "hardened")]
     pub xor_key: usize,
+    pub lock_tls: AtomicBool,
 }
 
 #[thread_local]
@@ -219,6 +220,7 @@ impl ThreadLocalEngine {
                 numa_node_id: (numa % MAX_NUMA_NODES),
                 #[cfg(feature = "hardened")]
                 xor_key: rand,
+                lock_tls: AtomicBool::new(false),
             },
         );
 

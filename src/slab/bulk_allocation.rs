@@ -50,7 +50,6 @@ unsafe fn init_blocks(
                 magic: FREED_MAGIC,
                 life_time: current_stamp,
                 in_use: 0,
-                used_before: 0,
                 metadata: metadata,
             },
         );
