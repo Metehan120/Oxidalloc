@@ -39,7 +39,7 @@ pub const ITERATIONS: [usize; 34] = [
     1, 1, 1, 1, 1, 1, 1,
 ];
 
-const TLS_CLASS_BYTES: usize = 256 * 1024;
+const TLS_CLASS_BYTES: usize = 128 * 1024;
 pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     let mut arr = [0; NUM_SIZE_CLASSES];
     let mut i = 0;
@@ -53,11 +53,6 @@ pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
         } else {
             TLS_CLASS_BYTES / block_size
         };
-
-        let cap = ITERATIONS[i] * 2;
-        if blocks > cap {
-            blocks = cap;
-        }
 
         if blocks == 0 {
             blocks = 1;
