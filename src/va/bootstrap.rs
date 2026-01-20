@@ -14,9 +14,7 @@ use rustix::mm::{Advice, madvise};
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
-    OxidallocError,
-    slab::thread_local::{THREAD_REGISTER, ThreadLocalEngine},
-    va::bitmap::ALLOC_RNG,
+    OxidallocError, slab::thread_local::ThreadLocalEngine, va::bitmap::ALLOC_RNG,
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -63,6 +61,12 @@ pub(crate) unsafe fn init_random_numa() {
                 "Failed to initialize random number generator",
                 None,
             );
+        }
+
+        // Keep low bits clear so XOR'd pointers remain aligned for tag packing.
+        const TAG_MASK: usize = 0xF;
+        for key in rand.iter_mut() {
+            *key &= !TAG_MASK;
         }
 
         let _ = madvise(
@@ -193,7 +197,6 @@ pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Acquire) {
         return;
     }
-    THREAD_REGISTER.store(null_mut(), Ordering::Relaxed);
     IS_BOOTSTRAP.store(false, Ordering::Release);
     if IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;

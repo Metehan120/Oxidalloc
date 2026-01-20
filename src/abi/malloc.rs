@@ -14,18 +14,14 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    FREED_MAGIC, HAS_ALIGNED_PAGES, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
         SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler, match_size_class,
         thread_local::ThreadLocalEngine,
     },
-    trim::{
-        gtrim::GTrim,
-        ptrim::PTrim,
-        thread::{spawn_gtrim_thread, spawn_ptrim_thread},
-    },
+    trim::{gtrim::GTrim, thread::spawn_gtrim_thread},
     va::{
         bootstrap::{IS_BOOTSTRAP, SHUTDOWN, boot_strap},
         is_ours,
@@ -54,28 +50,26 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
 
 #[cold]
 #[inline(never)]
-unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
+unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
     let batch = 32;
 
-    if thread.pending[class].load(Ordering::Relaxed).is_null() {
-        let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
+    let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
 
-        if !global_cache.is_null() {
-            let mut tail = global_cache;
-            let mut real = 1;
+    if !global_cache.is_null() {
+        let mut tail = global_cache;
+        let mut real = 1;
 
-            // Loop through cache and found the last header and set linked list to null
-            while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-                tail = (*tail).next;
-                real += 1;
-            }
-            (*tail).next = null_mut();
-
-            thread.push_to_thread_tailed(class, global_cache, tail, real);
-            return thread.pop_from_thread(class);
+        // Loop through cache and found the last header and set linked list to null
+        while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+            tail = (*tail).next;
+            real += 1;
         }
+        (*tail).next = null_mut();
+
+        thread.push_to_thread_tailed(class, global_cache, tail, real);
+        return thread.pop_from_thread(class);
     }
 
     for i in 0..3 {
@@ -95,7 +89,7 @@ unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
 }
 
 #[inline(always)]
-unsafe fn allocate_hot(class: usize) -> *mut u8 {
+unsafe fn allocate_hot(class: usize) -> *mut OxHeader {
     let thread = ThreadLocalEngine::get_or_init();
     let mut cache = thread.pop_from_thread(class);
 
@@ -119,18 +113,18 @@ unsafe fn allocate_hot(class: usize) -> *mut u8 {
         }
     }
 
+    #[cfg(feature = "hardened-malloc")]
     validate_ptr(cache);
 
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
-    (*cache).in_use = 1;
 
-    (cache as *mut u8).add(HEADER_SIZE)
+    cache.add(1)
 }
 
 #[inline(always)]
 // Separated allocation function for better scalability in future
-unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
+unsafe fn allocate_boot_segment(class: usize) -> *mut OxHeader {
     if unlikely(IS_BOOTSTRAP.load(Ordering::Relaxed)) {
         boot_strap();
     }
@@ -141,7 +135,6 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
         if !THREAD_SPAWNED.load(Ordering::Relaxed) {
             THREAD_SPAWNED.store(true, Ordering::Relaxed);
             ONCE.call_once(|| {
-                spawn_ptrim_thread();
                 spawn_gtrim_thread();
                 HOT_READY = true;
             });
@@ -171,13 +164,13 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut u8 {
         }
     }
 
+    #[cfg(feature = "hardened-malloc")]
     validate_ptr(cache);
 
     (*cache).next = null_mut();
     (*cache).magic = MAGIC;
-    (*cache).in_use = 1;
 
-    (cache as *mut u8).add(HEADER_SIZE)
+    cache.add(1)
 }
 
 #[cold]
@@ -224,14 +217,16 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
     let mut raw_ptr = ptr;
     let mut offset: usize = 0;
-    let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
-    let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+    if HAS_ALIGNED_PAGES.load(Ordering::Relaxed) {
+        let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
 
-    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
-            raw_ptr = presumed_original_ptr;
-            offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
+        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+            if is_ours(presumed_original_ptr as usize) {
+                raw_ptr = presumed_original_ptr;
+                offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
+            }
         }
     }
 
@@ -251,21 +246,11 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc_trim(pad: size_t) -> c_int {
-    let is_ok_p = PTrim.trim(pad);
-    let is_ok_g = if is_ok_p.0 == 0 {
-        let gtrim = GTrim.trim(pad);
-        if gtrim.0 == 0 {
-            if (is_ok_p.1 + gtrim.1) >= pad { 1 } else { 0 }
-        } else {
-            1
-        }
-    } else {
-        1
-    };
+    let is_ok_g = GTrim.trim(pad);
 
     if !SHUTDOWN.load(Ordering::Relaxed) && pad == 0 {
         1
     } else {
-        is_ok_g | is_ok_p.0
+        is_ok_g.0
     }
 }

@@ -31,10 +31,12 @@ pub static MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes 
 pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
 pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
+pub const FLAG_ALIGNED: u8 = 2;
+
 pub static mut MAGIC: u64 = 0x01B01698BF0BEEF;
 pub static mut FREED_MAGIC: u64 = 0x12BE34FF09EBEAFF;
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
-pub static OX_CURRENT_STAMP: AtomicUsize = AtomicUsize::new(0);
+pub static mut OX_CURRENT_STAMP: usize = 0;
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
@@ -42,6 +44,7 @@ pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
 pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
+pub static HAS_ALIGNED_PAGES: AtomicBool = AtomicBool::new(false);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
@@ -61,8 +64,8 @@ pub struct MetaData {
 pub struct OxHeader {
     pub next: *mut OxHeader,
     pub size: usize,
+    pub class: u8,
     pub magic: u64,
-    pub in_use: u8,
     pub life_time: usize,
     pub metadata: *mut MetaData,
 }
@@ -72,10 +75,10 @@ pub struct OxHeader {
 pub struct OxHeader {
     pub magic: u64,
     pub size: usize,
-    pub life_time: usize,
+    pub class: u8,
     pub next: *mut OxHeader,
-    pub in_use: u8,
     pub metadata: *mut MetaData,
+    pub life_time: usize,
 }
 
 #[repr(u32)]

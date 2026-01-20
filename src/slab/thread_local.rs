@@ -10,7 +10,7 @@ use std::{
     ptr::null_mut,
     sync::{
         Once,
-        atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     },
 };
 
@@ -21,78 +21,6 @@ use crate::{
 };
 
 pub static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-pub struct ThreadNode {
-    pub engine: AtomicPtr<ThreadLocalEngine>,
-    pub next: AtomicPtr<ThreadNode>,
-}
-
-pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
-
-unsafe fn try_reuse_node(ptr: *mut ThreadLocalEngine) -> Option<*mut ThreadNode> {
-    let mut node = THREAD_REGISTER.load(Ordering::Acquire);
-    while !node.is_null() {
-        if (*node).engine.load(Ordering::Acquire).is_null()
-            && (*node)
-                .engine
-                .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            return Some(node);
-        }
-
-        node = (*node).next.load(Ordering::Acquire);
-    }
-
-    None
-}
-
-// Register a new thread node with the given, need for trimming
-unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
-    if let Some(node) = try_reuse_node(ptr) {
-        return node;
-    }
-
-    let node = match mmap_anonymous(
-        null_mut(),
-        size_of::<ThreadNode>(),
-        ProtFlags::READ | ProtFlags::WRITE,
-        MapFlags::PRIVATE,
-    ) {
-        Ok(mem) => mem,
-        Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
-            0 as *mut c_void,
-            "PThread cache creation failed, cannot create thread node: errno({})",
-            Some(err),
-        ),
-    } as *mut ThreadNode;
-
-    std::ptr::write(
-        node,
-        ThreadNode {
-            engine: AtomicPtr::new(ptr),
-            next: AtomicPtr::new(null_mut()),
-        },
-    );
-
-    loop {
-        let head = THREAD_REGISTER.load(Ordering::Acquire);
-        (*node).next.store(head, Ordering::Relaxed);
-
-        if THREAD_REGISTER
-            .compare_exchange(head, node, Ordering::Release, Ordering::Acquire)
-            .is_ok()
-        {
-            break;
-        }
-    }
-
-    node
-}
-
-unsafe fn destroy_node(node: *mut ThreadNode) {
-    (*node).engine.swap(null_mut(), Ordering::AcqRel);
-}
 
 unsafe fn get_numa_node_id() -> usize {
     let mut cpu = 0;
@@ -132,19 +60,17 @@ static THREAD_INIT: AtomicBool = AtomicBool::new(true);
 
 #[repr(C, align(64))]
 pub struct TlsBin {
-    pub head: AtomicPtr<OxHeader>,
-    pub usage: AtomicUsize,
+    pub head: *mut OxHeader,
+    pub usage: usize,
 }
 
 #[repr(C, align(64))]
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
-    pub pending: [AtomicPtr<MetaData>; NUM_SIZE_CLASSES],
-    pub node: *mut ThreadNode,
+    pub pending: [*mut MetaData; NUM_SIZE_CLASSES],
     pub numa_node_id: usize,
     #[cfg(feature = "hardened-linked-list")]
     pub xor_key: usize,
-    pub lock_tls: AtomicBool,
 }
 
 #[thread_local]
@@ -211,16 +137,14 @@ impl ThreadLocalEngine {
             ThreadLocalEngine {
                 tls: [const {
                     TlsBin {
-                        head: AtomicPtr::new(null_mut()),
-                        usage: AtomicUsize::new(0),
+                        head: null_mut(),
+                        usage: 0,
                     }
                 }; NUM_SIZE_CLASSES],
-                pending: [const { AtomicPtr::new(null_mut()) }; NUM_SIZE_CLASSES],
-                node: null_mut(),
+                pending: [const { null_mut() }; NUM_SIZE_CLASSES],
                 numa_node_id: (numa % MAX_NUMA_NODES),
                 #[cfg(feature = "hardened-linked-list")]
                 xor_key: rand,
-                lock_tls: AtomicBool::new(false),
             },
         );
 
@@ -233,7 +157,6 @@ impl ThreadLocalEngine {
             );
         }
 
-        (*cache).node = register_node(cache);
         pthread_setspecific(key, cache as *mut c_void);
         TLS = cache;
 
@@ -241,9 +164,9 @@ impl ThreadLocalEngine {
     }
 
     #[inline(always)]
-    pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
+    pub unsafe fn get_or_init() -> &'static mut ThreadLocalEngine {
         if likely(!TLS.is_null()) {
-            return &*TLS;
+            return &mut *TLS;
         }
 
         Self::get_or_init_cold()
@@ -251,7 +174,7 @@ impl ThreadLocalEngine {
 
     #[inline(never)]
     #[cold]
-    pub unsafe fn get_or_init_cold() -> &'static ThreadLocalEngine {
+    pub unsafe fn get_or_init_cold() -> &'static mut ThreadLocalEngine {
         let key = if !THREAD_INIT.load(Ordering::Acquire) {
             THREAD_KEY.load(Ordering::Acquire)
         } else {
@@ -265,64 +188,51 @@ impl ThreadLocalEngine {
         }
         TLS = tls;
 
-        &*tls
+        &mut *tls
     }
 
     #[inline(always)]
-    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
-        let bin = &self.tls[class];
+    pub unsafe fn pop_from_thread(&mut self, class: usize) -> *mut OxHeader {
+        let bin = &mut self.tls[class];
 
-        loop {
-            let current_header = bin.head.load(Ordering::Relaxed);
-            let header = self.xor_ptr(current_header);
-
-            if unlikely(header.is_null()) {
+        let current_header = bin.head;
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            if unlikely(current_header.is_null()) {
                 return null_mut();
             }
-
-            let next = (*header).next;
-            if likely(!next.is_null()) {
-                prefetch(self.xor_ptr(next) as *const u8);
-            }
-
-            if bin
-                .head
-                .compare_exchange(current_header, next, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                bin.usage.fetch_sub(1, Ordering::Relaxed);
-                return header;
-            }
         }
+
+        let header = self.xor_ptr(current_header);
+        if unlikely(header.is_null()) {
+            return null_mut();
+        }
+
+        let next = (*header).next;
+        if likely(!next.is_null()) {
+            prefetch(self.xor_ptr(next) as *const u8);
+        }
+
+        self.tls[class].head = next;
+        self.tls[class].usage -= 1;
+
+        header
     }
 
     #[inline(always)]
-    pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
+    pub unsafe fn push_to_thread(&mut self, class: usize, head: *mut OxHeader) {
         let bin = &self.tls[class];
 
-        loop {
-            let current = bin.head.load(Ordering::Relaxed);
-            (*head).next = current;
+        let current = bin.head;
+        (*head).next = current;
 
-            if bin
-                .head
-                .compare_exchange(
-                    current,
-                    self.xor_ptr(head),
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                bin.usage.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-        }
+        self.tls[class].head = self.xor_ptr(head);
+        self.tls[class].usage += 1;
     }
 
     #[inline(always)]
     pub unsafe fn push_to_thread_tailed(
-        &self,
+        &mut self,
         class: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
@@ -340,24 +250,11 @@ impl ThreadLocalEngine {
             }
         }
 
-        loop {
-            let current_header = bin.head.load(Ordering::Relaxed);
-            (*tail).next = current_header;
+        let current_header = bin.head;
+        (*tail).next = current_header;
 
-            if bin
-                .head
-                .compare_exchange(
-                    current_header,
-                    self.xor_ptr(head),
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                bin.usage.fetch_add(batch_size, Ordering::Relaxed);
-                return;
-            }
-        }
+        self.tls[class].head = self.xor_ptr(head);
+        self.tls[class].usage += batch_size;
     }
 }
 
@@ -370,7 +267,6 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     if cache.is_null() {
         return;
     }
-    destroy_node((*cache).node);
 
     #[cfg(feature = "hardened-linked-list")]
     let random_key = (*cache).xor_key;
@@ -378,10 +274,7 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     let random_key = 0;
 
     for class in 0..NUM_SIZE_CLASSES {
-        let head = xor_ptr_general(
-            (*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel),
-            random_key,
-        );
+        let head = xor_ptr_general((*cache).tls[class].head, random_key);
 
         if !is_ours(head as usize) {
             continue;
@@ -417,4 +310,66 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
     let total_size = size_of::<ThreadLocalEngine>();
 
     let _ = munmap(cache_ptr, total_size);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{hint::black_box, time::Instant};
+
+    use crate::FREED_MAGIC;
+
+    use super::*;
+
+    #[test]
+    fn tls_speed_test() {
+        unsafe {
+            let tls = ThreadLocalEngine::get_or_init();
+            let start = Instant::now();
+            let header = mmap_anonymous(
+                null_mut(),
+                size_of::<OxHeader>(),
+                ProtFlags::READ | ProtFlags::WRITE,
+                MapFlags::PRIVATE,
+            )
+            .unwrap() as *mut OxHeader;
+            std::ptr::write(
+                header,
+                OxHeader {
+                    next: null_mut(),
+                    size: size_of::<OxHeader>(),
+                    class: 0,
+                    magic: FREED_MAGIC,
+                    life_time: 0,
+                    metadata: null_mut(),
+                },
+            );
+            tls.push_to_thread(1, header);
+
+            for _ in 0..1000000 {
+                let header = black_box(tls.pop_from_thread(1));
+                black_box(tls.push_to_thread(1, header));
+            }
+            let end = Instant::now();
+            let dur = end - start;
+            let ns = dur.as_nanos() as f64 / 1_000_000.0;
+            println!("TLS pop+push: {:.2} ns/op", ns);
+        }
+    }
+
+    #[test]
+    fn init_speed_test() {
+        unsafe {
+            const N: usize = 10_000_000;
+            let _tls = ThreadLocalEngine::get_or_init();
+            _tls.numa_node_id = 0;
+
+            let start = Instant::now();
+            for _ in 0..N {
+                black_box(ThreadLocalEngine::get_or_init());
+            }
+            let end = Instant::now();
+            let ns = end.duration_since(start).as_nanos() as f64 / N as f64;
+            println!("Get speed: {:.2} ns/op", ns);
+        }
+    }
 }

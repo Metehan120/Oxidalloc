@@ -1,7 +1,6 @@
 use std::{
     os::raw::c_void,
     ptr::{null_mut, write},
-    sync::atomic::Ordering,
 };
 
 use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
@@ -24,6 +23,7 @@ unsafe fn remaining_blocks(metadata: *mut MetaData, block_size: usize) -> usize 
 
 #[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn init_blocks(
+    class: u8,
     metadata: *mut MetaData,
     block_size: usize,
     payload_size: usize,
@@ -48,9 +48,9 @@ unsafe fn init_blocks(
             OxHeader {
                 next: head,
                 size: payload_size,
+                class: class,
                 magic: FREED_MAGIC,
                 life_time: current_stamp,
-                in_use: 0,
                 metadata: metadata,
             },
         );
@@ -67,7 +67,7 @@ unsafe fn init_blocks(
 }
 
 #[allow(unsafe_op_in_unsafe_fn)]
-pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), Err> {
+pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
@@ -77,20 +77,26 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     } else {
         blocks_per_4k.max(1)
     };
-    let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
+    let current_stamp = OX_CURRENT_STAMP;
 
-    let pending = thread.pending[class].load(Ordering::Relaxed);
+    let pending = thread.pending[class];
     if !pending.is_null() {
-        let (head, tail, count) =
-            init_blocks(pending, block_size, payload_size, max_init, current_stamp);
+        let (head, tail, count) = init_blocks(
+            class as u8,
+            pending,
+            block_size,
+            payload_size,
+            max_init,
+            current_stamp,
+        );
         if count > 0 {
             thread.push_to_thread_tailed(class, head, tail, count);
             if remaining_blocks(pending, block_size) == 0 {
-                thread.pending[class].store(null_mut(), Ordering::Relaxed);
+                thread.pending[class] = null_mut();
             }
             return Ok(());
         }
-        thread.pending[class].store(null_mut(), Ordering::Relaxed);
+        thread.pending[class] = null_mut();
     }
 
     let total = size_of::<MetaData>() + (block_size * num_blocks);
@@ -128,23 +134,29 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         let _ = madvise(mem, total, Advice::LinuxHugepage);
     }
 
-    let (head, tail, count) =
-        init_blocks(metadata, block_size, payload_size, max_init, current_stamp);
+    let (head, tail, count) = init_blocks(
+        class as u8,
+        metadata,
+        block_size,
+        payload_size,
+        max_init,
+        current_stamp,
+    );
     if count == 0 {
         return Err(Err::OutOfMemory);
     }
 
-    if thread.tls[class].usage.load(Ordering::Relaxed) >= TLS_MAX_BLOCKS[class] {
+    if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
         GlobalHandler.push_to_global(class, thread.numa_node_id, head, tail, count);
         if remaining_blocks(metadata, block_size) > 0 {
-            thread.pending[class].store(metadata, Ordering::Relaxed);
+            thread.pending[class] = metadata;
         }
         return Ok(());
     }
 
     thread.push_to_thread_tailed(class, head, tail, count);
     if remaining_blocks(metadata, block_size) > 0 {
-        thread.pending[class].store(metadata, Ordering::Relaxed);
+        thread.pending[class] = metadata;
     }
 
     Ok(())

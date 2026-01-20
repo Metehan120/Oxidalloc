@@ -5,7 +5,7 @@ use crate::{
     slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
 };
 use std::{
-    hint::unlikely,
+    hint::{likely, unlikely},
     sync::atomic::{AtomicUsize, Ordering},
 };
 use std::{ptr::null_mut, sync::atomic::AtomicBool};
@@ -97,7 +97,7 @@ impl GlobalHandler {
         batch_size: usize,
     ) -> *mut OxHeader {
         let res = self.pop_from_shard(preferred_node, class, batch_size);
-        if !res.is_null() {
+        if likely(!res.is_null()) {
             return res;
         }
 
@@ -137,20 +137,19 @@ impl GlobalHandler {
 
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
-            if unlikely(head_enc.is_null() || cur == 0) {
+            if unlikely(head_enc.is_null()) {
                 return null_mut();
             }
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             let mut tail = head;
             let mut count = 1;
-            while count < batch_size {
+            for _ in 1..batch_size {
                 let next_enc = (*tail).next;
                 if unlikely(next_enc.is_null()) {
                     break;
                 }
-                let next_raw = xor_ptr_numa(next_enc, numa_node_id);
-                tail = next_raw;
+                tail = xor_ptr_numa(next_enc, numa_node_id);
                 count += 1;
             }
 

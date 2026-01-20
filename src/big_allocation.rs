@@ -47,9 +47,9 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         OxHeader {
             next: null_mut(),
             size,
+            class: 100,
             magic: MAGIC,
             life_time: 0,
-            in_use: 1,
             metadata: null_mut(),
         },
     );
@@ -65,7 +65,6 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     let total_size = align_to(payload_size + HEADER_SIZE, 4096);
 
     // Make the header look free before we potentially lose write access.
-    (*header).in_use = 0;
     (*header).magic = FREED_MAGIC;
 
     let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);

@@ -15,12 +15,8 @@ name = "oxidalloc"
 crate-type = ["cdylib"]
 
 [features]
-hardened-linked-list = ["quarantine"]
-hardened-malloc = [
-    "quarantine",
-] # Note: this feature is not using hardened-linked-list, please be careful while using it
-quarantine = []
-no-reserve = []
+hardened-linked-list = ["hardened-malloc"]
+hardened-malloc = []
 
 
 [[bench]]

@@ -6,13 +6,11 @@ use std::{
 };
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, AVERAGE_BLOCK_TIMES_PTHREAD, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD,
-    TOTAL_ALLOCATED, get_clock,
-    trim::{TimeDecay, gtrim::GTrim, ptrim::PTrim},
+    AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, TOTAL_ALLOCATED, get_clock,
+    trim::{TimeDecay, gtrim::GTrim},
     va::bootstrap::SHUTDOWN,
 };
 
-static TOTAL_TIME: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_TIME_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
 
@@ -35,44 +33,12 @@ unsafe fn decide_global(decay: &TimeDecay) -> bool {
         LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
     }
 
-    if LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 75 {
+    if LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 85 {
         return true;
     }
 
     let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
     total % timing == 0 && total != 0
-}
-
-unsafe fn decide_pthread(decay: &TimeDecay) -> bool {
-    if TOTAL_ALLOCATED.load(Ordering::Relaxed) == 0 {
-        return false;
-    }
-
-    if (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) < decay.get_threshold() as usize)
-        && (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) != 0)
-    {
-        OX_TRIM_THRESHOLD.store(decay.get_threshold() as usize, Ordering::Relaxed);
-    }
-
-    let total = TOTAL_TIME.load(Ordering::Relaxed);
-    if total % 400 == 0 {
-        LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
-    }
-
-    let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
-    if pressure > 85 {
-        return true;
-    }
-
-    let pthread_avg = AVERAGE_BLOCK_TIMES_PTHREAD.load(Ordering::Relaxed);
-    let global_avg = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
-
-    let tls_is_worse = pthread_avg + 10 > global_avg;
-
-    let timing = pthread_avg.max(1);
-    let periodic = total % timing == 0;
-
-    periodic || tls_is_worse
 }
 
 fn check_memory_pressure() -> usize {
@@ -100,23 +66,6 @@ fn check_memory_pressure() -> usize {
     }
 }
 
-pub unsafe fn spawn_ptrim_thread() {
-    std::thread::spawn(|| {
-        while !SHUTDOWN.load(Ordering::Acquire) {
-            let decay = TimeDecay::from_u8(PTRIM_DECAY.load(Ordering::Relaxed));
-            std::thread::sleep(Duration::from_millis(decay.get_trim_time()));
-            TOTAL_TIME.fetch_add(decay.get_trim_time() as usize, Ordering::Relaxed);
-
-            let time = get_clock().elapsed().as_millis() as usize;
-            OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
-
-            if decide_pthread(&decay) {
-                PTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));
-            }
-        }
-    });
-}
-
 pub unsafe fn spawn_gtrim_thread() {
     std::thread::spawn(|| {
         while !SHUTDOWN.load(Ordering::Acquire) {
@@ -126,7 +75,7 @@ pub unsafe fn spawn_gtrim_thread() {
             TOTAL_TIME_GLOBAL.fetch_add(decay.get_trim_time() as usize, Ordering::Relaxed);
 
             let time = get_clock().elapsed().as_millis() as usize;
-            OX_CURRENT_STAMP.store(time, Ordering::Relaxed);
+            OX_CURRENT_STAMP = time;
 
             if decide_global(&decay) {
                 GTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));

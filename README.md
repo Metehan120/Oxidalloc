@@ -1,11 +1,9 @@
 # Current branch status:
-- Optimized paths
 - NUMA-awareness
 - Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled.
 - TLS usage caps (Max 128KB) - No more memory growing non-stop
 - Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
 - Lazy block initialization for better RSS (Extreme drops of memory usage on some workloads)
-- Improved memory usage
 - Removed self-healing path
 - Segments for Bitmap
 - RADIX Tree
@@ -15,7 +13,16 @@
 - Fast Big Allocation path
 - Kernel Edge Case handling
 - More robust segmentation handling
+- Removed PTRIM, no more need after TLS caps
 - Many preps before Alpha release
+
+# Optimizations:
+- Optimized free paths
+- Optimized malloc paths
+- Optimized aligned block (posix-memalign) handling
+- Optimized TLS
+- Optimized Global
+- Improved memory usage based on TLS caps and segment handling
 
 # Current VA Handling:
 # Verified: VA management and Radix Tree bookkeeping stress-tested up to 13TB.

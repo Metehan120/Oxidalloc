@@ -5,7 +5,7 @@ use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use rustix::mm::{Advice, madvise};
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, MAX_NUMA_NODES, OX_CURRENT_STAMP, OxHeader,
+    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, MAGIC, MAX_NUMA_NODES, OX_CURRENT_STAMP, OxHeader,
     OxidallocError,
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
@@ -32,7 +32,7 @@ impl GTrim {
         let mut real = 1;
 
         while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-            if (*block).in_use == 1 {
+            if (*block).magic == (MAGIC | 1) {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
                     "Find in_use block during PThread Trim / Memory Corruption",
@@ -81,9 +81,7 @@ impl GTrim {
 
                     for _ in 0..size {
                         let next = (*block).next;
-                        let life_time = OX_CURRENT_STAMP
-                            .load(Ordering::Relaxed)
-                            .saturating_sub((*block).life_time);
+                        let life_time = OX_CURRENT_STAMP.saturating_sub((*block).life_time);
 
                         if life_time != 0 {
                             avg += life_time;
