@@ -75,7 +75,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     (*header).life_time = stamp;
 
     let thread = ThreadLocalEngine::get_or_init();
-    if thread.tls[class].usage.load(Ordering::Relaxed) > TLS_MAX_BLOCKS[class] {
+    if thread.tls[class].usage.load(Ordering::Relaxed) >= TLS_MAX_BLOCKS[class] {
         GlobalHandler.push_to_global(class, thread.numa_node_id, header, header, 1);
         return;
     };

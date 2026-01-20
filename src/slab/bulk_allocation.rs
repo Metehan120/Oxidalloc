@@ -8,12 +8,13 @@ use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
 
 use crate::{
     Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader,
-    OxidallocError, TOTAL_ALLOCATED,
-    slab::{ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, thread_local::ThreadLocalEngine},
+    OxidallocError,
+    slab::{
+        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, global::GlobalHandler,
+        thread_local::ThreadLocalEngine,
+    },
     va::{align_to, bitmap::VA_MAP},
 };
-
-const LAZY_INIT_MAX: usize = 16;
 
 #[inline(always)]
 unsafe fn remaining_blocks(metadata: *mut MetaData, block_size: usize) -> usize {
@@ -70,7 +71,12 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
-    let max_init = num_blocks.min(LAZY_INIT_MAX).max(1);
+    let blocks_per_4k = 4096 / block_size;
+    let max_init = if blocks_per_4k >= 128 {
+        128
+    } else {
+        blocks_per_4k.max(1)
+    };
     let current_stamp = OX_CURRENT_STAMP.load(Ordering::Relaxed);
 
     let pending = thread.pending[class].load(Ordering::Relaxed);
@@ -128,9 +134,15 @@ pub unsafe fn bulk_fill(thread: &ThreadLocalEngine, class: usize) -> Result<(), 
         return Err(Err::OutOfMemory);
     }
 
-    thread.push_to_thread_tailed(class, head, tail, count);
-    TOTAL_ALLOCATED.fetch_add(num_blocks, Ordering::Relaxed);
+    if thread.tls[class].usage.load(Ordering::Relaxed) >= TLS_MAX_BLOCKS[class] {
+        GlobalHandler.push_to_global(class, thread.numa_node_id, head, tail, count);
+        if remaining_blocks(metadata, block_size) > 0 {
+            thread.pending[class].store(metadata, Ordering::Relaxed);
+        }
+        return Ok(());
+    }
 
+    thread.push_to_thread_tailed(class, head, tail, count);
     if remaining_blocks(metadata, block_size) > 0 {
         thread.pending[class].store(metadata, Ordering::Relaxed);
     }
