@@ -191,7 +191,7 @@ impl RadixTree {
     pub fn get_segment(&self, addr: usize) -> *mut Segment {
         let idx = addr / CHUNK_SIZE;
         let base = self.nodes;
-        if unlikely(base.is_null()) {
+        if unlikely(base.is_null() || idx >= ENTRIES) {
             return null_mut();
         }
         unsafe { *base.add(idx) as *mut Segment }
