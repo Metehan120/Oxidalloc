@@ -18,8 +18,8 @@ use crate::{
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
-        SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler, match_size_class,
-        thread_local::ThreadLocalEngine,
+        ITERATIONS, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
+        match_size_class, thread_local::ThreadLocalEngine,
     },
     trim::{
         gtrim::GTrim,
@@ -57,7 +57,11 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
 unsafe fn try_fill(thread: &ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
-    let batch = if class > 10 { 32 } else { 16 };
+    let batch = if class > 10 {
+        ITERATIONS[class] / 2
+    } else {
+        16
+    };
 
     let global_cache = GlobalHandler.pop_from_global(thread.numa_node_id, class, batch);
 
