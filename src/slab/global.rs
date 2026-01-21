@@ -4,6 +4,8 @@ use crate::{
     MAX_NUMA_NODES, OxHeader,
     slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
 };
+#[cfg(feature = "hardened-linked-list")]
+use std::hint::spin_loop;
 use std::{
     hint::{likely, unlikely},
     sync::atomic::{AtomicUsize, Ordering},
@@ -45,6 +47,34 @@ pub static GLOBAL: [NumaGlobal; MAX_NUMA_NODES] = [const {
     }
 }; MAX_NUMA_NODES];
 
+#[cfg(feature = "hardened-linked-list")]
+static GLOBAL_LOCKS: [[AtomicBool; NUM_SIZE_CLASSES]; MAX_NUMA_NODES] =
+    [const { [const { AtomicBool::new(false) }; NUM_SIZE_CLASSES] }; MAX_NUMA_NODES];
+
+#[cfg(feature = "hardened-linked-list")]
+struct GlobalLockGuard {
+    lock: &'static AtomicBool,
+}
+
+#[cfg(feature = "hardened-linked-list")]
+impl Drop for GlobalLockGuard {
+    fn drop(&mut self) {
+        self.lock.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "hardened-linked-list")]
+fn lock_global(numa_node_id: usize, class: usize) -> GlobalLockGuard {
+    let lock = &GLOBAL_LOCKS[numa_node_id][class];
+    while lock
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        spin_loop();
+    }
+    GlobalLockGuard { lock }
+}
+
 pub struct GlobalHandler;
 
 impl GlobalHandler {
@@ -56,6 +86,9 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
+        #[cfg(feature = "hardened-linked-list")]
+        let _guard = lock_global(numa_node_id, class);
+
         #[cfg(feature = "hardened-linked-list")]
         {
             use crate::slab::xor_ptr_numa;
@@ -132,6 +165,9 @@ impl GlobalHandler {
         class: usize,
         batch_size: usize,
     ) -> *mut OxHeader {
+        #[cfg(feature = "hardened-linked-list")]
+        let _guard = lock_global(numa_node_id, class);
+
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
 
