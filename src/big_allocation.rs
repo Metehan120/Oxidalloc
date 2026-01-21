@@ -21,17 +21,28 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         None => return null_mut(),
     };
 
-    let actual_ptr = match mmap_anonymous(
+    let is_err = mprotect(
         hint as *mut c_void,
         aligned_total,
-        ProtFlags::WRITE | ProtFlags::READ,
-        MapFlags::PRIVATE | MapFlags::FIXED,
-    ) {
-        Ok(ptr) => ptr,
-        Err(_) => {
-            VA_MAP.free(hint, aligned_total);
-            return null_mut();
+        MprotectFlags::WRITE | MprotectFlags::READ,
+    )
+    .is_err();
+
+    let actual_ptr = if aligned_total > 1024 * 1024 * 1024 || is_err {
+        match mmap_anonymous(
+            hint as *mut c_void,
+            aligned_total,
+            ProtFlags::WRITE | ProtFlags::READ,
+            MapFlags::PRIVATE | MapFlags::FIXED,
+        ) {
+            Ok(ptr) => ptr,
+            Err(_) => {
+                VA_MAP.free(hint, aligned_total);
+                return null_mut();
+            }
         }
+    } else {
+        hint as *mut c_void
     } as *mut OxHeader;
 
     if OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
