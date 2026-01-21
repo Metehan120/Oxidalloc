@@ -196,17 +196,11 @@ impl ThreadLocalEngine {
         let bin = &mut self.tls[class];
 
         let current_header = bin.head;
-        #[cfg(feature = "hardened-linked-list")]
-        {
-            if unlikely(current_header.is_null()) {
-                return null_mut();
-            }
+        if unlikely(current_header.is_null()) {
+            return null_mut();
         }
 
         let header = self.xor_ptr(current_header);
-        if unlikely(header.is_null()) {
-            return null_mut();
-        }
 
         let next = (*header).next;
         if likely(!next.is_null()) {
@@ -275,42 +269,40 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
     for class in 0..NUM_SIZE_CLASSES {
         let head = xor_ptr_general((*cache).tls[class].head, random_key);
-        if head.is_null() {
-            continue;
-        }
 
         if !is_ours(head as usize) {
             continue;
         }
 
-        let mut tail = head;
-        let mut count = 1;
+        if !head.is_null() {
+            let mut tail = head;
+            let mut count = 1;
+            loop {
+                let next_encrypted = (*tail).next;
+                let next = xor_ptr_general(next_encrypted, random_key);
 
-        loop {
-            let next_enc = (*tail).next;
-            if next_enc.is_null() {
-                (*tail).next = null_mut();
-                break;
+                (*tail).next = next;
+                (*tail).life_time = 0;
+
+                if next.is_null() {
+                    break;
+                }
+
+                if !is_ours(next as usize) {
+                    (*tail).next = null_mut();
+                    break;
+                }
+
+                tail = next;
+                count += 1;
             }
 
-            let next = xor_ptr_general(next_enc, random_key);
-
-            if !is_ours(next as usize) {
-                (*tail).next = null_mut();
-                break;
-            }
-
-            (*tail).next = next;
-            (*tail).life_time = 0;
-
-            tail = next;
-            count += 1;
+            GlobalHandler.push_to_global(class, (*cache).numa_node_id, head, tail, count);
         }
-
-        GlobalHandler.push_to_global(class, (*cache).numa_node_id, head, tail, count);
     }
 
     let total_size = size_of::<ThreadLocalEngine>();
+
     let _ = munmap(cache_ptr, total_size);
 }
 
