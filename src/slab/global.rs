@@ -134,7 +134,8 @@ impl GlobalHandler {
             return res;
         }
 
-        if REAL_NUMA_NODES == 1 {
+        // Equals to 0 is just a safety check
+        if REAL_NUMA_NODES == 1 || REAL_NUMA_NODES == 0 {
             return null_mut();
         }
 

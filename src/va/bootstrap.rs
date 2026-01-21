@@ -57,7 +57,7 @@ fn detect_numa_nodes() -> usize {
 
     for (i, &word) in mask.iter().enumerate().rev() {
         if word != 0 {
-            let bit_in_word = BITS_PER_LONG - (word.leading_zeros() as usize);
+            let bit_in_word = BITS_PER_LONG - 1 - (word.leading_zeros() as usize);
             return (i * BITS_PER_LONG) + bit_in_word;
         }
     }
