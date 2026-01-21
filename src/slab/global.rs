@@ -135,7 +135,7 @@ impl GlobalHandler {
         }
 
         // Equals to 0 is just a safety check
-        if REAL_NUMA_NODES == 1 || REAL_NUMA_NODES == 0 {
+        if REAL_NUMA_NODES == 1 || unlikely(REAL_NUMA_NODES == 0) {
             return null_mut();
         }
 
