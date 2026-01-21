@@ -10,7 +10,7 @@ use std::{
     ptr::null_mut,
     sync::{
         Once,
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -20,15 +20,12 @@ use crate::{
     va::is_ours,
 };
 
-pub static TOTAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
-
 unsafe fn get_numa_node_id() -> usize {
     let mut cpu = 0;
     let mut node = 0;
 
     // get node id so we can use it for numa allocation
     libc::syscall(libc::SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
-    TOTAL_THREAD_COUNT.store(cpu, Ordering::Relaxed);
 
     node as usize
 }

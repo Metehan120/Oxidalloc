@@ -170,12 +170,12 @@ impl GlobalHandler {
 
         loop {
             let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
-
             let head_enc = unpack_ptr(cur);
             let tag = unpack_tag(cur);
             if unlikely(head_enc.is_null()) {
                 return null_mut();
             }
+
             let head = xor_ptr_numa(head_enc, numa_node_id);
 
             let mut tail = head;
