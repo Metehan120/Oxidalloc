@@ -28,7 +28,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     )
     .is_err();
 
-    let actual_ptr = if aligned_total > 1024 * 1024 * 1024 || is_err {
+    let actual_ptr = if is_err {
         match mmap_anonymous(
             hint as *mut c_void,
             aligned_total,
