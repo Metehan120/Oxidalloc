@@ -144,7 +144,7 @@ impl GlobalHandler {
         // # Safety
         // The caller must ensure `preffered_node` is a valid index within `MAX_NUMA_NODES`.
         // Returns `null_mut()` if no blocks are available in any NUMA shard.
-        for i in 1..MAX_NUMA_NODES {
+        for i in 1..(REAL_NUMA_NODES % MAX_NUMA_NODES) {
             let neighbor = (preferred_node + i) % MAX_NUMA_NODES;
             let res = self.pop_from_shard(neighbor, class, batch_size);
             if !res.is_null() {
