@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use crate::{
-    MAX_NUMA_NODES, OxHeader,
+    MAX_NUMA_NODES, OxHeader, REAL_NUMA_NODES,
     slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
 };
 #[cfg(feature = "hardened-linked-list")]
@@ -132,6 +132,10 @@ impl GlobalHandler {
         let res = self.pop_from_shard(preferred_node, class, batch_size);
         if likely(!res.is_null()) {
             return res;
+        }
+
+        if REAL_NUMA_NODES == 1 {
+            return null_mut();
         }
 
         // If resident is null (empty) then try to steal from other nodes

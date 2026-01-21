@@ -14,7 +14,7 @@ use rustix::mm::{Advice, madvise};
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
-    OxidallocError, slab::thread_local::ThreadLocalEngine, va::bitmap::ALLOC_RNG,
+    OxidallocError, REAL_NUMA_NODES, slab::thread_local::ThreadLocalEngine, va::bitmap::ALLOC_RNG,
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -30,6 +30,44 @@ extern "C" fn allocator_shutdown() {
 
 pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
+}
+
+fn detect_numa_nodes() -> usize {
+    use libc::{SYS_get_mempolicy, c_int, c_ulong, syscall};
+
+    const MPOL_F_MEMS_ALLOWED: c_ulong = 1 << 2;
+    const MAX_NODES: usize = 1024;
+    const BITS_PER_LONG: usize = std::mem::size_of::<c_ulong>() * 8;
+    let mut mask: [c_ulong; 16] = [0; MAX_NODES / BITS_PER_LONG];
+
+    let ret = unsafe {
+        syscall(
+            SYS_get_mempolicy,
+            std::ptr::null_mut::<c_int>(),
+            mask.as_mut_ptr(),
+            MAX_NODES as c_ulong,
+            0 as c_ulong,
+            MPOL_F_MEMS_ALLOWED,
+        )
+    };
+
+    if ret != 0 {
+        return 1;
+    }
+
+    for (i, &word) in mask.iter().enumerate().rev() {
+        if word != 0 {
+            let bit_in_word = BITS_PER_LONG - (word.leading_zeros() as usize);
+            return (i * BITS_PER_LONG) + bit_in_word;
+        }
+    }
+
+    1
+}
+
+pub(crate) unsafe fn init_numa_nodes() {
+    let nodes = detect_numa_nodes();
+    REAL_NUMA_NODES = nodes;
 }
 
 pub(crate) unsafe fn init_magic() {
@@ -211,6 +249,7 @@ pub unsafe fn boot_strap() {
         init_random();
         init_magic();
         init_alloc_random();
+        init_numa_nodes();
         #[cfg(feature = "hardened-linked-list")]
         init_random_numa();
     });
