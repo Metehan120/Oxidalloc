@@ -49,4 +49,4 @@
   * Effective VA capacity is higher and more stable than worst-case tests.
 
 # Allocation speed of this branch:
-- Free + Malloc <= 7/8ns
+- Free + Malloc <= 5/6ns

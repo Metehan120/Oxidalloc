@@ -1,11 +1,11 @@
 use libc::size_t;
 
 use crate::{
-    FREED_MAGIC, HAS_ALIGNED_PAGES, HEADER_SIZE, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader,
+    FREED_MAGIC, HAS_ALIGNED_PAGES, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader,
     OxidallocError,
     abi::{
         fallback::free_fallback,
-        malloc::{HOT_READY, TOTAL_MALLOC_FREE, validate_ptr},
+        malloc::{HOT_READY, TOTAL_MALLOC_FREE},
     },
     big_allocation::big_free,
     slab::{TLS_MAX_BLOCKS, global::GlobalHandler, thread_local::ThreadLocalEngine},
@@ -14,6 +14,7 @@ use crate::{
 use std::{
     hint::{likely, unlikely},
     os::raw::c_void,
+    ptr::{null_mut, read_volatile},
     sync::atomic::Ordering,
 };
 
@@ -21,19 +22,33 @@ const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
 #[inline(always)]
-unsafe fn free_internal(ptr: *mut c_void) {
-    let header_addr = (ptr as usize).wrapping_sub(HEADER_SIZE);
-    let header = header_addr as *mut OxHeader;
+unsafe fn validate_ptr_for_free(header: *mut OxHeader) {
+    let magic = read_volatile(&(*header).magic);
+    if likely(magic == MAGIC) {
+        return;
+    }
 
-    validate_ptr(header);
-
-    if unlikely((*header).magic == FREED_MAGIC) {
+    if magic == FREED_MAGIC {
         OxidallocError::DoubleFree.log_and_abort(
             header as *mut c_void,
             "Pointer is tagged as in_use",
             None,
         );
     }
+
+    OxidallocError::AttackOrCorruption.log_and_abort(
+        null_mut() as *mut c_void,
+        "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
+        None,
+    );
+}
+
+#[inline(always)]
+unsafe fn free_internal(ptr: *mut c_void) {
+    let header_addr = (ptr as usize).wrapping_sub(HEADER_SIZE);
+    let header = header_addr as *mut OxHeader;
+
+    validate_ptr_for_free(header);
 
     let class = (*header).class as usize;
     if unlikely(class == 100) {
@@ -57,11 +72,11 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
 #[inline(always)]
 unsafe fn free_fast(ptr: *mut c_void) {
-    if ptr.is_null() {
+    if unlikely(ptr.is_null()) {
         return;
     }
 
-    if !is_ours(ptr as usize) {
+    if unlikely(!is_ours(ptr as usize)) {
         free_fallback(ptr);
         return;
     }
@@ -86,11 +101,11 @@ unsafe fn free_fast(ptr: *mut c_void) {
 unsafe fn free_boot_segment(ptr: *mut c_void) {
     TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
 
-    if ptr.is_null() {
+    if unlikely(ptr.is_null()) {
         return;
     }
 
-    if !is_ours(ptr as usize) {
+    if unlikely(!is_ours(ptr as usize)) {
         free_fallback(ptr);
         return;
     }

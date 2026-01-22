@@ -53,7 +53,7 @@ static THREAD_KEY: AtomicU32 = AtomicU32::new(0);
 static THREAD_ONCE: Once = Once::new();
 static THREAD_INIT: AtomicBool = AtomicBool::new(true);
 
-#[repr(C, align(64))]
+#[repr(C)]
 pub struct TlsBin {
     pub head: *mut OxHeader,
     pub usage: usize,
@@ -89,6 +89,7 @@ impl ThreadLocalEngine {
     }
 
     #[cold]
+    #[inline(never)]
     pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
         let total_size = size_of::<ThreadLocalEngine>();
 
@@ -158,7 +159,6 @@ impl ThreadLocalEngine {
         cache
     }
 
-    #[inline(always)]
     pub unsafe fn get_or_init() -> &'static mut ThreadLocalEngine {
         if likely(!TLS.is_null()) {
             return &mut *TLS;

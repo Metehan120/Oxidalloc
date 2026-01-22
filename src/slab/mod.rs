@@ -74,7 +74,7 @@ pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     arr
 };
 
-static SIZE_LUT: [u8; 64] = {
+pub static SIZE_LUT: [u8; 64] = {
     let mut lut = [0u8; 64];
     let mut i = 0;
     while i < 64 {
@@ -112,7 +112,7 @@ pub fn match_size_class(size: usize) -> Option<usize> {
 
 #[inline(always)]
 fn slow_path_match(size: usize) -> Option<usize> {
-    for i in 0..NUM_SIZE_CLASSES {
+    for i in 15..NUM_SIZE_CLASSES {
         if size <= SIZE_CLASSES[i] {
             return Some(i);
         }

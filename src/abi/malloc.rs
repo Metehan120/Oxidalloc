@@ -33,9 +33,8 @@ pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 pub static mut HOT_READY: bool = false;
 
 #[inline(always)]
-pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
+pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u64 {
     let magic = read_volatile(&(*ptr).magic);
-
     if unlikely(magic != MAGIC && magic != FREED_MAGIC) {
         OxidallocError::AttackOrCorruption.log_and_abort(
             null_mut() as *mut c_void,
@@ -43,6 +42,7 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) {
             None,
         )
     }
+    magic
 }
 
 #[cold]
@@ -181,6 +181,14 @@ pub unsafe fn allocate_cold(size: usize) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
+    if likely(size <= 1024 && size > 0) {
+        let index = (size - 1) >> 4;
+        let class = unsafe { *crate::slab::SIZE_LUT.get_unchecked(index) as usize };
+        if likely(HOT_READY) {
+            return allocate_hot(class) as *mut c_void;
+        }
+    }
+
     if unlikely(size > 1024 * 1024 * 1024 * 3) {
         *__errno_location() = ENOMEM;
         return null_mut();
