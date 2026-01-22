@@ -182,11 +182,6 @@ pub unsafe fn allocate_cold(size: usize) -> *mut u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
-    fall_back_to_slow(size)
-}
-
-#[inline(always)]
-unsafe fn fall_back_to_slow(size: size_t) -> *mut c_void {
     if unlikely(size > 1024 * 1024 * 1024 * 3) {
         *__errno_location() = ENOMEM;
         return null_mut();
