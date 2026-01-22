@@ -69,7 +69,6 @@ pub struct OxHeader {
     pub class: u8,
     pub magic: u64,
     pub life_time: usize,
-    pub metadata: *mut MetaData,
 }
 
 #[cfg(feature = "hardened-linked-list")]
@@ -77,9 +76,8 @@ pub struct OxHeader {
 pub struct OxHeader {
     pub magic: u64,
     pub size: usize,
-    pub class: u8,
     pub next: *mut OxHeader,
-    pub metadata: *mut MetaData,
+    pub class: u8,
     pub life_time: usize,
 }
 

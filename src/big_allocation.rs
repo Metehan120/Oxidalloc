@@ -59,7 +59,6 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
             class: 100,
             magic: MAGIC,
             life_time: 0,
-            metadata: null_mut(),
         },
     );
 

@@ -329,7 +329,6 @@ mod tests {
                     class: 0,
                     magic: FREED_MAGIC,
                     life_time: 0,
-                    metadata: null_mut(),
                 },
             );
             tls.push_to_thread(1, header);
