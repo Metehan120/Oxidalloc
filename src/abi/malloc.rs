@@ -1,5 +1,4 @@
 use std::{
-    alloc::Layout,
     hint::{likely, unlikely},
     os::raw::{c_int, c_void},
     ptr::{null_mut, read_volatile},
@@ -187,20 +186,15 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
         return null_mut();
     }
 
-    if let Ok(layout) = Layout::array::<u8>(size) {
-        if let Some(class) = match_size_class(layout.size()) {
-            if likely(HOT_READY) {
-                return allocate_hot(class) as *mut c_void;
-            } else {
-                return allocate_boot_segment(class) as *mut c_void;
-            }
+    if let Some(class) = match_size_class(size) {
+        if likely(HOT_READY) {
+            return allocate_hot(class) as *mut c_void;
+        } else {
+            return allocate_boot_segment(class) as *mut c_void;
         }
-
-        return allocate_cold(size) as *mut c_void;
     }
 
-    *__errno_location() = ENOMEM;
-    null_mut()
+    return allocate_cold(size) as *mut c_void;
 }
 
 #[unsafe(no_mangle)]
