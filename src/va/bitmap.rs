@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use crate::{
     OX_MAX_RESERVATION, OxidallocError,
     va::{align_to, bootstrap::boot_strap},
@@ -8,6 +6,7 @@ use libc::getrandom;
 use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     hint::{likely, unlikely},
+    mem::size_of,
     os::raw::c_void,
     ptr::{null_mut, write, write_bytes},
     sync::{
@@ -15,6 +14,10 @@ use std::{
         atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
 };
+
+const MAX_RANDOM_MB: usize = 64;
+const MAX_RANDOM_BYTES: usize = MAX_RANDOM_MB * 1024 * 1024;
+const MAX_RANDOM_BLOCKS: usize = MAX_RANDOM_BYTES / BLOCK_SIZE;
 
 pub static LATEST_TRIED: AtomicUsize = AtomicUsize::new(0);
 pub static RESERVE: AtomicU8 = AtomicU8::new(0);
@@ -37,19 +40,22 @@ fn alloc_random() -> usize {
     z as usize
 }
 
+// Security: Restored getrandom for strong ASLR on segment bases.
 unsafe fn randomize_base_hint() {
     let max = LATEST_TRIED.load(Ordering::Relaxed);
-    if max == 0 {
+    if unlikely(max == 0) {
         return;
     }
 
     let mut rand: usize = 0;
+    // We use the kernel's RNG here to ensure the base address is not predictable
     let ret = getrandom(
         &mut rand as *mut usize as *mut c_void,
         size_of::<usize>(),
         0,
     );
-    if ret as usize != size_of::<usize>() {
+
+    if unlikely(ret as usize != size_of::<usize>()) {
         OxidallocError::SecurityViolation.log_and_abort(
             null_mut(),
             "Failed to initialize random number generator",
@@ -66,7 +72,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 
     const MIN_RESERVE: usize = CHUNK_SIZE;
     #[allow(non_snake_case)]
-    let MAX_SIZE: usize = if RESERVE.load(Ordering::Relaxed) > 3 {
+    let MAX_SIZE: usize = if likely(RESERVE.load(Ordering::Relaxed) > 3) {
         LATEST_TRIED.load(Ordering::Relaxed)
     } else {
         RESERVE.fetch_add(1, Ordering::Relaxed);
@@ -75,28 +81,26 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 
     let mut size = MAX_SIZE;
 
-    if MAX_SIZE < MIN_RESERVE {
+    if unlikely(MAX_SIZE < MIN_RESERVE) {
         size = MIN_RESERVE;
     }
 
     loop {
         let base_hint = BASE_HINT;
 
-        let probe = if BASE_INIT {
-            mmap_anonymous(
-                base_hint as *mut c_void,
-                size,
-                ProtFlags::empty(),
-                MapFlags::PRIVATE | MapFlags::NORESERVE | MapFlags::FIXED_NOREPLACE,
-            )
+        let flags = if BASE_INIT {
+            MapFlags::PRIVATE | MapFlags::NORESERVE | MapFlags::FIXED_NOREPLACE
         } else {
-            mmap_anonymous(
-                null_mut(),
-                size,
-                ProtFlags::empty(),
-                MapFlags::PRIVATE | MapFlags::NORESERVE,
-            )
+            MapFlags::PRIVATE | MapFlags::NORESERVE
         };
+
+        let target = if BASE_INIT {
+            base_hint as *mut c_void
+        } else {
+            null_mut()
+        };
+
+        let probe = mmap_anonymous(target, size, ProtFlags::empty(), flags);
 
         match probe {
             Ok(output) => {
@@ -104,7 +108,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
                     LATEST_TRIED.store(size, Ordering::Relaxed);
                 }
 
-                if !BASE_INIT {
+                if unlikely(!BASE_INIT) {
                     BASE_HINT = output as usize;
                     BASE_INIT = true;
                 } else {
@@ -116,7 +120,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
             Err(err) => {
                 if (size <= MIN_RESERVE) && !BASE_INIT {
                     OxidallocError::VAIinitFailed.log_and_abort(
-                        0 as *mut c_void,
+                        null_mut(),
                         "Init failed during Segment Allocation: No available VA reserve",
                         Some(err),
                     )
@@ -126,7 +130,6 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
                 }
 
                 BASE_HINT += size;
-
                 size /= 2;
             }
         }
@@ -136,13 +139,9 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 pub const BLOCK_SIZE: usize = 4096;
 pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
-// If you change the entires DO NOT FORGOT TO CHANGE CHUNK_SIZE and OX_MAX_RESERVATION, or else allocator will hoard the memory
 pub const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 
-// User can change to their CPUs supported size:
-// Zen 4>: 58/57bit
-// Zen <3: 48/47bit
-// Intel: you can find it on intels site
+// Zen 4>: 58/57bit | Zen <3: 48/47bit
 const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
 
 pub struct RadixTree {
@@ -160,7 +159,7 @@ impl RadixTree {
         ) {
             Ok(ptr) => ptr,
             Err(err) => OxidallocError::VAIinitFailed.log_and_abort(
-                null_mut() as *mut c_void,
+                null_mut(),
                 "Cannot allocate memory for RadixTree",
                 Some(err),
             ),
@@ -182,7 +181,7 @@ impl RadixTree {
 
         unsafe {
             for i in 0..count {
-                base.add(start_idx + i).write(seg_ptr as usize);
+                *base.add(start_idx + i) = seg_ptr as usize;
             }
         }
     }
@@ -207,7 +206,6 @@ impl RadixTree {
                 return true;
             }
         }
-
         false
     }
 }
@@ -249,10 +247,8 @@ impl VaBitmap {
         if unlikely(segment.is_null()) {
             return false;
         }
-        if addr >= (*segment).va_start && addr < (*segment).va_end {
-            return true;
-        }
-        false
+        let s = &*segment;
+        addr >= s.va_start && addr < s.va_end
     }
 
     pub unsafe fn grow(&mut self) -> Option<*mut Segment> {
@@ -264,7 +260,7 @@ impl VaBitmap {
             std::hint::spin_loop();
         }
 
-        if self.radix_tree.nodes.is_null() {
+        if unlikely(self.radix_tree.nodes.is_null()) {
             ONCE_PROTECTION.call_once(|| {
                 self.radix_tree = RadixTree::new();
             });
@@ -344,45 +340,46 @@ impl VaBitmap {
         Some(seg_ptr)
     }
 
+    #[inline(always)]
     pub unsafe fn alloc(&mut self, size: usize) -> Option<usize> {
-        if size == 0 {
+        if unlikely(size == 0) {
             return None;
         }
 
         let needed = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let hint_ptr = self.latest_segment.load(Ordering::Relaxed);
-        if !hint_ptr.is_null() {
+
+        if likely(!hint_ptr.is_null()) {
             let segment = &*hint_ptr;
             let res = if needed == 1 {
                 segment.alloc_single()
             } else {
                 segment.alloc_multi(needed)
             };
-            if res.is_some() {
+            if likely(res.is_some()) {
                 return res;
             }
         }
 
         let mut curr = self.map.load(Ordering::Acquire);
-        if curr.is_null() {
+        if unlikely(curr.is_null()) {
             ONCE.call_once(|| {
                 match self.grow() {
                     Some(new) => curr = new,
                     None => OxidallocError::VAIinitFailed.log_and_abort(
-                        null_mut() as *mut c_void,
+                        null_mut(),
                         "VA initialization failed during allocator start",
                         None,
                     ),
                 };
             });
-
             if curr.is_null() {
                 curr = self.map.load(Ordering::Acquire);
             }
         }
 
         while !curr.is_null() {
-            let segment = unsafe { &*curr };
+            let segment = &*curr;
             let res = if needed == 1 {
                 segment.alloc_single()
             } else {
@@ -393,7 +390,7 @@ impl VaBitmap {
                 self.latest_segment.store(curr, Ordering::Release);
                 return res;
             }
-            curr = unsafe { (*curr).next };
+            curr = (*curr).next;
         }
 
         let mut tried = 0usize;
@@ -420,14 +417,14 @@ impl VaBitmap {
     }
 
     pub unsafe fn free(&self, addr: usize, size: usize) {
-        if addr == 0 || size == 0 {
+        if unlikely(addr == 0 || size == 0) {
             return;
         }
 
         let segment = self.radix_tree.get_segment(addr);
         if likely(!segment.is_null()) {
             let s = &*segment;
-            if addr >= s.va_start && addr < s.va_end {
+            if likely(addr >= s.va_start && addr < s.va_end) {
                 s.free(addr, size);
                 return;
             }
@@ -453,9 +450,8 @@ impl VaBitmap {
         let segment = self.radix_tree.get_segment(addr);
         if likely(!segment.is_null()) {
             let s = &*segment;
-            if addr >= s.va_start && addr < s.va_end {
-                let va_size = s.realloc_inplace(addr, old_size, new_size);
-                return va_size;
+            if likely(addr >= s.va_start && addr < s.va_end) {
+                return s.realloc_inplace(addr, old_size, new_size);
             }
         }
 
@@ -463,8 +459,7 @@ impl VaBitmap {
         while !curr.is_null() {
             let s = &*curr;
             if addr >= s.va_start && addr < s.va_end {
-                let va_size = s.realloc_inplace(addr, old_size, new_size);
-                return va_size;
+                return s.realloc_inplace(addr, old_size, new_size);
             }
             curr = s.next;
         }
@@ -483,68 +478,112 @@ impl Segment {
         (self.va_end - self.va_start) / BLOCK_SIZE
     }
 
+    #[inline(always)]
     fn alloc_single(&self) -> Option<usize> {
         let map = unsafe { self.get_map() };
         let total_bits = self.max_bits();
-        if total_bits == 0 {
+        if unlikely(total_bits == 0) {
             return None;
         }
 
         let chunks = (total_bits + 63) / 64;
         let h = self.hint.load(Ordering::Relaxed);
         let r = alloc_random();
-        let start_chunk = (h + (r as usize & 0xFF)) % chunks;
+        let rand_blocks = (r as usize) & (MAX_RANDOM_BLOCKS - 1);
+        let start_chunk = (h * 64 + rand_blocks) / 64 % chunks;
         let last_valid_bits = total_bits % 64;
 
         for (range_start, range_end) in [(start_chunk, chunks), (0, start_chunk)] {
             for i in range_start..range_end {
                 let mut chunk = map[i].load(Ordering::Relaxed);
-                if i == chunks - 1 && last_valid_bits != 0 {
-                    chunk |= !((1u64 << last_valid_bits) - 1);
-                }
 
                 if chunk == u64::MAX {
                     continue;
                 }
 
-                let bit = (!chunk).trailing_zeros();
-                let mask = 1u64 << bit;
-
-                if (map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
-                    self.hint.store(i, Ordering::Relaxed);
-
-                    let global_idx = (i * 64) + bit as usize;
-                    if global_idx >= total_bits {
-                        map[i].fetch_and(!mask, Ordering::Release);
+                if i == chunks - 1 && last_valid_bits != 0 {
+                    chunk |= !((1u64 << last_valid_bits) - 1);
+                    if chunk == u64::MAX {
                         continue;
                     }
+                }
 
-                    let addr = self.va_start + (global_idx * BLOCK_SIZE);
-                    return Some(addr);
+                while chunk != u64::MAX {
+                    let bit = (!chunk).trailing_zeros();
+                    let mask = 1u64 << bit;
+
+                    if (map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
+                        self.hint.store(i, Ordering::Relaxed);
+
+                        let global_idx = (i * 64) + bit as usize;
+                        if unlikely(global_idx >= total_bits) {
+                            map[i].fetch_and(!mask, Ordering::Release);
+                            break;
+                        }
+
+                        return Some(self.va_start + (global_idx * BLOCK_SIZE));
+                    }
+                    chunk |= mask;
                 }
             }
         }
         None
     }
 
+    #[inline(always)]
     fn alloc_multi(&self, count: usize) -> Option<usize> {
         let map = unsafe { self.get_map() };
         let total_bits = self.max_bits();
-        if total_bits == 0 || count > total_bits {
+        if unlikely(total_bits == 0 || count > total_bits) {
             return None;
         }
 
         let h = self.hint.load(Ordering::Relaxed);
         let r = alloc_random();
-        let start_bit = (h * 64 + (r & 0x3FF)) % total_bits;
+        let rand_bits = (r as usize) & (MAX_RANDOM_BLOCKS - 1);
+        let start_bit = (h * 64 + rand_bits) % total_bits;
 
         for (range_start, range_end) in [(start_bit, total_bits), (0, start_bit)] {
-            let mut current_run = 0;
-            let mut run_start = 0;
+            let mut current_run = 0usize;
+            let mut run_start = 0usize;
+            let mut global_bit = range_start;
 
-            for global_bit in range_start..range_end {
-                let chunk = map[global_bit / 64].load(Ordering::Relaxed);
-                if (chunk & (1u64 << (global_bit % 64))) != 0 {
+            while global_bit < range_end {
+                let chunk_idx = global_bit / 64;
+                let bit_in_chunk = global_bit % 64;
+
+                let chunk = map[chunk_idx].load(Ordering::Relaxed);
+
+                if bit_in_chunk == 0 && chunk == 0 {
+                    let remaining_in_range = range_end - global_bit;
+                    let skip = 64.min(remaining_in_range);
+
+                    if current_run == 0 {
+                        run_start = global_bit;
+                    }
+                    current_run += skip;
+
+                    if current_run >= count {
+                        if self.try_claim(run_start, count) {
+                            self.hint.store(run_start / 64, Ordering::Relaxed);
+                            return Some(self.va_start + (run_start * BLOCK_SIZE));
+                        }
+                        current_run = 0;
+                        global_bit += 1;
+                        continue;
+                    }
+
+                    global_bit += skip;
+                    continue;
+                }
+
+                if chunk == u64::MAX {
+                    current_run = 0;
+                    global_bit = (chunk_idx + 1) * 64;
+                    continue;
+                }
+
+                if (chunk & (1u64 << bit_in_chunk)) != 0 {
                     current_run = 0;
                 } else {
                     if current_run == 0 {
@@ -560,16 +599,44 @@ impl Segment {
                         current_run = 0;
                     }
                 }
+                global_bit += 1;
+            }
+
+            if range_start == 0 && range_end == start_bit && current_run > 0 {
+                let carry_start = run_start;
+                let carry_len = current_run;
+                let mut extend = 0usize;
+                let need = count.saturating_sub(carry_len);
+
+                if need > 0 {
+                    let mut b = start_bit;
+                    while b < total_bits && extend < need {
+                        let chunk = map[b / 64].load(Ordering::Relaxed);
+                        if (chunk & (1u64 << (b % 64))) != 0 {
+                            break;
+                        }
+                        extend += 1;
+                        b += 1;
+                    }
+                }
+
+                if carry_len + extend >= count {
+                    if self.try_claim(carry_start, count) {
+                        self.hint.store(carry_start / 64, Ordering::Relaxed);
+                        return Some(self.va_start + (carry_start * BLOCK_SIZE));
+                    }
+                }
             }
         }
         None
     }
 
+    #[inline(always)]
     fn try_claim(&self, start_idx: usize, count: usize) -> bool {
         let map = unsafe { self.get_map() };
         let total_bits = self.max_bits();
 
-        if start_idx + count > total_bits {
+        if unlikely(start_idx + count > total_bits) {
             return false;
         }
 
@@ -587,6 +654,7 @@ impl Segment {
         true
     }
 
+    #[inline(always)]
     fn rollback(&self, start_idx: usize, count: usize) {
         let map = unsafe { self.get_map() };
         for k in 0..count {
@@ -599,18 +667,18 @@ impl Segment {
     pub fn free(&self, addr: usize, size: usize) {
         let start = self.va_start;
         let end = self.va_end;
-        if addr < start || addr >= end {
+        if unlikely(addr < start || addr >= end) {
             return;
         }
 
         let total_bits = self.max_bits();
-        if total_bits == 0 {
+        if unlikely(total_bits == 0) {
             return;
         }
 
         let offset = addr - start;
         let start_idx = offset / BLOCK_SIZE;
-        if start_idx >= total_bits {
+        if unlikely(start_idx >= total_bits) {
             return;
         }
 
@@ -622,7 +690,8 @@ impl Segment {
         self.rollback(start_idx, count);
 
         let chunk = start_idx / 64;
-        if chunk < self.hint.load(Ordering::Relaxed) {
+        let current_hint = self.hint.load(Ordering::Relaxed);
+        if chunk < current_hint {
             self.hint.store(chunk, Ordering::Relaxed);
         }
     }
@@ -670,15 +739,13 @@ mod tests {
             let size_1 = [1024 * 1024 * 1024 * 3, 1024 * 1024 * 1024 * 2];
             let mut adresses = Vec::new();
 
-            // Expect this to be fail after 80-90 Iterations or sometimes <50 iterations or never fails | depends
-            // this is only tests how allocator can handle non-used-
-            // (if VA used before kernel wont touch these pages ever again so do not expect this to be fail under real load) VA segments
             for i in 0..256 {
-                eprintln!("Segmentation Edge Case test loop: {}", i);
+                let addr = VA_MAP.alloc(size_1[i % 2]).expect(&format!(
+                    "Failed to allocate {}b, loop: {}",
+                    size_1[i % 2],
+                    i
+                ));
 
-                let addr = VA_MAP
-                    .alloc(size_1[i % 2])
-                    .expect(&format!("Failed to allocate {}b", size_1[i % 2]));
                 assert!(
                     VA_MAP.is_ours(addr),
                     "Address is not ours, size: {}",

@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use libc::size_t;
 
 use crate::{
@@ -129,34 +127,4 @@ pub unsafe extern "C" fn free_sized(ptr: *mut c_void, _: size_t) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_aligned_sized(ptr: *mut c_void, _: size_t, _: size_t) {
     free(ptr);
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{hint::black_box, time::Instant};
-
-    use crate::abi::malloc::malloc;
-
-    use super::*;
-
-    #[test]
-    fn test_free_only_speed() {
-        unsafe {
-            const N: usize = 1_000;
-            let mut ptrs = Vec::with_capacity(N);
-
-            for _ in 0..N {
-                ptrs.push(malloc(64));
-            }
-
-            let start = Instant::now();
-            for p in ptrs {
-                black_box(free(p));
-            }
-            let end = Instant::now();
-
-            let ns = end.duration_since(start).as_nanos() as f64 / N as f64;
-            println!("free only: {:.2} ns/op", ns);
-        }
-    }
 }

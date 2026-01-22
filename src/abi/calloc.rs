@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use crate::{HEADER_SIZE, OxHeader, abi::malloc::malloc};
 use libc::{__errno_location, ENOMEM, size_t};
 use std::{alloc::Layout, os::raw::c_void, ptr::null_mut};

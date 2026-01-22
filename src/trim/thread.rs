@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
     time::Duration,

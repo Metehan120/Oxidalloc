@@ -1,4 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
 use std::{
     os::raw::c_void,
     ptr::null_mut,

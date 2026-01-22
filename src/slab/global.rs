@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use crate::{
     MAX_NUMA_NODES, OxHeader, REAL_NUMA_NODES,
     slab::{NUM_SIZE_CLASSES, xor_ptr_numa},

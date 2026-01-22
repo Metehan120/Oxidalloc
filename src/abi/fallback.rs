@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use libc::{RTLD_NEXT, c_char, c_void, dlsym, size_t};
 use std::{
     ptr::null_mut,

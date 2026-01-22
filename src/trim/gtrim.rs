@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use rustix::mm::{Advice, madvise};

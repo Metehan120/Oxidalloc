@@ -1,13 +1,15 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use libc::{__errno_location, size_t};
-use rustix::mm::{MremapFlags, mremap};
+use rustix::mm::{Advice, MprotectFlags, madvise, mprotect};
 use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    HAS_ALIGNED_PAGES, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader,
-    abi::{fallback::realloc_fallback, free::free, malloc::malloc},
-    slab::match_size_class,
+    HAS_ALIGNED_PAGES, HEADER_SIZE, OX_ALIGN_TAG, OxHeader,
+    abi::{
+        fallback::realloc_fallback,
+        free::free,
+        malloc::{malloc, validate_ptr},
+    },
+    slab::{ITERATIONS, SIZE_CLASSES, match_size_class},
     va::{align_to, bitmap::VA_MAP, is_ours},
 };
 
@@ -47,69 +49,112 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
     let header = (raw_ptr as *mut OxHeader).sub(1);
 
-    if (*header).magic != MAGIC && (*header).magic != 0 {
-        return null_mut();
-    }
+    validate_ptr(header);
 
     let raw_capacity = (*header).size as usize;
     let old_capacity = raw_capacity.saturating_sub(offset);
 
-    if new_size <= old_capacity {
-        return ptr;
-    }
-
-    let old_class = match_size_class(raw_capacity);
+    let old_class = (*header).class;
     let new_class = match_size_class(new_size);
+    let it = if old_class != 100 {
+        ITERATIONS[old_class as usize]
+    } else {
+        1000
+    };
 
-    if let (Some(old), Some(new)) = (old_class, new_class) {
-        if old == new {
+    if let Some(new) = new_class {
+        if old_class as usize == new {
             return ptr;
         }
     }
 
-    if old_class.is_none() {
-        let old_total = align_to(raw_capacity + HEADER_SIZE, 4096);
-        let new_total = align_to(new_size + HEADER_SIZE, 4096);
+    if old_class == 100 || it == 1 {
+        let is_big = old_class == 100;
+        let is_big_new = new_class.unwrap_or(100) == 100;
+
+        let old_total = if is_big {
+            align_to(raw_capacity + HEADER_SIZE, 4096)
+        } else {
+            align_to(raw_capacity + HEADER_SIZE, 16)
+        };
+
+        let size;
+
+        let new_total = if is_big_new {
+            size = new_size;
+            align_to(new_size + HEADER_SIZE, 4096)
+        } else {
+            let new_class = match_size_class(new_size);
+            if let Some(class) = new_class {
+                size = SIZE_CLASSES[class];
+                align_to(SIZE_CLASSES[class] + HEADER_SIZE, 16)
+            } else {
+                size = new_size;
+                align_to(new_size + HEADER_SIZE, 4096)
+            }
+        };
+
+        let new_class = match_size_class(size).unwrap_or(100) as u8;
 
         if new_total == old_total {
-            (*header).size = new_size;
+            (*header).class = new_class;
+            (*header).size = size;
             return ptr;
         }
 
         if new_total < old_total {
-            if mremap(
-                header as *mut c_void,
-                old_total,
-                new_total,
-                MremapFlags::empty(),
-            )
-            .is_ok()
-            {
-                VA_MAP.free((header as usize) + new_total, old_total - new_total);
-            };
+            let freed_start = align_to((header as usize) + new_total, 4096);
+            let freed_len = old_total - new_total;
 
-            (*header).size = new_size;
+            if freed_start & 4095 == 0 && freed_len & 4095 == 0 {
+                let is_ok =
+                    madvise(freed_start as *mut c_void, freed_len, Advice::LinuxDontNeed).is_ok();
+
+                if is_ok {
+                    let _ = mprotect(
+                        freed_start as *mut c_void,
+                        freed_len,
+                        MprotectFlags::empty(),
+                    );
+
+                    VA_MAP.free(freed_start, freed_len);
+
+                    (*header).class = new_class;
+                    (*header).size = size;
+                };
+            }
+
             return ptr;
         }
 
-        if let Some(actual_new_va_size) =
-            VA_MAP.realloc_inplace(header as usize, old_total, new_total)
-        {
-            let resmap_res = mremap(
-                header as *mut c_void,
-                old_total,
-                actual_new_va_size,
-                MremapFlags::empty(),
-            );
+        if let Some(actual_new_va_size) = VA_MAP.realloc_inplace(
+            header as usize,
+            align_to(raw_capacity + HEADER_SIZE, 4096),
+            align_to(size + HEADER_SIZE, 4096),
+        ) {
+            let grow_start = align_to((header as usize) + old_total, 4096);
+            let grow_len = actual_new_va_size - old_total;
 
-            if resmap_res.is_ok() {
-                (*header).size = new_size;
-                return ptr;
-            } else {
-                VA_MAP.free(
-                    (header as usize) + old_total,
-                    actual_new_va_size - old_total,
-                );
+            // Use match for future debuging
+            match mprotect(
+                grow_start as *mut c_void,
+                grow_len,
+                MprotectFlags::READ | MprotectFlags::WRITE,
+            ) {
+                Ok(_) => {
+                    (*header).class = new_class;
+                    (*header).size = size;
+
+                    return ptr;
+                }
+                Err(_) => {
+                    let rollback_start = (header as usize) + old_total;
+                    let rollback_len = actual_new_va_size - old_total;
+
+                    if rollback_start & 4095 == 0 && rollback_len & 4095 == 0 {
+                        VA_MAP.free(rollback_start, rollback_len);
+                    }
+                }
             }
         }
     }

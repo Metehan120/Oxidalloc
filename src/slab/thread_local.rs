@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 #[cfg(feature = "hardened-linked-list")]
 use libc::getrandom;
 use libc::pthread_setspecific;

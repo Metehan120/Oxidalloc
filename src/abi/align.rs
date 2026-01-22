@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use libc::size_t;
 use std::{
     os::raw::{c_int, c_void},

@@ -1,7 +1,7 @@
 # Current branch status:
 - NUMA-awareness
 - Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled.
-- TLS usage caps (Max 128KB) - No more memory growing non-stop
+- TLS usage caps (Max 128KB per class) - No more memory growing non-stop
 - Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
 - Lazy block initialization for better RSS (Extreme drops of memory usage on some workloads)
 - Removed self-healing path
@@ -14,16 +14,21 @@
 - Kernel Edge Case handling
 - More robust segmentation handling
 - Removed PTRIM, no more need after TLS caps
+- Added inplace realloc growth
+- Official stress test suite (from hell)
 - Many preps before Alpha release
 
 # Optimizations:
-- Optimized free paths
+- **Optimized realloc path / now extremely faster**
+- **Optimized Bitmap**
+- **Optimized free paths**
 - Optimized malloc paths
 - Optimized aligned block (posix-memalign) handling
 - Optimized TLS
 - Optimized Global
 - Improved memory usage based on TLS caps and segment handling
 
+  
 # Current VA Handling:
 # Verified: VA management and Radix Tree bookkeeping stress-tested up to 13TB.
 - Able to handle ~300–500 GB of virtual address space under pathological worst-case conditions without crashing or corrupting state.
@@ -43,11 +48,5 @@
   * Kernel fragmentation pressure drops significantly.
   * Effective VA capacity is higher and more stable than worst-case tests.
 
-# Found bugs:
-- Data race or Corruption in Global / Fixed
-
 # Allocation speed of this branch:
 - Free + Malloc <= 7/8ns
-
-# Known Incompatibilities:
-- rust-analyzer abort or panic or sigsev after a while / should be fixed after edge case handling

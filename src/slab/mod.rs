@@ -1,4 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
 use std::{hint::unlikely, sync::OnceLock};
 
 use crate::{HEADER_SIZE, OxHeader, va::align_to};

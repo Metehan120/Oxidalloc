@@ -1,5 +1,6 @@
 #![warn(clippy::nursery, clippy::pedantic)]
 #![allow(static_mut_refs)]
+#![allow(unsafe_op_in_unsafe_fn)]
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 #![feature(native_link_modifiers_as_needed)]
