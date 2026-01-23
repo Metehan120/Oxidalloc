@@ -1,8 +1,8 @@
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+#[cfg(any(target_os = "linux"))]
 mod syscall_unix;
 
 #[allow(unused)]
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+#[cfg(any(target_os = "linux"))]
 mod unix {
     use rustix::{
         io::Errno,
