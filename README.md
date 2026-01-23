@@ -2,10 +2,9 @@
 
 A pure Rust general-purpose memory allocator designed to be used as a malloc replacement via `LD_PRELOAD`.
 
+## Big Announcement: The first alpha release is coming soon — in the next few weeks (Around February 2026).
 ## Alpha Milestone Update
 ### Core development is nearly complete. Oxidalloc now features a stable LD_PRELOAD backend and optimized Linux system abstractions.  Active development on final Alpha features is currently occurring in the new-features branch.
-
-## Big Announcement: The first alpha release is coming soon — in the next few weeks (Around February 2026).
 
 ## **Huge Update**: Oxidalloc now comes with many contention fixes, lock-free paths, improved performance and more.
 ## This update includes:
