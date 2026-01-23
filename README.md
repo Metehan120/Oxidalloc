@@ -1,6 +1,6 @@
 # Current branch status:
 - NUMA-awareness
-- Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled.
+- Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled. (***WARNING***: This mode is not audiated yet, use at your own risk)
 - TLS usage caps (Max 128KB per class) - No more memory growing non-stop
 - Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
 - Lazy block initialization for better RSS behavior
