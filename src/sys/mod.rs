@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
 mod syscall_unix;
 
 #[allow(unused)]
