@@ -20,6 +20,7 @@
   * tls-model=initial-exec
   * link-arg=-Wl,-z,now
   - Expect 1.5-2x better performance
+- Internal syscall abstractions for future compatibility works
 - Many preps before Alpha release
 
 # Optimizations:
