@@ -1,14 +1,14 @@
 use crate::{
     OX_MAX_RESERVATION, OxidallocError,
+    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory},
     va::{align_to, bootstrap::boot_strap},
 };
 use libc::getrandom;
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous};
 use std::{
     hint::{likely, unlikely},
     mem::size_of,
     os::raw::c_void,
-    ptr::{null_mut, write, write_bytes},
+    ptr::{null_mut, write},
     sync::{
         Once,
         atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
@@ -89,9 +89,9 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
         let base_hint = BASE_HINT;
 
         let flags = if BASE_INIT {
-            MapFlags::PRIVATE | MapFlags::NORESERVE | MapFlags::FIXED_NOREPLACE
+            MemoryFlags::PRIVATE | MemoryFlags::NORESERVE | MemoryFlags::FIXED_NOREPLACE
         } else {
-            MapFlags::PRIVATE | MapFlags::NORESERVE
+            MemoryFlags::PRIVATE | MemoryFlags::NORESERVE
         };
 
         let target = if BASE_INIT {
@@ -100,7 +100,14 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
             null_mut()
         };
 
-        let probe = mmap_anonymous(target, size, ProtFlags::empty(), flags);
+        let probe = mmap_memory(
+            target,
+            size,
+            MMapFlags {
+                prot: MProtFlags::NONE,
+                map: flags,
+            },
+        );
 
         match probe {
             Ok(output) => {
@@ -151,11 +158,14 @@ pub struct RadixTree {
 impl RadixTree {
     pub unsafe fn new() -> Self {
         let size = ENTRIES * size_of::<usize>();
-        let ptr = match mmap_anonymous(
+
+        let ptr = match mmap_memory(
             null_mut(),
             size,
-            ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::PRIVATE,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
         ) {
             Ok(ptr) => ptr,
             Err(err) => OxidallocError::VAIinitFailed.log_and_abort(
@@ -164,8 +174,6 @@ impl RadixTree {
                 Some(err),
             ),
         };
-
-        write_bytes(ptr, 0, size);
 
         Self {
             nodes: ptr as *mut usize,
@@ -285,11 +293,13 @@ impl VaBitmap {
         let map_len = (bit_count + 63) / 64;
         let map_bytes = map_len * size_of::<u64>();
 
-        let map_raw = match mmap_anonymous(
+        let map_raw = match mmap_memory(
             null_mut(),
             map_bytes,
-            ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::PRIVATE,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
         ) {
             Ok(ptr) => ptr,
             Err(_) => {
@@ -298,11 +308,13 @@ impl VaBitmap {
             }
         };
 
-        let seg_ptr = match mmap_anonymous(
+        let seg_ptr = match mmap_memory(
             null_mut(),
             size_of::<Segment>(),
-            ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::PRIVATE,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
         ) {
             Ok(ptr) => ptr as *mut Segment,
             Err(_) => {
@@ -680,7 +692,7 @@ impl Segment {
             return;
         }
 
-        let mut count = (size / BLOCK_SIZE) + usize::from(size.is_multiple_of(8));
+        let mut count = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         if start_idx + count > total_bits {
             count = total_bits - start_idx;
         }

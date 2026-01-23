@@ -1,7 +1,9 @@
-use rustix::mm::{Advice, MapFlags, MprotectFlags, ProtFlags, madvise, mmap_anonymous, mprotect};
-
 use crate::{
     FREED_MAGIC, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
+    sys::memory_system::{
+        MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, madvise, mmap_memory,
+        protect_memory,
+    },
     va::{align_to, bitmap::VA_MAP},
 };
 use std::{
@@ -19,19 +21,21 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         None => return null_mut(),
     };
 
-    let is_err = mprotect(
+    let is_err = protect_memory(
         hint as *mut c_void,
         aligned_total,
-        MprotectFlags::WRITE | MprotectFlags::READ,
+        RMProtFlags::WRITE | RMProtFlags::READ,
     )
     .is_err();
 
     let actual_ptr = if is_err {
-        match mmap_anonymous(
+        match mmap_memory(
             hint as *mut c_void,
             aligned_total,
-            ProtFlags::WRITE | ProtFlags::READ,
-            MapFlags::PRIVATE | MapFlags::FIXED,
+            MMapFlags {
+                prot: MProtFlags::WRITE | MProtFlags::READ,
+                map: MemoryFlags::PRIVATE | MemoryFlags::FIXED,
+            },
         ) {
             Ok(ptr) => ptr,
             Err(_) => {
@@ -47,7 +51,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         let _ = madvise(
             actual_ptr as *mut c_void,
             aligned_total,
-            Advice::LinuxHugepage,
+            MadviseFlags::HUGEPAGE,
         );
     }
 
@@ -75,13 +79,13 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
     // Make the header look free before we potentially lose write access.
     (*header).magic = FREED_MAGIC;
 
-    let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
+    let is_failed = madvise(header as *mut c_void, total_size, MadviseFlags::DONTNEED);
     if is_failed.is_err() {
         // Security: Zero out the memory before freeing it so it wont leak the info
         write_bytes(header as *mut u8, 0, total_size);
     }
 
-    let _ = mprotect(header as *mut c_void, total_size, MprotectFlags::empty());
+    let _ = protect_memory(header as *mut c_void, total_size, RMProtFlags::NONE);
 
     VA_MAP.free(header as usize, total_size);
 }

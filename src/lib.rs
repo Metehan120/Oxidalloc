@@ -14,7 +14,6 @@
 #![feature(likely_unlikely)]
 #![feature(native_link_modifiers_as_needed)]
 
-use rustix::io::Errno;
 use std::{
     fmt::Debug,
     sync::{
@@ -25,9 +24,12 @@ use std::{
     usize,
 };
 
+use crate::sys::memory_system::SysErr;
+
 pub mod abi;
 pub mod big_allocation;
 pub mod slab;
+pub mod sys;
 pub mod trim;
 pub mod va;
 
@@ -129,7 +131,7 @@ impl OxidallocError {
         &self,
         ptr: *mut std::ffi::c_void,
         extra: &str,
-        errno: Option<Errno>,
+        errno: Option<SysErr>,
     ) -> ! {
         if let Some(errno) = errno {
             eprintln!(
@@ -137,7 +139,7 @@ impl OxidallocError {
                 self,
                 ptr,
                 extra,
-                errno.raw_os_error()
+                errno.get_errno()
             );
         } else {
             eprintln!("[OXIDALLOC FATAL] {:?} at ptr={:p} | {}", self, ptr, extra);

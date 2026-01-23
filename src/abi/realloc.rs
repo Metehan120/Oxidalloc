@@ -1,5 +1,4 @@
 use libc::{__errno_location, size_t};
-use rustix::mm::{Advice, MprotectFlags, madvise, mprotect};
 use std::{os::raw::c_void, ptr::null_mut};
 
 use crate::{
@@ -10,6 +9,7 @@ use crate::{
         malloc::{malloc, validate_ptr},
     },
     slab::{ITERATIONS, SIZE_CLASSES, match_size_class},
+    sys::memory_system::{MadviseFlags, RMProtFlags, madvise, protect_memory},
     va::{align_to, bitmap::VA_MAP, is_ours},
 };
 
@@ -105,15 +105,16 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
             let freed_len = old_total - new_total;
 
             if freed_start & 4095 == 0 && freed_len & 4095 == 0 {
-                let is_ok =
-                    madvise(freed_start as *mut c_void, freed_len, Advice::LinuxDontNeed).is_ok();
+                let is_ok = madvise(
+                    freed_start as *mut c_void,
+                    freed_len,
+                    MadviseFlags::DONTNEED,
+                )
+                .is_ok();
 
                 if is_ok {
-                    let _ = mprotect(
-                        freed_start as *mut c_void,
-                        freed_len,
-                        MprotectFlags::empty(),
-                    );
+                    let _ =
+                        protect_memory(freed_start as *mut c_void, freed_len, RMProtFlags::NONE);
 
                     VA_MAP.free(freed_start, freed_len);
 
@@ -134,10 +135,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
             let grow_len = actual_new_va_size - old_total;
 
             // Use match for future debuging
-            match mprotect(
+            match protect_memory(
                 grow_start as *mut c_void,
                 grow_len,
-                MprotectFlags::READ | MprotectFlags::WRITE,
+                RMProtFlags::READ | RMProtFlags::WRITE,
             ) {
                 Ok(_) => {
                     (*header).class = new_class;

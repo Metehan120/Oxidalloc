@@ -1,7 +1,6 @@
 #[cfg(feature = "hardened-linked-list")]
 use libc::getrandom;
 use libc::pthread_setspecific;
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
     hint::{likely, unlikely},
     os::raw::c_void,
@@ -15,6 +14,7 @@ use std::{
 use crate::{
     MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
+    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     va::is_ours,
 };
 
@@ -93,17 +93,19 @@ impl ThreadLocalEngine {
     pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
         let total_size = size_of::<ThreadLocalEngine>();
 
-        let cache = mmap_anonymous(
+        let cache = mmap_memory(
             null_mut(),
             total_size,
-            ProtFlags::READ | ProtFlags::WRITE,
-            MapFlags::PRIVATE,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
         )
-        .unwrap_or_else(|err| {
+        .unwrap_or_else(|_| {
             OxidallocError::PThreadCacheFailed.log_and_abort(
                 null_mut(),
                 "PThread cache creation failed: errno({})",
-                Some(err),
+                None,
             )
         }) as *mut ThreadLocalEngine;
 
@@ -143,15 +145,6 @@ impl ThreadLocalEngine {
                 xor_key: rand,
             },
         );
-
-        #[cfg(feature = "hardened-linked-list")]
-        {
-            let _ = rustix::mm::madvise(
-                cache as *mut c_void,
-                total_size,
-                rustix::mm::Advice::LinuxDontDump,
-            );
-        }
 
         pthread_setspecific(key, cache as *mut c_void);
         TLS = cache;
@@ -298,14 +291,14 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
 
     let total_size = size_of::<ThreadLocalEngine>();
 
-    let _ = munmap(cache_ptr, total_size);
+    let _ = unmap_memory(cache_ptr, total_size);
 }
 
 #[cfg(test)]
 mod tests {
     use std::{hint::black_box, time::Instant};
 
-    use crate::FREED_MAGIC;
+    use crate::{FREED_MAGIC, sys::memory_system::MProtFlags};
 
     use super::*;
 
@@ -314,11 +307,13 @@ mod tests {
         unsafe {
             let tls = ThreadLocalEngine::get_or_init();
             let start = Instant::now();
-            let header = mmap_anonymous(
+            let header = mmap_memory(
                 null_mut(),
                 size_of::<OxHeader>(),
-                ProtFlags::READ | ProtFlags::WRITE,
-                MapFlags::PRIVATE,
+                MMapFlags {
+                    prot: MProtFlags::READ | MProtFlags::WRITE,
+                    map: MemoryFlags::PRIVATE,
+                },
             )
             .unwrap() as *mut OxHeader;
             std::ptr::write(

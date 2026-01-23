@@ -3,8 +3,6 @@ use std::{
     ptr::{null_mut, write},
 };
 
-use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
-
 use crate::{
     Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader,
     OxidallocError,
@@ -12,6 +10,7 @@ use crate::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, global::GlobalHandler,
         thread_local::ThreadLocalEngine,
     },
+    sys::memory_system::{MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, madvise, mmap_memory},
     va::{align_to, bitmap::VA_MAP},
 };
 
@@ -108,11 +107,13 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
         )
     });
 
-    let mem = mmap_anonymous(
+    let mem = mmap_memory(
         hint as *mut c_void,
         total,
-        ProtFlags::WRITE | ProtFlags::READ,
-        MapFlags::PRIVATE | MapFlags::FIXED,
+        MMapFlags {
+            prot: MProtFlags::WRITE | MProtFlags::READ,
+            map: MemoryFlags::PRIVATE | MemoryFlags::FIXED,
+        },
     )
     .map_err(|_| {
         VA_MAP.free(hint, total);
@@ -130,7 +131,7 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
     );
 
     if class == NUM_SIZE_CLASSES && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = madvise(mem, total, Advice::LinuxHugepage);
+        let _ = madvise(mem, total, MadviseFlags::HUGEPAGE);
     }
 
     let (head, tail, count) = init_blocks(

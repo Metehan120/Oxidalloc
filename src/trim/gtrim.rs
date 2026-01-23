@@ -1,7 +1,5 @@
 use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use rustix::mm::{Advice, madvise};
-
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, FREED_MAGIC, HEADER_SIZE, MAX_NUMA_NODES, OX_CURRENT_STAMP,
     OxHeader, OxidallocError,
@@ -9,6 +7,7 @@ use crate::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL, GlobalHandler},
     },
+    sys::memory_system::{MadviseFlags, madvise},
     trim::{
         TimeDecay,
         thread::{GLOBAL_DECAY, LAST_PRESSURE_CHECK},
@@ -159,7 +158,7 @@ impl GTrim {
             }
             let length = page_end - page_start;
 
-            let _ = madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed);
+            let _ = madvise(page_start as *mut c_void, length, MadviseFlags::DONTNEED);
         }
     }
 }

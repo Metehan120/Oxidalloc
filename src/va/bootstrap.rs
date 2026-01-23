@@ -8,8 +8,6 @@ use std::{
 };
 
 use libc::getrandom;
-#[cfg(feature = "hardened-linked-list")]
-use rustix::mm::{Advice, madvise};
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
@@ -105,12 +103,6 @@ pub(crate) unsafe fn init_random_numa() {
         for key in rand.iter_mut() {
             *key &= !TAG_MASK;
         }
-
-        let _ = madvise(
-            PER_NUMA_KEY.as_ptr() as *mut c_void,
-            size_of::<usize>() * MAX_NUMA_NODES,
-            Advice::LinuxDontDump,
-        );
 
         PER_NUMA_KEY = rand;
     }
