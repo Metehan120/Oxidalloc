@@ -48,7 +48,7 @@ unsafe fn init_blocks(
             OxHeader {
                 next: head,
                 size: payload_size,
-                class: class,
+                class,
                 magic: FREED_MAGIC,
                 life_time: current_stamp,
             },

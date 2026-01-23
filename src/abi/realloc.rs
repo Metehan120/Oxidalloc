@@ -1,9 +1,9 @@
 use libc::{__errno_location, size_t};
 use rustix::mm::{Advice, MprotectFlags, madvise, mprotect};
-use std::{os::raw::c_void, ptr::null_mut, sync::atomic::Ordering};
+use std::{os::raw::c_void, ptr::null_mut};
 
 use crate::{
-    HAS_ALIGNED_PAGES, HEADER_SIZE, OX_ALIGN_TAG, OxHeader,
+    HEADER_SIZE, OX_ALIGN_TAG, OxHeader,
     abi::{
         fallback::realloc_fallback,
         free::free,
@@ -37,13 +37,11 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
     let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
 
-    if HAS_ALIGNED_PAGES.load(Ordering::Relaxed) {
-        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-            if is_ours(presumed_original_ptr as usize) {
-                raw_ptr = presumed_original_ptr;
-                offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
-            }
+    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+        if is_ours(presumed_original_ptr as usize) {
+            raw_ptr = presumed_original_ptr;
+            offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
         }
     }
 

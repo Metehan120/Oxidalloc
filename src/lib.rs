@@ -1,6 +1,15 @@
 #![warn(clippy::nursery, clippy::pedantic)]
-#![allow(static_mut_refs)]
-#![allow(unsafe_op_in_unsafe_fn)]
+#![allow(
+    static_mut_refs,
+    unsafe_op_in_unsafe_fn,
+    clippy::ptr_as_ptr,
+    clippy::inline_always,
+    clippy::new_without_default,
+    clippy::ref_as_ptr,
+    clippy::cast_ptr_alignment,
+    clippy::module_name_repetitions,
+    clippy::use_self
+)]
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 #![feature(native_link_modifiers_as_needed)]
@@ -46,7 +55,6 @@ pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
 pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
-pub static HAS_ALIGNED_PAGES: AtomicBool = AtomicBool::new(false);
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
@@ -100,18 +108,18 @@ pub enum OxidallocError {
 impl Debug for OxidallocError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OxidallocError::DoubleFree => write!(f, "DoubleFree (0x1000)"),
-            OxidallocError::MemoryCorruption => write!(f, "MemoryCorruption (0x1001)"),
-            OxidallocError::InvalidSize => write!(f, "InvalidSize (0x1002)"),
-            OxidallocError::OutOfMemory => write!(f, "OutOfMemory (0x1003)"),
-            OxidallocError::VaBitmapExhausted => write!(f, "VaBitmapExhausted (0x1004)"),
-            OxidallocError::VAIinitFailed => write!(f, "VAIinitFailed (0x1005)"),
-            OxidallocError::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
-            OxidallocError::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
-            OxidallocError::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
-            OxidallocError::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
-            OxidallocError::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
-            OxidallocError::AttackOrCorruption => write!(f, "AttackOrCorruption (0x100B)"),
+            Self::DoubleFree => write!(f, "DoubleFree (0x1000)"),
+            Self::MemoryCorruption => write!(f, "MemoryCorruption (0x1001)"),
+            Self::InvalidSize => write!(f, "InvalidSize (0x1002)"),
+            Self::OutOfMemory => write!(f, "OutOfMemory (0x1003)"),
+            Self::VaBitmapExhausted => write!(f, "VaBitmapExhausted (0x1004)"),
+            Self::VAIinitFailed => write!(f, "VAIinitFailed (0x1005)"),
+            Self::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
+            Self::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
+            Self::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
+            Self::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
+            Self::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
+            Self::AttackOrCorruption => write!(f, "AttackOrCorruption (0x100B)"),
         }
     }
 }

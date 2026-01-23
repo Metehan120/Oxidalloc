@@ -39,7 +39,7 @@ pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
         unsafe {
             let header = (ptr as *mut u8).sub(HEADER_SIZE) as *mut OxHeader;
 
-            let actual_size = (*header).size as usize;
+            let actual_size = (*header).size;
             std::ptr::write_bytes(ptr as *mut u8, 0, actual_size.min(effective_size));
         }
     }

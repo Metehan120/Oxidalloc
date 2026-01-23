@@ -1,8 +1,7 @@
 use libc::size_t;
 
 use crate::{
-    FREED_MAGIC, HAS_ALIGNED_PAGES, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader,
-    OxidallocError,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     abi::{
         fallback::free_fallback,
         malloc::{HOT_READY, TOTAL_MALLOC_FREE},
@@ -82,15 +81,13 @@ unsafe fn free_fast(ptr: *mut c_void) {
     }
 
     let mut header_search_ptr = ptr;
-    if HAS_ALIGNED_PAGES.load(Ordering::Relaxed) {
-        let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+    let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
 
-        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-            let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
-            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-            if is_ours(presumed_original_ptr as usize) {
-                header_search_ptr = presumed_original_ptr;
-            }
+    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+        if is_ours(presumed_original_ptr as usize) {
+            header_search_ptr = presumed_original_ptr;
         }
     }
 
@@ -125,7 +122,6 @@ unsafe fn free_boot_segment(ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-// If we seperate free nothing will change much, free can stay naked for now
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if likely(HOT_READY) {
         free_fast(ptr);

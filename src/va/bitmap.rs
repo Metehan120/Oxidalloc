@@ -474,7 +474,7 @@ impl Segment {
     }
 
     #[inline(always)]
-    fn max_bits(&self) -> usize {
+    const fn max_bits(&self) -> usize {
         (self.va_end - self.va_start) / BLOCK_SIZE
     }
 
@@ -489,7 +489,7 @@ impl Segment {
         let chunks = (total_bits + 63) / 64;
         let h = self.hint.load(Ordering::Relaxed);
         let r = alloc_random();
-        let rand_blocks = (r as usize) & (MAX_RANDOM_BLOCKS - 1);
+        let rand_blocks = (r) & (MAX_RANDOM_BLOCKS - 1);
         let start_chunk = (h * 64 + rand_blocks) / 64 % chunks;
         let last_valid_bits = total_bits % 64;
 
@@ -540,7 +540,7 @@ impl Segment {
 
         let h = self.hint.load(Ordering::Relaxed);
         let r = alloc_random();
-        let rand_bits = (r as usize) & (MAX_RANDOM_BLOCKS - 1);
+        let rand_bits = (r) & (MAX_RANDOM_BLOCKS - 1);
         let start_bit = (h * 64 + rand_bits) % total_bits;
 
         for (range_start, range_end) in [(start_bit, total_bits), (0, start_bit)] {
@@ -620,11 +620,9 @@ impl Segment {
                     }
                 }
 
-                if carry_len + extend >= count {
-                    if self.try_claim(carry_start, count) {
-                        self.hint.store(carry_start / 64, Ordering::Relaxed);
-                        return Some(self.va_start + (carry_start * BLOCK_SIZE));
-                    }
+                if carry_len + extend >= count && self.try_claim(carry_start, count) {
+                    self.hint.store(carry_start / 64, Ordering::Relaxed);
+                    return Some(self.va_start + (carry_start * BLOCK_SIZE));
                 }
             }
         }
@@ -682,7 +680,7 @@ impl Segment {
             return;
         }
 
-        let mut count = (size / BLOCK_SIZE) + usize::from(size % BLOCK_SIZE != 0);
+        let mut count = (size / BLOCK_SIZE) + usize::from(size.is_multiple_of(8));
         if start_idx + count > total_bits {
             count = total_bits - start_idx;
         }

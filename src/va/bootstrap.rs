@@ -72,7 +72,7 @@ pub(crate) unsafe fn init_numa_nodes() {
 pub(crate) unsafe fn init_magic() {
     let mut rand: [u64; 2] = [0; 2];
     let ret = getrandom(rand.as_mut_ptr() as *mut c_void, size_of::<u64>() * 2, 0);
-    if ret as usize != (size_of::<u64>() * 2) {
+    if ret.cast_unsigned() != (size_of::<u64>() * 2) {
         OxidallocError::SecurityViolation.log_and_abort(
             null_mut(),
             "Failed to initialize random number generator",
@@ -92,7 +92,7 @@ pub(crate) unsafe fn init_random_numa() {
             size_of::<usize>() * MAX_NUMA_NODES,
             0,
         );
-        if ret as usize != (size_of::<usize>() * MAX_NUMA_NODES) {
+        if ret.cast_unsigned() != (size_of::<usize>() * MAX_NUMA_NODES) {
             OxidallocError::SecurityViolation.log_and_abort(
                 null_mut(),
                 "Failed to initialize random number generator",
@@ -123,7 +123,7 @@ unsafe fn init_random() {
         size_of::<usize>(),
         0,
     );
-    if ret as usize != size_of::<usize>() {
+    if ret.cast_unsigned() != size_of::<usize>() {
         OxidallocError::SecurityViolation.log_and_abort(
             null_mut(),
             "Failed to initialize random number generator",
@@ -136,7 +136,7 @@ unsafe fn init_random() {
 unsafe fn init_alloc_random() {
     let mut rand: u64 = 0;
     let ret = getrandom(&mut rand as *mut u64 as *mut c_void, size_of::<u64>(), 0);
-    if ret as usize != size_of::<u64>() {
+    if ret.cast_unsigned() != size_of::<u64>() {
         OxidallocError::SecurityViolation.log_and_abort(
             null_mut(),
             "Failed to initialize random number generator",

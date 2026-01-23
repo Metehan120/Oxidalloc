@@ -11,7 +11,7 @@ use std::{
 use libc::{__errno_location, ENOMEM, size_t};
 
 use crate::{
-    FREED_MAGIC, HAS_ALIGNED_PAGES, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     slab::{
@@ -197,9 +197,8 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     if let Some(class) = match_size_class(size) {
         if likely(HOT_READY) {
             return allocate_hot(class) as *mut c_void;
-        } else {
-            return allocate_boot_segment(class) as *mut c_void;
         }
+        return allocate_boot_segment(class) as *mut c_void;
     }
 
     return allocate_cold(size) as *mut c_void;
@@ -217,16 +216,14 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
     let mut raw_ptr = ptr;
     let mut offset: usize = 0;
-    if HAS_ALIGNED_PAGES.load(Ordering::Relaxed) {
-        let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
-        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+    let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+    let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
 
-        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-            if is_ours(presumed_original_ptr as usize) {
-                raw_ptr = presumed_original_ptr;
-                offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
-            }
+    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+        if is_ours(presumed_original_ptr as usize) {
+            raw_ptr = presumed_original_ptr;
+            offset = (ptr as usize).wrapping_sub(raw_ptr as usize);
         }
     }
 

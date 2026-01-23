@@ -19,7 +19,6 @@
 - New Build flags: 
   * tls-model=initial-exec
   * link-arg=-Wl,-z,now
-  * link-arg=-Wl,-Bsymbolic-functions
   - Expect 1.5-2x better performance
 - Many preps before Alpha release
 

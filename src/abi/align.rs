@@ -2,10 +2,9 @@ use libc::size_t;
 use std::{
     os::raw::{c_int, c_void},
     ptr::null_mut,
-    sync::atomic::Ordering,
 };
 
-use crate::{HAS_ALIGNED_PAGES, abi::malloc::malloc};
+use crate::abi::malloc::malloc;
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
@@ -25,12 +24,11 @@ pub unsafe extern "C" fn posix_memalign(
         return libc::EINVAL;
     }
 
-    let total_requested = match size
+    let Some(total_requested) = size
         .checked_add(alignment)
         .and_then(|v| v.checked_add(TAG_SIZE))
-    {
-        Some(v) => v,
-        None => return libc::ENOMEM,
+    else {
+        return libc::ENOMEM;
     };
 
     let mut raw = malloc(total_requested);
@@ -46,10 +44,6 @@ pub unsafe extern "C" fn posix_memalign(
     let addr = raw as usize;
     let start_search = addr.saturating_add(TAG_SIZE);
     let aligned = (start_search + alignment - 1) & !(alignment - 1);
-
-    if !HAS_ALIGNED_PAGES.load(Ordering::Relaxed) {
-        HAS_ALIGNED_PAGES.store(true, Ordering::Relaxed);
-    }
 
     let tag_location = aligned.saturating_sub(TAG_SIZE) as *mut usize;
     let original_ptr_location = aligned.saturating_sub(OFFSET_SIZE) as *mut usize;
