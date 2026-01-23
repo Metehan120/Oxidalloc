@@ -151,11 +151,11 @@ pub const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 // Zen 4>: 58/57bit | Zen <3: 48/47bit
 const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
 
-pub struct RadixTree {
+pub struct SegmentIndex {
     nodes: *mut usize,
 }
 
-impl RadixTree {
+impl SegmentIndex {
     pub unsafe fn new() -> Self {
         let size = ENTRIES * size_of::<usize>();
 
@@ -231,7 +231,7 @@ pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     latest_segment: AtomicPtr<Segment>,
     lock: AtomicBool,
-    radix_tree: RadixTree,
+    radix_tree: SegmentIndex,
 }
 
 impl VaBitmap {
@@ -240,7 +240,7 @@ impl VaBitmap {
             map: AtomicPtr::new(null_mut()),
             latest_segment: AtomicPtr::new(null_mut()),
             lock: AtomicBool::new(false),
-            radix_tree: RadixTree {
+            radix_tree: SegmentIndex {
                 nodes: const { null_mut() },
             },
         }
@@ -270,7 +270,7 @@ impl VaBitmap {
 
         if unlikely(self.radix_tree.nodes.is_null()) {
             ONCE_PROTECTION.call_once(|| {
-                self.radix_tree = RadixTree::new();
+                self.radix_tree = SegmentIndex::new();
             });
         }
 

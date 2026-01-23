@@ -6,7 +6,7 @@
 - Lazy block initialization for better RSS behavior
 - Removed self-healing path
 - Segments for Bitmap
-- RADIX Tree
+- Segment Index
 - Many O(1) Optimizations
 - Nightly migration | For faster paths
 - Likely / Unlikely optimizations
