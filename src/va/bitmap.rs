@@ -733,7 +733,7 @@ impl Segment {
         if chunk < current_hint {
             self.hint.store(chunk, Ordering::Relaxed);
         }
-        if size > 1024 * 1024 * 24 {
+        if size > 1024 * 1024 * 24 && self.full.load(Ordering::Relaxed) {
             self.failed_trys.fetch_sub(1, Ordering::Relaxed);
             self.full.store(false, Ordering::Relaxed);
         }
