@@ -1,8 +1,10 @@
 # Current branch status:
+- Fork handling
 - NUMA-awareness
 - Added hardening (hardened-linked-list + hardened-malloc) — expect slowdowns on real workloads; stress-ng shows ~8–9× slowdown when hardened-linked-list is enabled. (***WARNING***: This mode is not audiated yet, use at your own risk)
 - TLS usage caps (Max 128KB per class) - No more memory growing non-stop
 - Randomized Bitmap allocation: Used SplitMix64 style randomization to avoid predictable patterns.
+- Spilocked Once and OnceLock implementations for better fork handling
 - Lazy block initialization for better RSS behavior
 - Removed self-healing path
 - Segments for Bitmap
@@ -20,6 +22,7 @@
   * tls-model=initial-exec
   * link-arg=-Wl,-z,now
   - Expect 1.5-2x better performance
+- Main SerailLock implementation, no more manuel locks
 - Internal syscall abstractions for future compatibility works
 - Many preps before Alpha release
 
@@ -32,6 +35,7 @@
 - Optimized TLS
 - Optimized Global
 - Improved memory usage based on TLS caps and segment handling
+- Optimized Lock-Free paths
 
   
 # Current VA Handling:
