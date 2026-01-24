@@ -62,10 +62,12 @@ impl GlobalLock {
         }
     }
 
+    #[inline(always)]
     pub fn lock(&self, numa_node_id: usize, class: usize) -> _LockGuard {
         self.locks[numa_node_id][class].lock()
     }
 
+    #[inline(always)]
     pub fn unlock(&self, numa_node_id: usize, class: usize) {
         self.locks[numa_node_id][class].unlock();
     }
