@@ -18,7 +18,7 @@ impl Drop for _LockGuard {
 }
 
 pub struct SerialLock {
-    pub state: AtomicBool,
+    state: AtomicBool,
 }
 
 impl SerialLock {
