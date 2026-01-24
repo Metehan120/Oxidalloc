@@ -22,7 +22,7 @@
   * tls-model=initial-exec
   * link-arg=-Wl,-z,now
   - Expect 1.5-2x better performance
-- Main SerailLock implementation, no more manuel locks
+- Main SerailLock implementation, no more manuel locks (For Bitmap growth and hardened-linked-list)
 - Internal syscall abstractions for future compatibility works
 - Many preps before Alpha release
 
