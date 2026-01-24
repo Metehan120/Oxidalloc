@@ -175,7 +175,7 @@ unsafe fn init_random() {
     GLOBAL_RANDOM = rand;
 }
 
-unsafe fn init_alloc_random() {
+pub(crate) unsafe fn init_alloc_random() {
     let mut rand: u64 = 0;
     let ret = getrandom(&mut rand as *mut u64 as *mut c_void, size_of::<u64>(), 0);
     if ret.cast_unsigned() != size_of::<u64>() {
@@ -185,7 +185,7 @@ unsafe fn init_alloc_random() {
             None,
         );
     }
-    ALLOC_RNG.store(rand, Ordering::Relaxed);
+    ALLOC_RNG = rand;
 }
 
 pub unsafe fn init_thp() {

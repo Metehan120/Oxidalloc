@@ -2,7 +2,10 @@ use crate::{
     OX_MAX_RESERVATION, OxidallocError,
     internals::{lock::SerialLock, once::Once},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory},
-    va::{align_to, bootstrap::boot_strap},
+    va::{
+        align_to,
+        bootstrap::{boot_strap, init_alloc_random},
+    },
 };
 use libc::getrandom;
 use std::{
@@ -24,11 +27,20 @@ pub static ONCE_PROTECTION: Once = Once::new();
 pub static mut BASE_HINT: usize = 0;
 pub static mut BASE_INIT: bool = false;
 pub static mut LOOP: u8 = 0;
-pub static ALLOC_RNG: AtomicU64 = AtomicU64::new(0);
+
+#[thread_local]
+pub static mut ALLOC_RNG: u64 = 0;
+#[thread_local]
+pub static THREAD_ONCE_PROTECTION: Once = Once::new();
 
 #[inline(always)]
-fn alloc_random() -> usize {
-    let x = ALLOC_RNG.fetch_add(1, Ordering::Relaxed);
+unsafe fn alloc_random() -> usize {
+    THREAD_ONCE_PROTECTION.call_once(|| {
+        init_alloc_random();
+    });
+
+    ALLOC_RNG = ALLOC_RNG.wrapping_add(1);
+    let x = ALLOC_RNG;
     let mut z = x.wrapping_add(0x9E3779B97F4A7C15);
     z ^= z >> 30;
     z = z.wrapping_mul(0xbf58476d1ce4e5b9);
@@ -503,7 +515,7 @@ impl Segment {
 
         let chunks = (total_bits + 63) / 64;
         let h = self.hint.load(Ordering::Relaxed);
-        let r = alloc_random();
+        let r = unsafe { alloc_random() };
         let rand_blocks = (r) & (MAX_RANDOM_BLOCKS - 1);
         let start_chunk = (h * 64 + rand_blocks) / 64 % chunks;
         let last_valid_bits = total_bits % 64;
@@ -554,7 +566,7 @@ impl Segment {
         }
 
         let h = self.hint.load(Ordering::Relaxed);
-        let r = alloc_random();
+        let r = unsafe { alloc_random() };
         let rand_bits = (r) & (MAX_RANDOM_BLOCKS - 1);
         let start_bit = (h * 64 + rand_bits) % total_bits;
 
