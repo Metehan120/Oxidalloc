@@ -13,7 +13,7 @@ use std::{
     mem::size_of,
     os::raw::c_void,
     ptr::{null_mut, write},
-    sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
 };
 
 const MAX_RANDOM_MB: usize = 64;
@@ -246,6 +246,8 @@ pub struct Segment {
     pub map: AtomicPtr<AtomicU64>,
     hint: AtomicUsize,
     pub map_len: usize,
+    pub full: AtomicBool,
+    failed_trys: AtomicU8,
 }
 
 pub struct VaBitmap {
@@ -356,6 +358,8 @@ impl VaBitmap {
                 map: AtomicPtr::new(map_raw as *mut AtomicU64),
                 hint: AtomicUsize::new(seed % map_len),
                 map_len,
+                full: AtomicBool::new(false),
+                failed_trys: AtomicU8::new(0),
             },
         );
 
@@ -407,6 +411,11 @@ impl VaBitmap {
 
         while !curr.is_null() {
             let segment = &*curr;
+            if segment.full.load(Ordering::Relaxed) {
+                curr = (*curr).next;
+                continue;
+            }
+
             let res = if needed == 1 {
                 segment.alloc_single()
             } else {
@@ -417,6 +426,11 @@ impl VaBitmap {
                 self.latest_segment.store(curr, Ordering::Release);
                 return res;
             }
+            let try_count = segment.failed_trys.fetch_add(1, Ordering::Relaxed);
+            if try_count > 2 {
+                segment.full.store(true, Ordering::Relaxed);
+            }
+
             curr = (*curr).next;
         }
 
