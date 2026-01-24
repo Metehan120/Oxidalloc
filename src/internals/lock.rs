@@ -3,6 +3,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(feature = "hardened-linked-list")]
 use crate::{MAX_NUMA_NODES, slab::NUM_SIZE_CLASSES};
 
 pub struct _LockGuard(*const AtomicBool);
@@ -51,10 +52,12 @@ impl SerialLock {
     }
 }
 
+#[cfg(feature = "hardened-linked-list")]
 pub struct GlobalLock {
     locks: [[SerialLock; NUM_SIZE_CLASSES]; MAX_NUMA_NODES],
 }
 
+#[cfg(feature = "hardened-linked-list")]
 impl GlobalLock {
     pub const fn new() -> Self {
         GlobalLock {
