@@ -27,6 +27,7 @@ impl SerialLock {
         }
     }
 
+    #[inline(always)]
     pub fn lock(&self) -> _LockGuard {
         while self
             .state
@@ -40,6 +41,7 @@ impl SerialLock {
         guard
     }
 
+    #[inline(always)]
     pub fn unlock(&self) {
         self.state.store(false, Ordering::Release);
     }
