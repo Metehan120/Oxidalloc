@@ -38,12 +38,12 @@ pub const ITERATIONS: [usize; 34] = [
     1, 1, 1, 1, 1, 1, 1,
 ];
 
-const TLS_BIG_CLASS_BYTES: usize = 1024 * 196;
+const TLS_BIG_CLASS_BYTES: usize = 1024 * 128;
 // User can change this based on their needs:
 // 512kb for normal workloads; faster response
 // 256kb for less memory usage
-const TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 256;
-const TLS_SMALL_CLASS_BYTES: usize = 1024 * 384;
+const TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 196;
+const TLS_SMALL_CLASS_BYTES: usize = 1024 * 256;
 pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     let mut arr = [0; NUM_SIZE_CLASSES];
     let mut i = 0;
