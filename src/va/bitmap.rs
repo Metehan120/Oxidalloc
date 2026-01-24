@@ -733,6 +733,10 @@ impl Segment {
         if chunk < current_hint {
             self.hint.store(chunk, Ordering::Relaxed);
         }
+        if size > 1024 * 1024 * 24 {
+            self.failed_trys.fetch_sub(1, Ordering::Relaxed);
+            self.full.store(false, Ordering::Relaxed);
+        }
     }
 
     pub fn realloc_inplace(&self, addr: usize, old_size: usize, new_size: usize) -> Option<usize> {
