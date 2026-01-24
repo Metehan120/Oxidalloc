@@ -5,14 +5,11 @@ use std::{
     hint::{likely, unlikely},
     os::raw::c_void,
     ptr::null_mut,
-    sync::{
-        Once,
-        atomic::{AtomicBool, AtomicU32, Ordering},
-    },
 };
 
 use crate::{
     MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
+    internals::oncelock::OnceLock,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     va::is_ours,
@@ -40,18 +37,20 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
-pub unsafe fn get_or_init_key() {
-    THREAD_ONCE.call_once(|| {
-        let mut key = 0;
-        libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-        THREAD_KEY.store(key, Ordering::Relaxed);
-        THREAD_INIT.store(false, Ordering::Relaxed);
-    });
+pub static THREAD_KEY: OnceLock<u32> = OnceLock::new();
+pub fn init_thread_key() {
+    unsafe {
+        THREAD_KEY.get_or_init(|| {
+            let mut key = 0;
+            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
+            key
+        })
+    };
 }
 
-static THREAD_KEY: AtomicU32 = AtomicU32::new(0);
-static THREAD_ONCE: Once = Once::new();
-static THREAD_INIT: AtomicBool = AtomicBool::new(true);
+pub(crate) fn reset_fork_once() {
+    THREAD_KEY.reset_on_fork();
+}
 
 #[repr(C)]
 pub struct TlsBin {
@@ -163,12 +162,7 @@ impl ThreadLocalEngine {
     #[inline(never)]
     #[cold]
     pub unsafe fn get_or_init_cold() -> &'static mut ThreadLocalEngine {
-        let key = if !THREAD_INIT.load(Ordering::Acquire) {
-            THREAD_KEY.load(Ordering::Acquire)
-        } else {
-            get_or_init_key();
-            THREAD_KEY.load(Ordering::Acquire)
-        };
+        let key = *THREAD_KEY.get();
 
         let mut tls = libc::pthread_getspecific(key) as *mut ThreadLocalEngine;
         if tls.is_null() {
@@ -241,7 +235,7 @@ impl ThreadLocalEngine {
 }
 
 unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
-    let key = THREAD_KEY.load(Ordering::Acquire);
+    let key = *THREAD_KEY.get();
     TLS = null_mut();
     pthread_setspecific(key, null_mut());
 

@@ -2,10 +2,7 @@ use std::{
     hint::{likely, unlikely},
     os::raw::{c_int, c_void},
     ptr::{null_mut, read_volatile},
-    sync::{
-        Once,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use libc::{__errno_location, ENOMEM, size_t};
@@ -26,11 +23,18 @@ use crate::{
 };
 
 static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
-static ONCE: Once = Once::new();
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 pub static mut HOT_READY: bool = false;
+
+pub(crate) fn reset_fork_thread_state() {
+    THREAD_SPAWNED.store(false, Ordering::Relaxed);
+    TOTAL_MALLOC_FREE.store(1024, Ordering::Relaxed);
+    unsafe {
+        HOT_READY = false;
+    }
+}
 
 #[inline(always)]
 pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u64 {
@@ -129,12 +133,12 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut OxHeader {
     if TOTAL_MALLOC_FREE.load(Ordering::Relaxed) < 1024 {
         TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
     } else {
-        if !THREAD_SPAWNED.load(Ordering::Relaxed) {
-            THREAD_SPAWNED.store(true, Ordering::Relaxed);
-            ONCE.call_once(|| {
-                spawn_gtrim_thread();
-                HOT_READY = true;
-            });
+        if THREAD_SPAWNED
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            spawn_gtrim_thread();
+            HOT_READY = true;
         }
     }
 

@@ -1,5 +1,6 @@
 use crate::{
     OX_MAX_RESERVATION, OxidallocError,
+    internals::{lock::SerialLock, once::Once},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory},
     va::{align_to, bootstrap::boot_strap},
 };
@@ -9,10 +10,7 @@ use std::{
     mem::size_of,
     os::raw::c_void,
     ptr::{null_mut, write},
-    sync::{
-        Once,
-        atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
 };
 
 const MAX_RANDOM_MB: usize = 64;
@@ -146,6 +144,17 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 pub const BLOCK_SIZE: usize = 4096;
 pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
+pub(crate) fn reset_fork_locks() {
+    unsafe {
+        VA_MAP.lock.reset_on_fork();
+    }
+}
+
+pub(crate) fn reset_fork_onces() {
+    ONCE.reset_at_fork();
+    ONCE_PROTECTION.reset_at_fork();
+}
+
 pub const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 
 // Zen 4>: 58/57bit | Zen <3: 48/47bit
@@ -230,7 +239,7 @@ pub struct Segment {
 pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     latest_segment: AtomicPtr<Segment>,
-    lock: AtomicBool,
+    lock: SerialLock,
     radix_tree: SegmentIndex,
 }
 
@@ -239,7 +248,7 @@ impl VaBitmap {
         Self {
             map: AtomicPtr::new(null_mut()),
             latest_segment: AtomicPtr::new(null_mut()),
-            lock: AtomicBool::new(false),
+            lock: SerialLock::new(),
             radix_tree: SegmentIndex {
                 nodes: const { null_mut() },
             },
@@ -260,13 +269,7 @@ impl VaBitmap {
     }
 
     pub unsafe fn grow(&mut self) -> Option<*mut Segment> {
-        while self
-            .lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
+        let _guard = self.lock.lock();
 
         if unlikely(self.radix_tree.nodes.is_null()) {
             ONCE_PROTECTION.call_once(|| {
@@ -277,7 +280,7 @@ impl VaBitmap {
         let (user_va, end, total_size) = get_va_from_kernel();
 
         if user_va.is_null() {
-            self.lock.store(false, Ordering::Release);
+            self.lock.unlock();
             return None;
         }
 
@@ -285,7 +288,7 @@ impl VaBitmap {
             .radix_tree
             .check_collision(user_va as usize, total_size)
         {
-            self.lock.store(false, Ordering::Release);
+            self.lock.unlock();
             return None;
         }
 
@@ -303,7 +306,7 @@ impl VaBitmap {
         ) {
             Ok(ptr) => ptr,
             Err(_) => {
-                self.lock.store(false, Ordering::Release);
+                self.lock.unlock();
                 return None;
             }
         };
@@ -318,7 +321,7 @@ impl VaBitmap {
         ) {
             Ok(ptr) => ptr as *mut Segment,
             Err(_) => {
-                self.lock.store(false, Ordering::Release);
+                self.lock.unlock();
                 return None;
             }
         };
@@ -347,7 +350,7 @@ impl VaBitmap {
         self.radix_tree
             .set_range(user_va as usize, total_size, seg_ptr);
         self.map.store(seg_ptr, Ordering::Release);
-        self.lock.store(false, Ordering::Release);
+        self.lock.unlock();
 
         Some(seg_ptr)
     }

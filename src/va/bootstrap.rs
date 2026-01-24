@@ -1,8 +1,9 @@
 use std::{
+    mem::transmute,
     os::raw::c_void,
     ptr::null_mut,
     sync::{
-        Mutex, Once,
+        Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -11,7 +12,11 @@ use libc::getrandom;
 
 use crate::{
     FREED_MAGIC, MAGIC, MAX_NUMA_NODES, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OX_USE_THP,
-    OxidallocError, REAL_NUMA_NODES, slab::thread_local::ThreadLocalEngine, va::bitmap::ALLOC_RNG,
+    OxidallocError, REAL_NUMA_NODES,
+    abi::{fallback::fallback_reinit_on_fork, malloc::reset_fork_thread_state},
+    internals::once::Once,
+    slab::thread_local::{ThreadLocalEngine, init_thread_key, reset_fork_once},
+    va::bitmap::{ALLOC_RNG, reset_fork_locks, reset_fork_onces},
 };
 
 pub static IS_BOOTSTRAP: AtomicBool = AtomicBool::new(true);
@@ -25,8 +30,53 @@ extern "C" fn allocator_shutdown() {
     SHUTDOWN.store(true, Ordering::Release);
 }
 
+static mut ATFORK_GUARD: Option<MutexGuard<'static, ()>> = None;
+
+extern "C" fn fork_prepare() {
+    let guard = match BOOTSTRAP_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    unsafe {
+        // Keep the lock held across fork so parent/child can safely drop it.
+        ATFORK_GUARD = Some(transmute::<MutexGuard<'_, ()>, MutexGuard<'static, ()>>(
+            guard,
+        ));
+    }
+}
+
+extern "C" fn fork_parent() {
+    unsafe {
+        if let Some(guard) = ATFORK_GUARD.take() {
+            drop(guard);
+        }
+    }
+}
+
+extern "C" fn fork_child() {
+    unsafe {
+        if let Some(guard) = ATFORK_GUARD.take() {
+            drop(guard);
+        }
+    }
+    reset_fork_locks();
+    reset_fork_onces();
+    #[cfg(feature = "hardened-linked-list")]
+    crate::slab::global::reset_global_locks();
+    reset_fork_thread_state();
+    reset_fork_once();
+    crate::slab::reset_fork_onces();
+    crate::reset_fork_onces();
+    fallback_reinit_on_fork();
+    ONCE.reset_at_fork();
+}
+
 pub unsafe fn register_shutdown() {
     libc::atexit(allocator_shutdown);
+}
+
+pub unsafe fn register_fork_handlers() {
+    let _ = libc::pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
 }
 
 fn detect_numa_nodes() -> usize {
@@ -219,21 +269,11 @@ pub unsafe fn boot_strap() {
     if !IS_BOOTSTRAP.load(Ordering::Relaxed) {
         return;
     }
-    let _lock = match BOOTSTRAP_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if !IS_BOOTSTRAP.load(Ordering::Acquire) {
-        return;
-    }
-    IS_BOOTSTRAP.store(false, Ordering::Release);
-    if IS_BOOTSTRAP.load(Ordering::Relaxed) {
-        return;
-    }
     ONCE.call_once(|| {
+        init_thread_key();
         SHUTDOWN.store(false, Ordering::Relaxed);
         ThreadLocalEngine::get_or_init();
-        register_shutdown();
+        register_fork_handlers();
         init_reverse();
         init_threshold();
         init_thp();

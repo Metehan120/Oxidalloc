@@ -1,11 +1,10 @@
 use libc::{RTLD_NEXT, c_char, c_void, dlsym, size_t};
 use std::{
     ptr::null_mut,
-    sync::{
-        Once,
-        atomic::{AtomicPtr, Ordering},
-    },
+    sync::atomic::{AtomicPtr, Ordering},
 };
+
+use crate::internals::once::Once;
 
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type ReallocFn = unsafe extern "C" fn(*mut c_void, size_t) -> *mut c_void;
@@ -19,6 +18,12 @@ static REALLOC_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
 static MUS_INIT: Once = Once::new();
 static MUS_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+
+pub fn fallback_reinit_on_fork() {
+    FREE_INIT.reset_at_fork();
+    REALLOC_INIT.reset_at_fork();
+    MUS_INIT.reset_at_fork();
+}
 
 fn get_symbol(name: &[u8], init: &Once, slot: &AtomicPtr<c_void>) -> *mut c_void {
     init.call_once(|| {

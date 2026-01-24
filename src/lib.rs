@@ -16,18 +16,16 @@
 
 use std::{
     fmt::Debug,
-    sync::{
-        OnceLock,
-        atomic::{AtomicBool, AtomicUsize},
-    },
+    sync::atomic::{AtomicBool, AtomicUsize},
     time::Instant,
     usize,
 };
 
-use crate::sys::memory_system::SysErr;
+use crate::{internals::oncelock::OnceLock, sys::memory_system::SysErr};
 
 pub mod abi;
 pub mod big_allocation;
+pub mod internals;
 pub mod slab;
 pub mod sys;
 pub mod trim;
@@ -60,6 +58,10 @@ pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024
 
 pub fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
+}
+
+pub(crate) fn reset_fork_onces() {
+    OX_GLOBAL_STAMP.reset_on_fork();
 }
 
 pub const HEADER_SIZE: usize = size_of::<OxHeader>();

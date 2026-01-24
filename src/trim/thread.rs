@@ -6,11 +6,12 @@ use std::{
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, TOTAL_ALLOCATED, get_clock,
     trim::{TimeDecay, gtrim::GTrim},
-    va::bootstrap::SHUTDOWN,
+    va::bootstrap::{SHUTDOWN, register_shutdown},
 };
 
 static TOTAL_TIME_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
+static SHUTDOWN_REGISTERED: AtomicU8 = AtomicU8::new(0);
 
 pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
 pub static PTRIM_DECAY: AtomicU8 = AtomicU8::new(0);
@@ -65,6 +66,13 @@ fn check_memory_pressure() -> usize {
 }
 
 pub unsafe fn spawn_gtrim_thread() {
+    if SHUTDOWN_REGISTERED
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        register_shutdown();
+    }
+
     std::thread::spawn(|| {
         while !SHUTDOWN.load(Ordering::Acquire) {
             let decay = TimeDecay::from_u8(GLOBAL_DECAY.load(Ordering::Relaxed));
