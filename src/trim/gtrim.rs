@@ -1,8 +1,8 @@
 use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, MAGIC, MAX_NUMA_NODES, OX_CURRENT_STAMP, OxHeader,
-    OxidallocError,
+    AVERAGE_BLOCK_TIMES_GLOBAL, FREED_MAGIC, HEADER_SIZE, MAX_NUMA_NODES, OX_CURRENT_STAMP,
+    OxHeader, OxidallocError,
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class,
         global::{GLOBAL, GlobalHandler},
@@ -29,7 +29,7 @@ impl GTrim {
         let mut real = 1;
 
         while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-            if (*block).magic == MAGIC {
+            if (*block).magic != FREED_MAGIC {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
                     "Find in_use block during PThread Trim / Memory Corruption",
@@ -41,6 +41,17 @@ impl GTrim {
             real += 1;
         }
         (*block).next = null_mut();
+
+        #[cfg(feature = "hardened-malloc")]
+        {
+            if (*block).magic != FREED_MAGIC {
+                OxidallocError::MemoryCorruption.log_and_abort(
+                    block as *mut c_void,
+                    "Find in_use block during PThread Trim / Memory Corruption",
+                    None,
+                );
+            }
+        }
 
         (global_cache, real)
     }

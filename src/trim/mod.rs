@@ -2,6 +2,7 @@ pub mod gtrim;
 pub mod thread;
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeDecay {
     Normal,
     Medium,

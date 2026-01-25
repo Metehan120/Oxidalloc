@@ -4,12 +4,13 @@ use std::{
 };
 
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, TOTAL_ALLOCATED, get_clock,
+    AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, get_clock,
     trim::{TimeDecay, gtrim::GTrim},
     va::bootstrap::{SHUTDOWN, register_shutdown},
 };
 
 static TOTAL_TIME_GLOBAL: AtomicUsize = AtomicUsize::new(0);
+static LAST_TRIM_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
 static SHUTDOWN_REGISTERED: AtomicU8 = AtomicU8::new(0);
 
@@ -17,10 +18,6 @@ pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
 pub static PTRIM_DECAY: AtomicU8 = AtomicU8::new(0);
 
 unsafe fn decide_global(decay: &TimeDecay) -> bool {
-    if TOTAL_ALLOCATED.load(Ordering::Relaxed) == 0 {
-        return false;
-    }
-
     if (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) < decay.get_threshold() as usize)
         && (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) != 0)
     {
@@ -37,7 +34,17 @@ unsafe fn decide_global(decay: &TimeDecay) -> bool {
     }
 
     let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
-    total % timing == 0 && total != 0
+    if timing == 0 {
+        return false;
+    }
+
+    let last = LAST_TRIM_GLOBAL.load(Ordering::Relaxed);
+    if total.saturating_sub(last) >= timing && total != 0 {
+        LAST_TRIM_GLOBAL.store(total, Ordering::Relaxed);
+        return true;
+    }
+
+    false
 }
 
 fn check_memory_pressure() -> usize {
