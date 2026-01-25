@@ -1,3 +1,5 @@
+# Important Trim fix just released, trim thread now should work properly.
+
 # Current branch status:
 - Fork handling
 - NUMA-awareness
