@@ -20,6 +20,32 @@ use std::{
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
+macro_rules! free_main {
+    ($ptr:expr) => {{
+        if unlikely($ptr.is_null()) {
+            return;
+        }
+
+        if unlikely(!is_ours($ptr as usize)) {
+            free_fallback($ptr);
+            return;
+        }
+
+        let mut header_search_ptr = $ptr;
+        let tag_loc = ($ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
+
+        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+            let raw_loc = ($ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
+            let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
+            if is_ours(presumed_original_ptr as usize) {
+                header_search_ptr = presumed_original_ptr;
+            }
+        }
+
+        free_internal(header_search_ptr);
+    }};
+}
+
 #[inline(always)]
 unsafe fn validate_ptr_for_free(header: *mut OxHeader) {
     let magic = read_volatile(&(*header).magic);
@@ -71,54 +97,14 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
 #[inline(always)]
 unsafe fn free_fast(ptr: *mut c_void) {
-    if unlikely(ptr.is_null()) {
-        return;
-    }
-
-    if unlikely(!is_ours(ptr as usize)) {
-        free_fallback(ptr);
-        return;
-    }
-
-    let mut header_search_ptr = ptr;
-    let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
-
-    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
-        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
-            header_search_ptr = presumed_original_ptr;
-        }
-    }
-
-    free_internal(header_search_ptr);
+    free_main!(ptr)
 }
 
 #[inline(always)]
 unsafe fn free_boot_segment(ptr: *mut c_void) {
     TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
 
-    if unlikely(ptr.is_null()) {
-        return;
-    }
-
-    if unlikely(!is_ours(ptr as usize)) {
-        free_fallback(ptr);
-        return;
-    }
-
-    let mut header_search_ptr = ptr;
-    let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
-
-    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
-        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
-        let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
-        if is_ours(presumed_original_ptr as usize) {
-            header_search_ptr = presumed_original_ptr;
-        }
-    }
-
-    free_internal(header_search_ptr);
+    free_main!(ptr)
 }
 
 #[unsafe(no_mangle)]
