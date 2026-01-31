@@ -5,26 +5,14 @@ use std::{
     ptr::null_mut,
 };
 
-use libc::{SYS_getcpu, syscall};
-
 #[cfg(feature = "hardened-linked-list")]
 use crate::sys::memory_system::getrandom;
 use crate::{
-    MAX_INTERCONNECT_CACHE, MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
+    MetaData, OxHeader, OxidallocError,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     va::is_ours,
 };
-
-unsafe fn get_numa_node_id() -> (usize, usize) {
-    let mut cpu = 0;
-    let mut node = 0;
-
-    // get node id so we can use it for numa allocation
-    syscall(SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
-
-    (node as usize, cpu as usize)
-}
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
@@ -56,8 +44,6 @@ pub struct TlsBin {
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub pending: [*mut MetaData; NUM_SIZE_CLASSES],
-    pub numa_node_id: usize,
-    pub cache_id: usize,
     #[cfg(feature = "hardened-linked-list")]
     pub xor_key: usize,
 }
@@ -112,8 +98,6 @@ impl ThreadLocalEngine {
             )
         }) as *mut ThreadLocalEngine;
 
-        let (numa, core) = get_numa_node_id();
-
         #[cfg(feature = "hardened-linked-list")]
         let rand_s: usize;
         #[cfg(feature = "hardened-linked-list")]
@@ -141,8 +125,6 @@ impl ThreadLocalEngine {
                     }
                 }; NUM_SIZE_CLASSES],
                 pending: [const { null_mut() }; NUM_SIZE_CLASSES],
-                numa_node_id: (numa % MAX_NUMA_NODES),
-                cache_id: (core % MAX_INTERCONNECT_CACHE),
                 #[cfg(feature = "hardened-linked-list")]
                 xor_key: rand_s,
             },
@@ -335,7 +317,6 @@ mod tests {
         unsafe {
             const N: usize = 10_000_000;
             let _tls = ThreadLocalEngine::get_or_init();
-            _tls.numa_node_id = 0;
 
             let start = Instant::now();
             for _ in 0..N {
