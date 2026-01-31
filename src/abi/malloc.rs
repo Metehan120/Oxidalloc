@@ -66,8 +66,7 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u8 {
     magic
 }
 
-#[cold]
-#[inline(never)]
+#[inline(always)]
 unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
