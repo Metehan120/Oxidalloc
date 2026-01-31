@@ -1,12 +1,12 @@
 use std::{
     hint::{likely, unlikely},
     os::raw::{c_int, c_void},
-    ptr::{null_mut, read_volatile},
+    ptr::null_mut,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crate::{
-    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     internals::{__errno_location, hashmap::BIG_ALLOC_MAP, size_t},
@@ -41,20 +41,9 @@ pub(crate) fn reset_fork_thread_state() {
 #[cfg(feature = "hardened-malloc")]
 #[inline(always)]
 pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u64 {
-    let magic = read_volatile(&(*ptr).magic);
-    if unlikely(magic != MAGIC && magic != FREED_MAGIC) {
-        OxidallocError::AttackOrCorruption.log_and_abort(
-            null_mut() as *mut c_void,
-            "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
-            None,
-        )
-    }
-    magic
-}
+    use crate::FREED_MAGIC;
+    use std::ptr::read_volatile;
 
-#[cfg(not(feature = "hardened-malloc"))]
-#[inline(always)]
-pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u8 {
     let magic = read_volatile(&(*ptr).magic);
     if unlikely(magic != MAGIC && magic != FREED_MAGIC) {
         OxidallocError::AttackOrCorruption.log_and_abort(

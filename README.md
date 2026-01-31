@@ -88,7 +88,7 @@ ICC replaces a single global list with per-CPU shards:
 
 - Pushes and pops are batched for amortized atomic cost.
 - Local shard is preferred; other shards are used for victim stealing.
-- Uses `sched_getcpu()` for compatibility (not RSEQ).
+- Uses `sched_getcpu()` for compatibility (not RSEQ, some custom kernels doesnt support RSEQ).
 - Shards are mapped with `MAP_NORESERVE` to keep VA usage cheap.
 
 ## VA management

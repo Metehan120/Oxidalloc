@@ -46,7 +46,7 @@ macro_rules! free_main {
 }
 
 #[inline(always)]
-unsafe fn validate_ptr_for_free(header: *mut OxHeader) {
+pub unsafe fn validate_ptr_for_abi(header: *mut OxHeader) {
     let magic = read_volatile(&(*header).magic);
     if likely(magic == MAGIC) {
         return;
@@ -72,7 +72,7 @@ unsafe fn free_internal(ptr: *mut c_void) {
     let header_addr = (ptr as usize).wrapping_sub(HEADER_SIZE);
     let header = header_addr as *mut OxHeader;
 
-    validate_ptr_for_free(header);
+    validate_ptr_for_abi(header);
 
     let class = (*header).class as usize;
     if unlikely(class == 100) {

@@ -4,8 +4,8 @@ use crate::{
     HEADER_SIZE, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::{
         fallback::realloc_fallback,
-        free::free,
-        malloc::{malloc, validate_ptr},
+        free::{free, validate_ptr_for_abi},
+        malloc::malloc,
     },
     internals::{
         __errno_location,
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
     let header = (raw_ptr as *mut OxHeader).sub(1);
 
-    validate_ptr(header);
+    validate_ptr_for_abi(header);
 
     let raw_capacity;
     if (*header).class == 100 {
