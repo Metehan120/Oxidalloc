@@ -52,38 +52,49 @@ fn bench_alloc_free(c: &mut Criterion) {
 
 fn bench_contention(c: &mut Criterion) {
     let mut group = c.benchmark_group("contention");
+    for size in [
+        64,
+        256,
+        512,
+        4096,
+        16384,
+        1024 * 32,
+        1024 * 1024 * 2,
+        1024 * 1024 * 32,
+        1024 * 1024 * 1024,
+    ] {
+        for num_threads in [1, 2, 4, 8, 12, 16] {
+            group.bench_with_input(
+                BenchmarkId::from_parameter(format!("{}threads, size{}", num_threads, size)),
+                &num_threads,
+                |b, &num_threads| {
+                    b.iter_custom(|iters| {
+                        let barrier = Arc::new(Barrier::new(num_threads));
 
-    for num_threads in [1, 2, 4, 8, 12, 16] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(format!("{}threads", num_threads)),
-            &num_threads,
-            |b, &num_threads| {
-                b.iter_custom(|iters| {
-                    let barrier = Arc::new(Barrier::new(num_threads));
-
-                    let handles: Vec<_> = (0..num_threads)
-                        .map(|_| {
-                            let barrier = barrier.clone();
-                            std::thread::spawn(move || unsafe {
-                                barrier.wait();
-                                for _ in 0..(iters / num_threads as u64) {
-                                    let p = black_box(malloc(64));
-                                    black_box(free(p));
-                                }
+                        let handles: Vec<_> = (0..num_threads)
+                            .map(|_| {
+                                let barrier = barrier.clone();
+                                std::thread::spawn(move || unsafe {
+                                    barrier.wait();
+                                    for _ in 0..(iters / num_threads as u64) {
+                                        let p = black_box(malloc(size));
+                                        black_box(free(p));
+                                    }
+                                })
                             })
-                        })
-                        .collect();
+                            .collect();
 
-                    let start = std::time::Instant::now();
+                        let start = std::time::Instant::now();
 
-                    for h in handles {
-                        h.join().unwrap();
-                    }
+                        for h in handles {
+                            h.join().unwrap();
+                        }
 
-                    start.elapsed()
-                });
-            },
-        );
+                        start.elapsed()
+                    });
+                },
+            );
+        }
     }
 
     group.finish();
