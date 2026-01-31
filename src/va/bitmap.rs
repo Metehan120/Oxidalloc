@@ -1,13 +1,13 @@
 use crate::{
     OX_MAX_RESERVATION, OxidallocError,
     internals::{lock::SerialLock, once::Once},
-    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory},
+    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, getrandom, mmap_memory},
     va::{
         align_to,
         bootstrap::{boot_strap, init_alloc_random},
+        rng::Rng,
     },
 };
-use libc::getrandom;
 use std::{
     hint::{likely, unlikely},
     mem::size_of,
@@ -16,7 +16,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering},
 };
 
-const MAX_RANDOM_MB: usize = 64;
+const MAX_RANDOM_MB: usize = 256;
 const MAX_RANDOM_BYTES: usize = MAX_RANDOM_MB * 1024 * 1024;
 const MAX_RANDOM_BLOCKS: usize = MAX_RANDOM_BYTES / BLOCK_SIZE;
 
@@ -29,25 +29,16 @@ pub static mut BASE_INIT: bool = false;
 pub static mut LOOP: u8 = 0;
 
 #[thread_local]
-pub static mut ALLOC_RNG: u64 = 0;
+pub static mut RNG: Rng = Rng::new(0);
 #[thread_local]
 pub static THREAD_ONCE_PROTECTION: Once = Once::new();
 
 #[inline(always)]
 unsafe fn alloc_random() -> usize {
     THREAD_ONCE_PROTECTION.call_once(|| {
-        init_alloc_random();
+        RNG = Rng::new(init_alloc_random());
     });
-
-    ALLOC_RNG = ALLOC_RNG.wrapping_add(1);
-    let x = ALLOC_RNG;
-    let mut z = x.wrapping_add(0x9E3779B97F4A7C15);
-    z ^= z >> 30;
-    z = z.wrapping_mul(0xbf58476d1ce4e5b9);
-    z ^= z >> 27;
-    z = z.wrapping_mul(0x94d049bb133111eb);
-    z ^= z >> 31;
-    z as usize
+    RNG.next_usize()
 }
 
 // Security: Restored getrandom for strong ASLR on segment bases.
@@ -57,15 +48,11 @@ unsafe fn randomize_base_hint() {
         return;
     }
 
-    let mut rand: usize = 0;
+    let mut rand = [0u8; 8];
     // We use the kernel's RNG here to ensure the base address is not predictable
-    let ret = getrandom(
-        &mut rand as *mut usize as *mut c_void,
-        size_of::<usize>(),
-        0,
-    );
+    let ret = getrandom(&mut rand);
 
-    if unlikely(ret as usize != size_of::<usize>()) {
+    if unlikely(ret.is_err()) {
         OxidallocError::SecurityViolation.log_and_abort(
             null_mut(),
             "Failed to initialize random number generator",
@@ -73,6 +60,7 @@ unsafe fn randomize_base_hint() {
         );
     }
 
+    let rand = usize::from_ne_bytes(rand);
     BASE_HINT = BASE_HINT.wrapping_add(align_to(rand % max, 4096));
 }
 
@@ -139,7 +127,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
                     OxidallocError::VAIinitFailed.log_and_abort(
                         null_mut(),
                         "Init failed during Segment Allocation: No available VA reserve",
-                        Some(err),
+                        Some(err.get_errno()),
                     )
                 } else if size <= MIN_RESERVE {
                     BASE_INIT = false;
@@ -169,18 +157,19 @@ pub(crate) fn reset_fork_onces() {
 
 pub const CHUNK_SIZE: usize = 1024 * 1024 * 1024 * 4;
 
-// Zen 4>: 58/57bit | Zen <3: 48/47bit
-const ENTRIES: usize = (1 << 48) / CHUNK_SIZE;
+const L1_BITS: usize = 12;
+const L2_BITS: usize = 13;
+const L1_SIZE: usize = 1 << L1_BITS;
+const L2_SIZE: usize = 1 << L2_BITS;
+const RADIX_MAX_CHUNKS: usize = 1 << (L1_BITS + L2_BITS);
 
-pub struct SegmentIndex {
-    nodes: *mut usize,
+pub struct Radix {
+    l1: *mut *mut usize,
 }
 
-impl SegmentIndex {
-    pub unsafe fn new() -> Self {
-        let size = ENTRIES * size_of::<usize>();
-
-        let ptr = match mmap_memory(
+impl Radix {
+    unsafe fn map_memory(size: usize) -> *mut usize {
+        let mem = match mmap_memory(
             null_mut(),
             size,
             MMapFlags {
@@ -192,12 +181,65 @@ impl SegmentIndex {
             Err(err) => OxidallocError::VAIinitFailed.log_and_abort(
                 null_mut(),
                 "Cannot allocate memory for RadixTree",
-                Some(err),
+                Some(err.get_errno()),
             ),
-        };
+        } as *mut usize;
+        mem
+    }
 
+    unsafe fn new() -> Self {
+        let size = L1_SIZE * core::mem::size_of::<*mut usize>();
+        let ptr = Self::map_memory(size) as *mut *mut usize;
+        Self { l1: ptr }
+    }
+
+    #[inline(always)]
+    fn split(idx: usize) -> (usize, usize) {
+        let l1 = idx >> L2_BITS;
+        let l2 = idx & (L2_SIZE - 1);
+        (l1, l2)
+    }
+
+    unsafe fn set(&self, chunk_idx: usize, seg: usize) {
+        if unlikely(chunk_idx >= RADIX_MAX_CHUNKS) {
+            return;
+        }
+        let (i, j) = Self::split(chunk_idx);
+        let l2 = *self.l1.add(i);
+        let l2 = if l2.is_null() {
+            let size = L2_SIZE * core::mem::size_of::<*mut usize>();
+            let new = Self::map_memory(size);
+            *self.l1.add(i) = new;
+            new
+        } else {
+            l2
+        };
+        *l2.add(j) = seg;
+    }
+
+    unsafe fn get(&self, chunk_idx: usize) -> Option<usize> {
+        if unlikely(chunk_idx >= RADIX_MAX_CHUNKS) {
+            return None;
+        }
+        let (i, j) = Self::split(chunk_idx);
+        let l2 = *self.l1.add(i);
+        if l2.is_null() {
+            None
+        } else {
+            let entry = *l2.add(j);
+            if entry == 0 { None } else { Some(entry) }
+        }
+    }
+}
+
+pub struct RadixTree {
+    pub nodes: Radix,
+}
+
+impl RadixTree {
+    pub unsafe fn new() -> Self {
         Self {
-            nodes: ptr as *mut usize,
+            nodes: Radix::new(),
         }
     }
 
@@ -206,32 +248,32 @@ impl SegmentIndex {
         let start_idx = start / CHUNK_SIZE;
         let end_idx = start.saturating_add(size.saturating_sub(1)) / CHUNK_SIZE;
         let count = end_idx.saturating_sub(start_idx) + 1;
-        let base = self.nodes;
 
         unsafe {
             for i in 0..count {
-                *base.add(start_idx + i) = seg_ptr as usize;
+                self.nodes.set(start_idx + i, seg_ptr as usize);
             }
         }
     }
 
     #[inline(always)]
-    pub fn get_segment(&self, addr: usize) -> *mut Segment {
+    unsafe fn get_segment(&self, addr: usize) -> *mut Segment {
         let idx = addr / CHUNK_SIZE;
-        let base = self.nodes;
-        if unlikely(base.is_null() || idx >= ENTRIES) {
-            return null_mut();
+        if let Some(segment) = self.nodes.get(idx) {
+            return segment as *mut Segment;
         }
-        unsafe { *base.add(idx) as *mut Segment }
+        null_mut()
     }
 
     pub unsafe fn check_collision(&self, start: usize, size: usize) -> bool {
         let start_idx = start / CHUNK_SIZE;
         let end_idx = start.saturating_add(size.saturating_sub(1)) / CHUNK_SIZE;
-        let base = self.nodes;
+        if unlikely(end_idx >= RADIX_MAX_CHUNKS) {
+            return true;
+        }
 
         for i in start_idx..=end_idx {
-            if *base.add(i) != 0 {
+            if let Some(_) = self.nodes.get(i) {
                 return true;
             }
         }
@@ -254,7 +296,7 @@ pub struct VaBitmap {
     map: AtomicPtr<Segment>,
     latest_segment: AtomicPtr<Segment>,
     lock: SerialLock,
-    radix_tree: SegmentIndex,
+    radix_tree: RadixTree,
 }
 
 impl VaBitmap {
@@ -263,15 +305,15 @@ impl VaBitmap {
             map: AtomicPtr::new(null_mut()),
             latest_segment: AtomicPtr::new(null_mut()),
             lock: SerialLock::new(),
-            radix_tree: SegmentIndex {
-                nodes: const { null_mut() },
+            radix_tree: RadixTree {
+                nodes: Radix { l1: null_mut() },
             },
         }
     }
 
     #[inline(always)]
     pub unsafe fn is_ours(&self, addr: usize) -> bool {
-        if unlikely(self.radix_tree.nodes.is_null()) {
+        if unlikely(self.radix_tree.nodes.l1.is_null()) {
             return false;
         }
         let segment = self.radix_tree.get_segment(addr);
@@ -285,9 +327,9 @@ impl VaBitmap {
     pub unsafe fn grow(&mut self) -> Option<*mut Segment> {
         let _guard = self.lock.lock();
 
-        if unlikely(self.radix_tree.nodes.is_null()) {
+        if unlikely(self.radix_tree.nodes.l1.is_null()) {
             ONCE_PROTECTION.call_once(|| {
-                self.radix_tree = SegmentIndex::new();
+                self.radix_tree = RadixTree::new();
             });
         }
 
@@ -673,22 +715,26 @@ impl Segment {
     #[inline(always)]
     fn try_claim(&self, start_idx: usize, count: usize) -> bool {
         let map = unsafe { self.get_map() };
-        let total_bits = self.max_bits();
+        let mut bits_processed = 0;
 
-        if unlikely(start_idx + count > total_bits) {
-            return false;
-        }
+        while bits_processed < count {
+            let current_bit = start_idx + bits_processed;
+            let chunk_idx = current_bit / 64;
+            let shift = current_bit % 64;
 
-        for k in 0..count {
-            let idx = start_idx + k;
-            let chunk_idx = idx / 64;
-            let mask = 1u64 << (idx % 64);
+            let bits_in_this_chunk = (64 - shift).min(count - bits_processed);
+            let mask = if bits_in_this_chunk == 64 {
+                u64::MAX
+            } else {
+                ((1u64 << bits_in_this_chunk) - 1) << shift
+            };
 
             let prev = map[chunk_idx].fetch_or(mask, Ordering::Acquire);
             if (prev & mask) != 0 {
-                self.rollback(start_idx, k);
+                self.rollback(start_idx, bits_processed);
                 return false;
             }
+            bits_processed += bits_in_this_chunk;
         }
         true
     }
@@ -733,7 +779,7 @@ impl Segment {
         if chunk < current_hint {
             self.hint.store(chunk, Ordering::Relaxed);
         }
-        if size > 1024 * 1024 * 24 && self.full.load(Ordering::Relaxed) {
+        if size > MAX_RANDOM_BYTES && self.full.load(Ordering::Relaxed) {
             self.failed_trys.fetch_sub(1, Ordering::Relaxed);
             self.full.store(false, Ordering::Relaxed);
         }

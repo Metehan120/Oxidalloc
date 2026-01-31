@@ -3,6 +3,7 @@ use std::{
     env,
     hint::black_box,
     os::raw::c_void,
+    ptr,
     sync::{Arc, Mutex},
     thread,
     time::Instant,
@@ -177,6 +178,33 @@ fn realloc_shrink_multithread_correctness() {
             (end / thread_count as f64) / loop_needed as f64
         );
     };
+}
+
+#[test]
+fn realloc_iter1_slab_inplace_smoke() {
+    unsafe {
+        for _ in 0..1000 {
+            let ptr = malloc(4096);
+            assert!(!ptr.is_null());
+            ptr::write_bytes(ptr as *mut u8, 0xA5, 4096);
+
+            let ptr = realloc(ptr, 8192);
+            assert!(!ptr.is_null());
+            for i in 0..4096 {
+                let byte = *(ptr as *const u8).add(i);
+                assert_eq!(byte, 0xA5);
+            }
+            ptr::write_bytes((ptr as *mut u8).add(4096), 0x5A, 4096);
+
+            let ptr = realloc(ptr, 4096);
+            assert!(!ptr.is_null());
+            for i in 0..4096 {
+                let byte = *(ptr as *const u8).add(i);
+                assert_eq!(byte, 0xA5);
+            }
+            free(ptr);
+        }
+    }
 }
 
 #[test]

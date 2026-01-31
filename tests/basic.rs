@@ -84,8 +84,9 @@ fn test_big_reallocs_1mb() {
         let start = std::time::Instant::now();
         let new_ptr = black_box(realloc(ptr, 1024 * 1024 * 2));
         let elapsed = start.elapsed().as_nanos();
-        println!("Big realloc take (1mb -> 2mb) {}", elapsed);
         assert!(!new_ptr.is_null(), "realloc failed");
+        black_box(write_bytes(new_ptr, 2, 1024 * 1024 * 2));
+        println!("Big realloc take (1mb -> 2mb) {}", elapsed);
         free(new_ptr);
     }
 }
@@ -99,13 +100,13 @@ fn test_realloc_shrink() {
         let start = std::time::Instant::now();
         let new_ptr = black_box(realloc(ptr, 1024 * 1024));
         let elapsed = start.elapsed().as_nanos();
+        assert!(!new_ptr.is_null(), "realloc failed");
         black_box(write_bytes(new_ptr, 1, 1024 * 1024));
         let usable_size = malloc_usable_size(new_ptr);
         println!(
             "Big realloc shrink take (2mb ->1mb) {}, usable size {}",
             elapsed, usable_size
         );
-        assert!(!new_ptr.is_null(), "realloc failed");
         free(new_ptr);
     }
 }

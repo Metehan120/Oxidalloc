@@ -2,6 +2,7 @@ use crate::va::bitmap::VA_MAP;
 
 pub mod bitmap;
 pub mod bootstrap;
+mod rng;
 
 #[must_use]
 pub const fn align_to(size: usize, align: usize) -> usize {

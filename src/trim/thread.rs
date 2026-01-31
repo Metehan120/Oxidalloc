@@ -6,13 +6,11 @@ use std::{
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, get_clock,
     trim::{TimeDecay, gtrim::GTrim},
-    va::bootstrap::{SHUTDOWN, register_shutdown},
 };
 
 static TOTAL_TIME_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 static LAST_TRIM_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
-static SHUTDOWN_REGISTERED: AtomicU8 = AtomicU8::new(0);
 
 pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
 pub static PTRIM_DECAY: AtomicU8 = AtomicU8::new(0);
@@ -55,10 +53,11 @@ fn check_memory_pressure() -> usize {
             return 50;
         }
 
-        let total_ram = info.totalram as usize;
-        let free_ram = info.freeram as usize;
-        let total_swap = info.totalswap as usize;
-        let free_swap = info.freeswap as usize;
+        let unit = info.mem_unit as usize;
+        let total_ram = (info.totalram as usize).saturating_mul(unit);
+        let free_ram = (info.freeram as usize).saturating_mul(unit);
+        let total_swap = (info.totalswap as usize).saturating_mul(unit);
+        let free_swap = (info.freeswap as usize).saturating_mul(unit);
 
         let total_available = free_ram + free_swap;
         let total_memory = total_ram + total_swap;
@@ -73,21 +72,14 @@ fn check_memory_pressure() -> usize {
 }
 
 pub unsafe fn spawn_gtrim_thread() {
-    if SHUTDOWN_REGISTERED
-        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-        .is_ok()
-    {
-        register_shutdown();
-    }
-
     std::thread::spawn(|| {
-        while !SHUTDOWN.load(Ordering::Acquire) {
+        loop {
             let decay = TimeDecay::from_u8(GLOBAL_DECAY.load(Ordering::Relaxed));
             std::thread::sleep(Duration::from_millis(decay.get_trim_time()));
 
             TOTAL_TIME_GLOBAL.fetch_add(decay.get_trim_time() as usize, Ordering::Relaxed);
 
-            let time = get_clock().elapsed().as_millis() as usize;
+            let time = get_clock().elapsed().as_secs() as u32;
             OX_CURRENT_STAMP = time;
 
             if decide_global(&decay) {

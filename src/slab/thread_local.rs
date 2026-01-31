@@ -1,28 +1,29 @@
-#[cfg(feature = "hardened-linked-list")]
-use libc::getrandom;
-use libc::pthread_setspecific;
 use std::{
+    cell::UnsafeCell,
     hint::{likely, unlikely},
     os::raw::c_void,
     ptr::null_mut,
 };
 
+use libc::{SYS_getcpu, syscall};
+
+#[cfg(feature = "hardened-linked-list")]
+use crate::sys::memory_system::getrandom;
 use crate::{
-    MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
-    internals::oncelock::OnceLock,
+    MAX_INTERCONNECT_CACHE, MAX_NUMA_NODES, MetaData, OxHeader, OxidallocError,
     slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     va::is_ours,
 };
 
-unsafe fn get_numa_node_id() -> usize {
+unsafe fn get_numa_node_id() -> (usize, usize) {
     let mut cpu = 0;
     let mut node = 0;
 
     // get node id so we can use it for numa allocation
-    libc::syscall(libc::SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
+    syscall(SYS_getcpu, &mut cpu, &mut node, null_mut::<c_void>());
 
-    node as usize
+    (node as usize, cpu as usize)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -37,19 +38,12 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
-pub static THREAD_KEY: OnceLock<u32> = OnceLock::new();
-pub fn init_thread_key() {
-    unsafe {
-        THREAD_KEY.get_or_init(|| {
-            let mut key = 0;
-            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-            key
-        })
-    };
-}
+struct CleanupHandler;
 
-pub(crate) fn reset_fork_once() {
-    THREAD_KEY.reset_on_fork();
+impl Drop for CleanupHandler {
+    fn drop(&mut self) {
+        unsafe { cleanup_thread_cache(TLS) };
+    }
 }
 
 #[repr(C)]
@@ -63,12 +57,22 @@ pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
     pub pending: [*mut MetaData; NUM_SIZE_CLASSES],
     pub numa_node_id: usize,
+    pub cache_id: usize,
     #[cfg(feature = "hardened-linked-list")]
     pub xor_key: usize,
 }
 
 #[thread_local]
 pub static mut TLS: *mut ThreadLocalEngine = null_mut();
+#[thread_local]
+static TLS_DESTRUCTOR: UnsafeCell<Option<CleanupHandler>> = UnsafeCell::new(None);
+
+#[inline(always)]
+unsafe fn touch_tls() {
+    let slot = TLS_DESTRUCTOR.get();
+    core::ptr::write_volatile(slot, Some(CleanupHandler));
+    core::ptr::read_volatile(slot);
+}
 
 impl ThreadLocalEngine {
     #[inline(always)]
@@ -89,7 +93,7 @@ impl ThreadLocalEngine {
 
     #[cold]
     #[inline(never)]
-    pub unsafe fn init_tls(key: u32) -> *mut ThreadLocalEngine {
+    pub unsafe fn init_tls() -> *mut ThreadLocalEngine {
         let total_size = size_of::<ThreadLocalEngine>();
 
         let cache = mmap_memory(
@@ -108,24 +112,22 @@ impl ThreadLocalEngine {
             )
         }) as *mut ThreadLocalEngine;
 
-        let numa = get_numa_node_id();
+        let (numa, core) = get_numa_node_id();
 
         #[cfg(feature = "hardened-linked-list")]
-        let mut rand: usize = 0;
+        let rand_s: usize;
         #[cfg(feature = "hardened-linked-list")]
         {
-            let res = getrandom(
-                &mut rand as *mut usize as *mut c_void,
-                size_of::<usize>(),
-                0,
-            );
-            if res as usize != size_of::<usize>() {
+            let mut rand_slice = [0u8; 8];
+            let res = getrandom(&mut rand_slice);
+            if res.is_err() {
                 OxidallocError::SecurityViolation.log_and_abort(
                     null_mut(),
                     "Failed to generate per-thread encryption key",
                     None,
                 );
             }
+            rand_s = usize::from_ne_bytes(rand_slice);
         }
 
         // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
@@ -140,12 +142,13 @@ impl ThreadLocalEngine {
                 }; NUM_SIZE_CLASSES],
                 pending: [const { null_mut() }; NUM_SIZE_CLASSES],
                 numa_node_id: (numa % MAX_NUMA_NODES),
+                cache_id: (core % MAX_INTERCONNECT_CACHE),
                 #[cfg(feature = "hardened-linked-list")]
-                xor_key: rand,
+                xor_key: rand_s,
             },
         );
 
-        pthread_setspecific(key, cache as *mut c_void);
+        touch_tls();
         TLS = cache;
 
         cache
@@ -162,15 +165,9 @@ impl ThreadLocalEngine {
     #[inline(never)]
     #[cold]
     pub unsafe fn get_or_init_cold() -> &'static mut ThreadLocalEngine {
-        let key = *THREAD_KEY.get();
+        TLS = Self::init_tls();
 
-        let mut tls = libc::pthread_getspecific(key) as *mut ThreadLocalEngine;
-        if tls.is_null() {
-            tls = Self::init_tls(key);
-        }
-        TLS = tls;
-
-        &mut *tls
+        &mut *TLS
     }
 
     #[inline(always)]
@@ -185,6 +182,11 @@ impl ThreadLocalEngine {
         let header = self.xor_ptr(current_header);
 
         let next = (*header).next;
+        #[cfg(not(feature = "hardened-linked-list"))]
+        if likely(!next.is_null()) {
+            prefetch(next as *const u8);
+        }
+        #[cfg(feature = "hardened-linked-list")]
         if likely(!next.is_null()) {
             prefetch(self.xor_ptr(next) as *const u8);
         }
@@ -234,12 +236,8 @@ impl ThreadLocalEngine {
     }
 }
 
-unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
-    let key = *THREAD_KEY.get();
+unsafe fn cleanup_thread_cache(cache: *mut ThreadLocalEngine) {
     TLS = null_mut();
-    pthread_setspecific(key, null_mut());
-
-    let cache = cache_ptr as *mut ThreadLocalEngine;
     if cache.is_null() {
         return;
     }
@@ -279,13 +277,13 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
                 count += 1;
             }
 
-            GlobalHandler.push_to_global(class, (*cache).numa_node_id, head, tail, count);
+            GlobalHandler.push_to_global(class, head, tail, count);
         }
     }
 
     let total_size = size_of::<ThreadLocalEngine>();
 
-    let _ = unmap_memory(cache_ptr, total_size);
+    let _ = unmap_memory(cache as *mut c_void, total_size);
 }
 
 #[cfg(test)]
@@ -314,7 +312,6 @@ mod tests {
                 header,
                 OxHeader {
                     next: null_mut(),
-                    size: size_of::<OxHeader>(),
                     class: 0,
                     magic: FREED_MAGIC,
                     life_time: 0,

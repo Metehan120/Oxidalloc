@@ -1,10 +1,11 @@
-use libc::{RTLD_NEXT, c_char, c_void, dlsym, size_t};
+use libc::{RTLD_NEXT, dlsym};
 use std::{
+    os::raw::{c_char, c_void},
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use crate::internals::once::Once;
+use crate::internals::{once::Once, size_t};
 
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type ReallocFn = unsafe extern "C" fn(*mut c_void, size_t) -> *mut c_void;

@@ -37,9 +37,10 @@ fn stress_organized_thread_calls() {
 #[test]
 fn stress_thread_with_random_calls() {
     let num_thread = thread::available_parallelism().unwrap();
+    let mut threads = Vec::new();
 
     for _ in 0..num_thread.get() {
-        std::thread::spawn(|| {
+        threads.push(std::thread::spawn(|| {
             let call_needed = rand::random_range(0..2048);
             let thread_id = thread::current().id();
 
@@ -54,16 +55,21 @@ fn stress_thread_with_random_calls() {
                 thread_id,
                 1024 * call_needed
             );
-        });
+        }));
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }
 
 #[test]
 fn stress_thread_call() {
     let num_thread = thread::available_parallelism().unwrap();
+    let mut threads = Vec::new();
 
     for _ in 0..num_thread.get() {
-        std::thread::spawn(|| {
+        threads.push(std::thread::spawn(|| {
             let thread_id = thread::current().id();
             let call_needed = 1024;
 
@@ -78,16 +84,21 @@ fn stress_thread_call() {
                 thread_id,
                 1024 * call_needed
             );
-        });
+        }));
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }
 
 #[test]
 fn stress_test_random_malloc_multithread() {
     let num_thread = thread::available_parallelism().unwrap();
+    let mut threads = Vec::new();
 
     for _ in 0..num_thread.get() {
-        std::thread::spawn(|| {
+        threads.push(std::thread::spawn(|| {
             let thread_id = thread::current().id();
             let call_needed = 1024;
 
@@ -103,16 +114,21 @@ fn stress_test_random_malloc_multithread() {
                 thread_id,
                 1024 * call_needed
             );
-        });
+        }));
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }
 
 #[test]
 fn stress_thread_with_random_calls_and_random_mallocs() {
     let num_thread = thread::available_parallelism().unwrap();
+    let mut threads = Vec::new();
 
     for _ in 0..num_thread.get() {
-        std::thread::spawn(|| {
+        threads.push(std::thread::spawn(|| {
             let call_needed = rand::random_range(0..2048);
             let thread_id = thread::current().id();
 
@@ -128,6 +144,10 @@ fn stress_thread_with_random_calls_and_random_mallocs() {
                 thread_id,
                 1024 * call_needed
             );
-        });
+        }));
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }

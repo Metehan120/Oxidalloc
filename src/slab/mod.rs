@@ -4,6 +4,7 @@ use crate::{HEADER_SIZE, OxHeader, internals::oncelock::OnceLock, va::align_to};
 
 pub mod bulk_allocation;
 pub mod global;
+pub mod interconnect;
 pub mod quarantine;
 pub mod thread_local;
 
@@ -38,12 +39,9 @@ pub const ITERATIONS: [usize; 34] = [
     1, 1, 1, 1, 1, 1, 1,
 ];
 
-const TLS_BIG_CLASS_BYTES: usize = 1024 * 128;
-// User can change this based on their needs:
-// 512kb for normal workloads; faster response
-// 256kb for less memory usage
-const TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 196;
-const TLS_SMALL_CLASS_BYTES: usize = 1024 * 256;
+const TLS_BIG_CLASS_BYTES: usize = 1024 * 64;
+const TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 96;
+const TLS_SMALL_CLASS_BYTES: usize = 1024 * 128;
 pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     let mut arr = [0; NUM_SIZE_CLASSES];
     let mut i = 0;
@@ -51,8 +49,8 @@ pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     while i < NUM_SIZE_CLASSES {
         let payload = SIZE_CLASSES[i];
         let block_size = align_to(payload + HEADER_SIZE, 16);
-        let mut blocks = if block_size > TLS_MEDIUM_CLASS_BYTES {
-            1
+        let mut blocks = if block_size > 1024 * 1024 * 16 {
+            0
         } else {
             if payload < 256 {
                 TLS_SMALL_CLASS_BYTES / block_size
@@ -74,10 +72,10 @@ pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
     arr
 };
 
-pub static SIZE_LUT: [u8; 64] = {
-    let mut lut = [0u8; 64];
+pub static SIZE_LUT: [u8; 256] = {
+    let mut lut = [0u8; 256];
     let mut i = 0;
-    while i < 64 {
+    while i < 256 {
         let size = (i + 1) * 16;
         let mut class = 0;
         while class < 34 && SIZE_CLASSES[class] < size {
@@ -106,7 +104,7 @@ pub fn match_size_class(size: usize) -> Option<usize> {
         return None;
     }
 
-    if size <= 1024 {
+    if unlikely(size <= 4096 && size > 0) {
         let index = (size - 1) >> 4;
         return Some(unsafe { *SIZE_LUT.get_unchecked(index) as usize });
     }
@@ -116,7 +114,7 @@ pub fn match_size_class(size: usize) -> Option<usize> {
 
 #[inline(always)]
 fn slow_path_match(size: usize) -> Option<usize> {
-    for i in 15..NUM_SIZE_CLASSES {
+    for i in 0..NUM_SIZE_CLASSES {
         if size <= SIZE_CLASSES[i] {
             return Some(i);
         }
@@ -132,24 +130,6 @@ pub unsafe fn xor_ptr_general(ptr: *mut OxHeader, _key: usize) -> *mut OxHeader 
             return std::ptr::null_mut();
         }
         ((ptr as usize) ^ _key) as *mut OxHeader
-    }
-
-    #[cfg(not(feature = "hardened-linked-list"))]
-    {
-        ptr
-    }
-}
-
-#[inline(always)]
-pub unsafe fn xor_ptr_numa(ptr: *mut OxHeader, _numa: usize) -> *mut OxHeader {
-    #[cfg(feature = "hardened-linked-list")]
-    {
-        use crate::va::bootstrap::PER_NUMA_KEY;
-
-        if unlikely(ptr.is_null()) {
-            return std::ptr::null_mut();
-        }
-        ((ptr as usize) ^ PER_NUMA_KEY[_numa]) as *mut OxHeader
     }
 
     #[cfg(not(feature = "hardened-linked-list"))]

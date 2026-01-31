@@ -25,19 +25,14 @@ impl Once {
 
         if self
             .state
-            .compare_exchange(
-                0,
-                1,
-                std::sync::atomic::Ordering::Acquire,
-                std::sync::atomic::Ordering::Relaxed,
-            )
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
             f();
-            self.state.store(2, std::sync::atomic::Ordering::Release);
+            self.state.store(2, Ordering::Release);
         }
 
-        while self.state.load(std::sync::atomic::Ordering::Acquire) != 2 {
+        while self.state.load(Ordering::Acquire) != 2 {
             spin_loop();
         }
     }

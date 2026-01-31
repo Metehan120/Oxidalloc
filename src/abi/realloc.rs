@@ -1,15 +1,22 @@
-use libc::{__errno_location, size_t};
 use std::{os::raw::c_void, ptr::null_mut};
 
 use crate::{
-    HEADER_SIZE, OX_ALIGN_TAG, OxHeader,
+    HEADER_SIZE, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::{
         fallback::realloc_fallback,
         free::free,
         malloc::{malloc, validate_ptr},
     },
+    internals::{
+        __errno_location,
+        hashmap::{BIG_ALLOC_MAP, BigAllocMeta},
+        size_t,
+    },
     slab::{ITERATIONS, SIZE_CLASSES, match_size_class},
-    sys::memory_system::{MadviseFlags, RMProtFlags, madvise, protect_memory},
+    sys::{
+        NOMEM,
+        memory_system::{MadviseFlags, RMProtFlags, madvise, protect_memory},
+    },
     va::{align_to, bitmap::VA_MAP, is_ours},
 };
 
@@ -21,6 +28,11 @@ const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     if ptr.is_null() {
         return malloc(new_size);
+    }
+
+    if new_size > 1024 * 1024 * 1024 * 3 {
+        *__errno_location() = NOMEM;
+        return null_mut();
     }
 
     if !is_ours(ptr as usize) {
@@ -49,8 +61,21 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
     validate_ptr(header);
 
-    let raw_capacity = (*header).size as usize;
-    let old_capacity = raw_capacity.saturating_sub(offset);
+    let raw_capacity;
+    if (*header).class == 100 {
+        raw_capacity = BIG_ALLOC_MAP
+            .get(header as usize)
+            .map(|meta| meta.size)
+            .unwrap_or_else(|| {
+                OxidallocError::AttackOrCorruption.log_and_abort(
+                    header as *mut c_void,
+                    "Missing big allocation metadata during realloc",
+                    None,
+                )
+            });
+    } else {
+        raw_capacity = SIZE_CLASSES[(*header).class as usize];
+    }
 
     let old_class = (*header).class;
     let new_class = match_size_class(new_size);
@@ -61,7 +86,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     };
 
     if let Some(new) = new_class {
-        if old_class as usize == new {
+        if old_class as usize == new && raw_capacity.saturating_sub(offset) >= new_size {
             return ptr;
         }
     }
@@ -96,7 +121,19 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
 
         if new_total == old_total {
             (*header).class = new_class;
-            (*header).size = size;
+            if old_class == 100 && new_class != 100 {
+                let _ = BIG_ALLOC_MAP.remove(header as usize);
+            } else if new_class == 100 {
+                BIG_ALLOC_MAP.insert(
+                    header as usize,
+                    BigAllocMeta {
+                        size,
+                        class: 100,
+                        life_time: 0,
+                        flags: 0,
+                    },
+                );
+            }
             return ptr;
         }
 
@@ -119,7 +156,19 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
                     VA_MAP.free(freed_start, freed_len);
 
                     (*header).class = new_class;
-                    (*header).size = size;
+                    if old_class == 100 && new_class != 100 {
+                        let _ = BIG_ALLOC_MAP.remove(header as usize);
+                    } else if new_class == 100 {
+                        BIG_ALLOC_MAP.insert(
+                            header as usize,
+                            BigAllocMeta {
+                                size,
+                                class: 100,
+                                life_time: 0,
+                                flags: 0,
+                            },
+                        );
+                    }
                 };
             }
 
@@ -142,7 +191,20 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
             ) {
                 Ok(_) => {
                     (*header).class = new_class;
-                    (*header).size = size;
+
+                    if old_class == 100 && new_class != 100 {
+                        let _ = BIG_ALLOC_MAP.remove(header as usize);
+                    } else if new_class == 100 {
+                        BIG_ALLOC_MAP.insert(
+                            header as usize,
+                            BigAllocMeta {
+                                size,
+                                class: 100,
+                                life_time: 0,
+                                flags: 0,
+                            },
+                        );
+                    }
 
                     return ptr;
                 }
@@ -163,6 +225,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         return std::ptr::null_mut();
     }
 
+    let old_capacity = raw_capacity.saturating_sub(offset);
     std::ptr::copy_nonoverlapping(
         ptr as *const u8,
         new_ptr as *mut u8,
@@ -183,7 +246,7 @@ pub unsafe extern "C" fn reallocarray(
         Some(s) => s,
         None => {
             if let Some(errno_ptr) = __errno_location().as_mut() {
-                *errno_ptr = libc::ENOMEM;
+                *errno_ptr = NOMEM;
             }
             return null_mut();
         }

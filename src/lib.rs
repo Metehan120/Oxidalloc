@@ -12,16 +12,10 @@
 )]
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
-#![feature(native_link_modifiers_as_needed)]
 
-use std::{
-    fmt::Debug,
-    sync::atomic::{AtomicBool, AtomicUsize},
-    time::Instant,
-    usize,
-};
+use std::{fmt::Debug, sync::atomic::AtomicUsize, time::Instant, usize};
 
-use crate::{internals::oncelock::OnceLock, sys::memory_system::SysErr};
+use crate::internals::oncelock::OnceLock;
 
 pub mod abi;
 pub mod big_allocation;
@@ -36,24 +30,34 @@ pub enum Err {
     OutOfMemory,
 }
 
-pub static MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
+pub const MAX_INTERCONNECT_CACHE: usize = 4;
+pub const MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
 pub static mut REAL_NUMA_NODES: usize = 0;
 
 pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
-pub const OX_ALIGN_TAG: usize = u64::from_le_bytes(*b"OXIDALGN") as usize;
+pub const OX_ALIGN_TAG: usize = usize::from_le_bytes(*b"OXIDALGN");
 pub const FLAG_ALIGNED: u8 = 2;
 
+#[cfg(feature = "hardened-malloc")]
 pub static mut MAGIC: u64 = 0x01B01698BF0BEEF;
+#[cfg(feature = "hardened-malloc")]
 pub static mut FREED_MAGIC: u64 = 0x12BE34FF09EBEAFF;
+
+#[cfg(not(feature = "hardened-malloc"))]
+pub static mut MAGIC: u8 = 0;
+#[cfg(not(feature = "hardened-malloc"))]
+pub static mut FREED_MAGIC: u8 = 1;
+
 pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
-pub static mut OX_CURRENT_STAMP: usize = 0;
+pub static mut OX_CURRENT_STAMP: u32 = 0;
+
 pub static TOTAL_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 pub static TOTAL_IN_USE: AtomicUsize = AtomicUsize::new(0);
 pub static AVERAGE_BLOCK_TIMES_PTHREAD: AtomicUsize = AtomicUsize::new(3000);
 pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
-pub static OX_USE_THP: AtomicBool = AtomicBool::new(false);
+pub static mut OX_FORCE_THP: bool = false;
 pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
 
 pub fn get_clock() -> &'static Instant {
@@ -73,24 +77,24 @@ pub struct MetaData {
     pub next: usize,
 }
 
+#[derive(Debug, Clone)]
 #[cfg(not(feature = "hardened-linked-list"))]
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub next: *mut OxHeader,
-    pub size: usize,
     pub class: u8,
-    pub magic: u64,
-    pub life_time: usize,
+    pub magic: u8,
+    pub life_time: u32,
 }
 
+#[derive(Debug, Clone)]
 #[cfg(feature = "hardened-linked-list")]
 #[repr(C, align(16))]
 pub struct OxHeader {
     pub magic: u64,
-    pub size: usize,
     pub next: *mut OxHeader,
     pub class: u8,
-    pub life_time: usize,
+    pub life_time: u32,
 }
 
 #[repr(u32)]
@@ -107,6 +111,7 @@ pub enum OxidallocError {
     ReservationExceeded = 0x1009,
     SecurityViolation = 0x100A,
     AttackOrCorruption = 0x100B,
+    ICCFailedToInitialize = 0x100C,
 }
 
 impl Debug for OxidallocError {
@@ -124,24 +129,17 @@ impl Debug for OxidallocError {
             Self::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
             Self::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
             Self::AttackOrCorruption => write!(f, "AttackOrCorruption (0x100B)"),
+            Self::ICCFailedToInitialize => write!(f, "ICCFailedToInitialize (0x100C)"),
         }
     }
 }
 
 impl OxidallocError {
-    pub fn log_and_abort(
-        &self,
-        ptr: *mut std::ffi::c_void,
-        extra: &str,
-        errno: Option<SysErr>,
-    ) -> ! {
+    pub fn log_and_abort(&self, ptr: *mut std::ffi::c_void, extra: &str, errno: Option<i32>) -> ! {
         if let Some(errno) = errno {
             eprintln!(
                 "[OXIDALLOC FATAL] {:?} at ptr={:p} | {} | errno({})",
-                self,
-                ptr,
-                extra,
-                errno.get_errno()
+                self, ptr, extra, errno
             );
         } else {
             eprintln!("[OXIDALLOC FATAL] {:?} at ptr={:p} | {}", self, ptr, extra);

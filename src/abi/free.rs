@@ -1,5 +1,3 @@
-use libc::size_t;
-
 use crate::{
     FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     abi::{
@@ -7,6 +5,7 @@ use crate::{
         malloc::{HOT_READY, TOTAL_MALLOC_FREE},
     },
     big_allocation::big_free,
+    internals::size_t,
     slab::{TLS_MAX_BLOCKS, global::GlobalHandler, thread_local::ThreadLocalEngine},
     va::is_ours,
 };
@@ -88,7 +87,7 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
     let thread = ThreadLocalEngine::get_or_init();
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
-        GlobalHandler.push_to_global(class, thread.numa_node_id, header, header, 1);
+        GlobalHandler.push_to_global(class, header, header, 1);
         return;
     };
 

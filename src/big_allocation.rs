@@ -1,5 +1,6 @@
 use crate::{
-    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_FORCE_THP, OxHeader, OxidallocError,
+    internals::hashmap::{BIG_ALLOC_MAP, BigAllocMeta},
     sys::memory_system::{
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, madvise, mmap_memory,
         protect_memory,
@@ -13,7 +14,11 @@ use std::{
 
 pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     // Align size to the page size so we don't explode later
-    let aligned_total = align_to(size + HEADER_SIZE, 4096);
+    let aligned_total = if OX_FORCE_THP {
+        align_to(size + HEADER_SIZE, 1024 * 1024 * 2)
+    } else {
+        align_to(size + HEADER_SIZE, 4096)
+    };
 
     // Reserve virtual space first
     let hint = match VA_MAP.alloc(aligned_total) {
@@ -47,7 +52,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         hint as *mut c_void
     } as *mut OxHeader;
 
-    if OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
+    if aligned_total % (1024 * 1024 * 2) == 0 {
         let _ = madvise(
             actual_ptr as *mut c_void,
             aligned_total,
@@ -59,10 +64,19 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         actual_ptr,
         OxHeader {
             next: null_mut(),
-            size,
             class: 100,
             magic: MAGIC,
             life_time: 0,
+        },
+    );
+
+    BIG_ALLOC_MAP.insert(
+        actual_ptr as usize,
+        BigAllocMeta {
+            size,
+            class: 100,
+            life_time: 0,
+            flags: 0,
         },
     );
 
@@ -71,10 +85,27 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
 
 pub unsafe fn big_free(ptr: *mut OxHeader) {
     let header = ptr.sub(1);
-    let payload_size = (*header).size as usize;
+    let payload_size = BIG_ALLOC_MAP
+        .remove(header as usize)
+        .map(|meta| meta.size)
+        .unwrap_or_else(|| {
+            OxidallocError::AttackOrCorruption.log_and_abort(
+                header as *mut c_void,
+                "Missing big allocation metadata during free",
+                None,
+            )
+        });
 
     // Align size back to original size
-    let total_size = align_to(payload_size + HEADER_SIZE, 4096);
+    let total_size = if OX_FORCE_THP {
+        align_to(payload_size + HEADER_SIZE, 1024 * 1024 * 2)
+    } else {
+        align_to(payload_size + HEADER_SIZE, 4096)
+    };
+
+    if total_size % (1024 * 1024 * 2) == 0 {
+        let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
+    }
 
     // Make the header look free before we potentially lose write access.
     (*header).magic = FREED_MAGIC;

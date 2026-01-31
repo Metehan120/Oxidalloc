@@ -4,8 +4,7 @@ use std::{
 };
 
 use crate::{
-    Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_USE_THP, OxHeader,
-    OxidallocError,
+    Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, global::GlobalHandler,
         thread_local::ThreadLocalEngine,
@@ -25,9 +24,8 @@ unsafe fn init_blocks(
     class: u8,
     metadata: *mut MetaData,
     block_size: usize,
-    payload_size: usize,
     max_blocks: usize,
-    current_stamp: usize,
+    current_stamp: u32,
 ) -> (*mut OxHeader, *mut OxHeader, usize) {
     let remaining = remaining_blocks(metadata, block_size);
     if remaining == 0 {
@@ -46,7 +44,6 @@ unsafe fn init_blocks(
             current_header,
             OxHeader {
                 next: head,
-                size: payload_size,
                 class,
                 magic: FREED_MAGIC,
                 life_time: current_stamp,
@@ -70,8 +67,8 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
     let num_blocks = ITERATIONS[class];
     let blocks_per_4k = 4096 / block_size;
-    let max_init = if blocks_per_4k >= 128 {
-        128
+    let max_init = if blocks_per_4k >= 48 {
+        48
     } else {
         blocks_per_4k.max(1)
     };
@@ -79,14 +76,8 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
 
     let pending = thread.pending[class];
     if !pending.is_null() {
-        let (head, tail, count) = init_blocks(
-            class as u8,
-            pending,
-            block_size,
-            payload_size,
-            max_init,
-            current_stamp,
-        );
+        let (head, tail, count) =
+            init_blocks(class as u8, pending, block_size, max_init, current_stamp);
         if count > 0 {
             thread.push_to_thread_tailed(class, head, tail, count);
             if remaining_blocks(pending, block_size) == 0 {
@@ -130,24 +121,22 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
         },
     );
 
-    if class == NUM_SIZE_CLASSES && OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = madvise(mem, total, MadviseFlags::HUGEPAGE);
+    if class == NUM_SIZE_CLASSES - 1 {
+        let _ = madvise(
+            (mem as *mut u8).add(HEADER_SIZE) as *mut c_void,
+            payload_size,
+            MadviseFlags::HUGEPAGE,
+        );
     }
 
-    let (head, tail, count) = init_blocks(
-        class as u8,
-        metadata,
-        block_size,
-        payload_size,
-        max_init,
-        current_stamp,
-    );
+    let (head, tail, count) =
+        init_blocks(class as u8, metadata, block_size, max_init, current_stamp);
     if count == 0 {
         return Err(Err::OutOfMemory);
     }
 
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
-        GlobalHandler.push_to_global(class, thread.numa_node_id, head, tail, count);
+        GlobalHandler.push_to_global(class, head, tail, count);
         if remaining_blocks(metadata, block_size) > 0 {
             thread.pending[class] = metadata;
         }

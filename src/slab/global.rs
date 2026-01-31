@@ -1,56 +1,10 @@
-#[cfg(feature = "hardened-linked-list")]
-use crate::internals::lock::GlobalLock;
-use crate::{
-    MAX_NUMA_NODES, OxHeader, REAL_NUMA_NODES,
-    slab::{NUM_SIZE_CLASSES, xor_ptr_numa},
-};
-use std::{
-    hint::{likely, unlikely},
-    sync::atomic::{AtomicUsize, Ordering},
-};
-use std::{ptr::null_mut, sync::atomic::AtomicBool};
-
-const TAG_BITS: usize = 4;
-const TAG_MASK: usize = (1 << TAG_BITS) - 1;
-const PTR_MASK: usize = !TAG_MASK;
-
-#[inline(always)]
-fn pack(ptr: *mut OxHeader, tag: usize) -> usize {
-    (ptr as usize) | (tag & TAG_MASK)
-}
-
-#[inline(always)]
-fn unpack_ptr(val: usize) -> *mut OxHeader {
-    (val & PTR_MASK) as *mut OxHeader
-}
-
-#[inline(always)]
-fn unpack_tag(val: usize) -> usize {
-    val & TAG_MASK
-}
+use crate::{OxHeader, slab::interconnect::ICC};
 
 // ----------------------------------
 
-#[repr(C, align(64))]
-pub struct NumaGlobal {
-    pub list: [AtomicUsize; NUM_SIZE_CLASSES],
-    pub usage: [AtomicUsize; NUM_SIZE_CLASSES],
-}
-
-pub static GLOBAL_INIT: AtomicBool = AtomicBool::new(true);
-pub static GLOBAL: [NumaGlobal; MAX_NUMA_NODES] = [const {
-    NumaGlobal {
-        list: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
-        usage: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
-    }
-}; MAX_NUMA_NODES];
-
 #[cfg(feature = "hardened-linked-list")]
-static GLOBAL_LOCKS: GlobalLock = GlobalLock::new();
-
-#[cfg(feature = "hardened-linked-list")]
-pub(crate) fn reset_global_locks() {
-    GLOBAL_LOCKS.reset_on_fork();
+pub(crate) unsafe fn reset_global_locks() {
+    ICC.reset_on_fork();
 }
 
 pub struct GlobalHandler;
@@ -59,142 +13,93 @@ impl GlobalHandler {
     pub unsafe fn push_to_global(
         &self,
         class: usize,
-        numa_node_id: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
         #[cfg(feature = "hardened-linked-list")]
-        let _guard = GLOBAL_LOCKS.lock(numa_node_id, class);
-
-        #[cfg(feature = "hardened-linked-list")]
         {
-            use crate::slab::xor_ptr_numa;
-
             let mut curr = head;
             while curr != tail {
+                use crate::{slab::xor_ptr_general, va::bootstrap::NUMA_KEY};
+
                 let next_raw = (*curr).next;
-                (*curr).next = xor_ptr_numa(next_raw, numa_node_id);
+                (*curr).next = xor_ptr_general(next_raw, NUMA_KEY);
                 curr = next_raw;
             }
         }
 
-        loop {
-            let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
-            let cur_ptr = unpack_ptr(cur);
-            let cur_tag = unpack_tag(cur);
-
-            (*tail).next = cur_ptr;
-
-            let new = pack(
-                xor_ptr_numa(head, numa_node_id) as *mut OxHeader,
-                cur_tag.wrapping_add(1),
-            );
-
-            if GLOBAL[numa_node_id].list[class]
-                .compare_exchange(cur, new, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                GLOBAL[numa_node_id].usage[class].fetch_add(batch_size, Ordering::Relaxed);
-                return;
-            }
-        }
+        ICC.try_push(class, head, tail, batch_size);
     }
 
-    pub unsafe fn pop_from_global(
-        &self,
-        preferred_node: usize,
-        class: usize,
-        batch_size: usize,
-    ) -> *mut OxHeader {
-        let res = self.pop_from_shard(preferred_node, class, batch_size);
-        if likely(!res.is_null()) {
-            return res;
-        }
-
-        // Equals to 0 is just a safety check
-        if REAL_NUMA_NODES == 1 || unlikely(REAL_NUMA_NODES == 0) {
-            return null_mut();
-        }
-
-        // If resident is null (empty) then try to steal from other nodes
-        //
-        // # Safety
-        // The caller must ensure `preffered_node` is a valid index within `MAX_NUMA_NODES`.
-        // Returns `null_mut()` if no blocks are available in any NUMA shard.
-        for i in 1..(REAL_NUMA_NODES % MAX_NUMA_NODES) {
-            let neighbor = (preferred_node + i) % MAX_NUMA_NODES;
-            let res = self.pop_from_shard(neighbor, class, batch_size);
-            if !res.is_null() {
-                return res;
-            }
-        }
-
-        null_mut()
+    pub unsafe fn pop_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
+        ICC.try_pop(class, batch_size)
     }
+}
 
-    pub unsafe fn pop_from_global_local(
-        &self,
-        numa_node_id: usize,
-        class: usize,
-        batch_size: usize,
-    ) -> *mut OxHeader {
-        self.pop_from_shard(numa_node_id, class, batch_size)
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::hint::black_box;
+    use std::ptr::null_mut;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+    use std::time::Instant;
 
-    unsafe fn pop_from_shard(
-        &self,
-        numa_node_id: usize,
-        class: usize,
-        batch_size: usize,
-    ) -> *mut OxHeader {
-        #[cfg(feature = "hardened-linked-list")]
-        let _guard = GLOBAL_LOCKS.lock(numa_node_id, class);
+    #[test]
+    fn test_global_speed_under_contention() {
+        let num_threads = 12;
+        let ops_per_thread = 50_000;
+        let class = 10;
+        let batch_size = 32;
 
-        loop {
-            let cur = GLOBAL[numa_node_id].list[class].load(Ordering::Relaxed);
-            let head_enc = unpack_ptr(cur);
-            let tag = unpack_tag(cur);
-            if unlikely(head_enc.is_null()) {
-                return null_mut();
-            }
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let mut handles = Vec::new();
 
-            let head = xor_ptr_numa(head_enc, numa_node_id);
+        let start_time = Instant::now();
 
-            let mut tail = head;
-            let mut count = 1;
-            for _ in 1..batch_size {
-                let next_enc = (*tail).next;
-                if unlikely(next_enc.is_null()) {
-                    break;
-                }
-                tail = xor_ptr_numa(next_enc, numa_node_id);
-                count += 1;
-            }
+        for _ in 0..num_threads {
+            let barrier = Arc::clone(&barrier);
 
-            let new_head_enc = (*tail).next;
-            let new = pack(new_head_enc, tag.wrapping_add(1));
+            handles.push(thread::spawn(move || {
+                let mut headers = vec![
+                    OxHeader {
+                        next: null_mut(),
+                        class: class as u8,
+                        magic: 0x42,
+                        life_time: 0,
+                    };
+                    batch_size * 2
+                ];
 
-            if GLOBAL[numa_node_id].list[class]
-                .compare_exchange(cur, new, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                GLOBAL[numa_node_id].usage[class].fetch_sub(count, Ordering::Relaxed);
+                barrier.wait();
 
-                #[cfg(feature = "hardened-linked-list")]
-                {
-                    let mut curr = head;
-                    while curr != tail {
-                        let next_enc = (*curr).next;
-                        let next_raw = xor_ptr_numa(next_enc, numa_node_id);
-                        (*curr).next = next_raw;
-                        curr = next_raw;
+                for _ in 0..ops_per_thread {
+                    let head = &mut headers[0] as *mut OxHeader;
+                    let tail = &mut headers[batch_size - 1] as *mut OxHeader;
+
+                    unsafe {
+                        black_box(GlobalHandler.push_to_global(class, head, tail, batch_size));
+
+                        let res = black_box(GlobalHandler.pop_from_global(class, batch_size));
+
+                        std::hint::black_box(res);
                     }
                 }
-                (*tail).next = null_mut();
-
-                return head;
-            }
+            }));
         }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let duration = start_time.elapsed();
+        let total_ops = num_threads * ops_per_thread * 2;
+        println!(
+            "\nTotal Atomic Ops: {}\nTime: {:?}\nAvg Latency: {:.2} ns/op",
+            total_ops,
+            duration,
+            duration.as_nanos() as f64 / total_ops as f64
+        );
     }
 }

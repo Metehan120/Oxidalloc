@@ -4,7 +4,7 @@ use std::{
 };
 
 #[cfg(feature = "hardened-linked-list")]
-use crate::{MAX_NUMA_NODES, slab::NUM_SIZE_CLASSES};
+use crate::slab::NUM_SIZE_CLASSES;
 
 pub struct _LockGuard(*const AtomicBool);
 
@@ -54,32 +54,30 @@ impl SerialLock {
 
 #[cfg(feature = "hardened-linked-list")]
 pub struct GlobalLock {
-    locks: [[SerialLock; NUM_SIZE_CLASSES]; MAX_NUMA_NODES],
+    locks: [SerialLock; NUM_SIZE_CLASSES],
 }
 
 #[cfg(feature = "hardened-linked-list")]
 impl GlobalLock {
     pub const fn new() -> Self {
         GlobalLock {
-            locks: [const { [const { SerialLock::new() }; NUM_SIZE_CLASSES] }; MAX_NUMA_NODES],
+            locks: [const { SerialLock::new() }; NUM_SIZE_CLASSES],
         }
     }
 
     #[inline(always)]
-    pub fn lock(&self, numa_node_id: usize, class: usize) -> _LockGuard {
-        self.locks[numa_node_id][class].lock()
+    pub fn lock(&self, class: usize) -> _LockGuard {
+        self.locks[class].lock()
     }
 
     #[inline(always)]
-    pub fn unlock(&self, numa_node_id: usize, class: usize) {
-        self.locks[numa_node_id][class].unlock();
+    pub fn unlock(&self, class: usize) {
+        self.locks[class].unlock();
     }
 
     pub fn reset_on_fork(&self) {
-        for node in 0..MAX_NUMA_NODES {
-            for class in 0..NUM_SIZE_CLASSES {
-                self.locks[node][class].reset_on_fork();
-            }
+        for class in 0..NUM_SIZE_CLASSES {
+            self.locks[class].reset_on_fork();
         }
     }
 }

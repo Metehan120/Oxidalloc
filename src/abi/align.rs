@@ -1,10 +1,13 @@
-use libc::size_t;
 use std::{
     os::raw::{c_int, c_void},
     ptr::null_mut,
 };
 
-use crate::abi::malloc::malloc;
+use crate::{
+    abi::malloc::malloc,
+    internals::size_t,
+    sys::{EINVAL, NOMEM},
+};
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
@@ -16,19 +19,19 @@ pub unsafe extern "C" fn posix_memalign(
     size: usize,
 ) -> c_int {
     if memptr.is_null() {
-        return libc::EINVAL;
+        return EINVAL;
     }
 
     let min = size_of::<*mut c_void>();
     if alignment < min || !alignment.is_power_of_two() {
-        return libc::EINVAL;
+        return EINVAL;
     }
 
     let Some(total_requested) = size
         .checked_add(alignment)
         .and_then(|v| v.checked_add(TAG_SIZE))
     else {
-        return libc::ENOMEM;
+        return NOMEM;
     };
 
     let mut raw = malloc(total_requested);
@@ -37,7 +40,7 @@ pub unsafe extern "C" fn posix_memalign(
         if !malloc.is_null() {
             raw = malloc;
         } else {
-            return libc::ENOMEM;
+            return NOMEM;
         };
     }
 
