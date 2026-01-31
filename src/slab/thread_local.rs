@@ -9,7 +9,9 @@ use std::{
 use crate::sys::memory_system::getrandom;
 use crate::{
     MetaData, OxHeader, OxidallocError,
-    slab::{NUM_SIZE_CLASSES, global::GlobalHandler, xor_ptr_general},
+    slab::{
+        NUM_SIZE_CLASSES, bulk_allocation::drain_pending, global::GlobalHandler, xor_ptr_general,
+    },
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     va::is_ours,
 };
@@ -261,6 +263,8 @@ unsafe fn cleanup_thread_cache(cache: *mut ThreadLocalEngine) {
 
             GlobalHandler.push_to_global(class, head, tail, count);
         }
+
+        drain_pending(&mut *cache, class);
     }
 
     let total_size = size_of::<ThreadLocalEngine>();

@@ -150,3 +150,25 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
 
     Ok(())
 }
+
+pub unsafe fn drain_pending(thread: &mut ThreadLocalEngine, class: usize) {
+    let pending = thread.pending[class];
+    if pending.is_null() {
+        return;
+    }
+
+    let payload_size = SIZE_CLASSES[class];
+    let block_size = align_to(payload_size + HEADER_SIZE, 16);
+    let current_stamp = OX_CURRENT_STAMP;
+    let remaining = remaining_blocks(pending, block_size);
+
+    if remaining > 0 {
+        let (head, tail, count) =
+            init_blocks(class as u8, pending, block_size, remaining, current_stamp);
+        if count > 0 {
+            GlobalHandler.push_to_global(class, head, tail, count);
+        }
+    }
+
+    thread.pending[class] = null_mut();
+}

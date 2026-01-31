@@ -85,6 +85,21 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
         1000
     };
 
+    if offset != 0 {
+        let new_ptr = malloc(new_size);
+        if new_ptr.is_null() {
+            return null_mut();
+        }
+        let old_capacity = raw_capacity.saturating_sub(offset);
+        std::ptr::copy_nonoverlapping(
+            ptr as *const u8,
+            new_ptr as *mut u8,
+            old_capacity.min(new_size),
+        );
+        free(ptr);
+        return new_ptr;
+    }
+
     if let Some(new) = new_class {
         if old_class as usize == new && raw_capacity.saturating_sub(offset) >= new_size {
             return ptr;
