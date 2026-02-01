@@ -23,6 +23,7 @@ explicit control over address-space and memory reclamation.
 ## **Warning:** Alpha quality
 
 - Do not expect rock-solid stability yet.
+- Small-block performance is not optimized yet; expect higher overhead for tiny allocations.
 - Long-running RSS behavior can vary; it is still being tuned and tested.
 - Hardening modes are not audited; use with caution.
 - Extensive use of `unsafe` is required for direct syscalls, pointer arithmetic, and lock-free structures.
@@ -160,19 +161,22 @@ cargo +nightly build --release --features hardened-linked-list
 
 ## Early benchmarks (Ryzen 5 5600X, CachyOS)
 
-These are preliminary and will be expanded as more suites are run.
+> Results vary by workload, kernel, and machine configuration.
 
-- 64B malloc+free (TLS, bench): 4.8 ns (Depending, could be higher or lower)
-- 4KB malloc+free (TLS, bench): 4.8 ns (Depending, could be higher or lower)
-- 1MB malloc+free (TLS, bench): 6.5 ns (Depending, could be higher or lower)
-- stress-ng: ~44M bogo ops/s (Depending, could be higher or lower)
+These numbers are preliminary and will be expanded as more benchmark suites are run.
 
-sh6bench (Depending, could be higher or lower):
+- 64B malloc+free (TLS, bench): ~4.8 ns
+- 4KB malloc+free (TLS, bench): ~4.8 ns
+- 1MB malloc+free (TLS, bench): ~6.5 ns
+- stress-ng: ~44M bogo ops/s
 
-Total elapsed time: 0.00 (0.1617 CPU) (601361296 clock ticks read from register)
-Occurred page faults: 13390
+### sh6bench
 
-For more extensive benchmark suites see [`benchmarks`](benchmarks/OVERVIEW.md).
+Total elapsed time: 0.00 (0.1617 CPU)  
+Clock ticks read from register: 601,361,296  
+Page faults: 13,390
+
+For more extensive benchmark suites, see [`benchmarks`](benchmarks/OVERVIEW.md).
 
 ## Tests and benchmarks
 

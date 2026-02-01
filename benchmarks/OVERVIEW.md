@@ -15,7 +15,7 @@ long-running services).
 
 - **CPU:** AMD Ryzen 5 5600X
 - **Memory:** 16 GB DDR4 @ 3200 MHz CL16
-- **OS:** Linux
+- **Kernel:** Linux 6.18.8-2-cachyos
 - **Distro:** CachyOS
 
 ---
