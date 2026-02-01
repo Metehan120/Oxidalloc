@@ -91,7 +91,7 @@ are not representative of real-world workloads.
 - Cache benchmarks  
   ![](plots/rss_cache.svg)
 
-- Sheel benchmark
+- Shell benchmarks  
   ![](plots/rss_shell.svg)
 
 ### Wall time
