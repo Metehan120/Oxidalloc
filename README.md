@@ -163,12 +163,12 @@ cargo +nightly build --release --features hardened-linked-list
 
 These are preliminary and will be expanded as more suites are run.
 
-- 64B malloc+free (TLS, bench): 5.1 ns (Depending)
-- 4KB malloc+free (TLS, bench): 5.1 ns (Depending)
-- 1MB malloc+free (TLS, bench): 6.5 ns (Depending)
-- stress-ng: ~44M bogo ops/s (Depending)
+- 64B malloc+free (TLS, bench): 4.8 ns (Depending, could be higher or lower)
+- 4KB malloc+free (TLS, bench): 4.8 ns (Depending, could be higher or lower)
+- 1MB malloc+free (TLS, bench): 6.5 ns (Depending, could be higher or lower)
+- stress-ng: ~44M bogo ops/s (Depending, could be higher or lower)
 
-sh6bench (Depending):
+sh6bench (Depending, could be higher or lower):
 
 Total elapsed time: 0.00 (0.1617 CPU) (601361296 clock ticks read from register)
 Occurred page faults: 13390

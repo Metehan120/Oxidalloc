@@ -286,6 +286,7 @@ pub struct Segment {
     va_start: usize,
     va_end: usize,
     pub map: AtomicPtr<AtomicU64>,
+    claim: AtomicPtr<AtomicU64>,
     hint: AtomicUsize,
     pub map_len: usize,
     pub full: AtomicBool,
@@ -367,6 +368,21 @@ impl VaBitmap {
             }
         };
 
+        let claim_raw = match mmap_memory(
+            null_mut(),
+            map_bytes,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
+        ) {
+            Ok(ptr) => ptr,
+            Err(_) => {
+                self.lock.unlock();
+                return None;
+            }
+        };
+
         let seg_ptr = match mmap_memory(
             null_mut(),
             size_of::<Segment>(),
@@ -398,6 +414,7 @@ impl VaBitmap {
                 va_start: user_va as usize,
                 va_end: end,
                 map: AtomicPtr::new(map_raw as *mut AtomicU64),
+                claim: AtomicPtr::new(claim_raw as *mut AtomicU64),
                 hint: AtomicUsize::new(seed % map_len),
                 map_len,
                 full: AtomicBool::new(false),
@@ -557,6 +574,11 @@ impl Segment {
     }
 
     #[inline(always)]
+    unsafe fn get_claim_map(&self) -> &[AtomicU64] {
+        std::slice::from_raw_parts(self.claim.load(Ordering::Acquire), self.map_len)
+    }
+
+    #[inline(always)]
     const fn max_bits(&self) -> usize {
         (self.va_end - self.va_start) / BLOCK_SIZE
     }
@@ -595,15 +617,13 @@ impl Segment {
                     let bit = (!chunk).trailing_zeros();
                     let mask = 1u64 << bit;
 
-                    if (map[i].fetch_or(mask, Ordering::Acquire) & mask) == 0 {
+                    let global_idx = (i * 64) + bit as usize;
+                    if unlikely(global_idx >= total_bits) {
+                        break;
+                    }
+
+                    if self.try_claim(global_idx, 1) {
                         self.hint.store(i, Ordering::Relaxed);
-
-                        let global_idx = (i * 64) + bit as usize;
-                        if unlikely(global_idx >= total_bits) {
-                            map[i].fetch_and(!mask, Ordering::Release);
-                            break;
-                        }
-
                         return Some(self.va_start + (global_idx * BLOCK_SIZE));
                     }
                     chunk |= mask;
@@ -715,6 +735,7 @@ impl Segment {
     #[inline(always)]
     fn try_claim(&self, start_idx: usize, count: usize) -> bool {
         let map = unsafe { self.get_map() };
+        let claim = unsafe { self.get_claim_map() };
         let mut bits_processed = 0;
 
         while bits_processed < count {
@@ -729,14 +750,82 @@ impl Segment {
                 ((1u64 << bits_in_this_chunk) - 1) << shift
             };
 
-            let prev = map[chunk_idx].fetch_or(mask, Ordering::Acquire);
-            if (prev & mask) != 0 {
-                self.rollback(start_idx, bits_processed);
-                return false;
+            let mut claim_val = claim[chunk_idx].load(Ordering::Acquire);
+            loop {
+                let map_val = map[chunk_idx].load(Ordering::Acquire);
+                if ((claim_val | map_val) & mask) != 0 {
+                    self.rollback_claim(start_idx, bits_processed);
+                    return false;
+                }
+
+                let next = claim_val | mask;
+                match claim[chunk_idx].compare_exchange_weak(
+                    claim_val,
+                    next,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => claim_val = actual,
+                }
             }
             bits_processed += bits_in_this_chunk;
         }
+
+        bits_processed = 0;
+        while bits_processed < count {
+            let current_bit = start_idx + bits_processed;
+            let chunk_idx = current_bit / 64;
+            let shift = current_bit % 64;
+            let bits_in_this_chunk = (64 - shift).min(count - bits_processed);
+            let mask = if bits_in_this_chunk == 64 {
+                u64::MAX
+            } else {
+                ((1u64 << bits_in_this_chunk) - 1) << shift
+            };
+
+            map[chunk_idx].fetch_or(mask, Ordering::Release);
+            bits_processed += bits_in_this_chunk;
+        }
+
+        bits_processed = 0;
+        while bits_processed < count {
+            let current_bit = start_idx + bits_processed;
+            let chunk_idx = current_bit / 64;
+            let shift = current_bit % 64;
+            let bits_in_this_chunk = (64 - shift).min(count - bits_processed);
+            let mask = if bits_in_this_chunk == 64 {
+                u64::MAX
+            } else {
+                ((1u64 << bits_in_this_chunk) - 1) << shift
+            };
+
+            claim[chunk_idx].fetch_and(!mask, Ordering::Release);
+            bits_processed += bits_in_this_chunk;
+        }
+
         true
+    }
+
+    #[inline(always)]
+    fn rollback_claim(&self, start_idx: usize, count: usize) {
+        let claim = unsafe { self.get_claim_map() };
+        let mut bits_processed = 0;
+
+        while bits_processed < count {
+            let current_bit = start_idx + bits_processed;
+            let chunk_idx = current_bit / 64;
+            let shift = current_bit % 64;
+            let bits_in_this_chunk = (64 - shift).min(count - bits_processed);
+            let mask = if bits_in_this_chunk == 64 {
+                u64::MAX
+            } else {
+                ((1u64 << bits_in_this_chunk) - 1) << shift
+            };
+
+            claim[chunk_idx].fetch_and(!mask, Ordering::Release);
+            bits_processed += bits_in_this_chunk;
+        }
     }
 
     #[inline(always)]
