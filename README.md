@@ -23,7 +23,7 @@ explicit control over address-space and memory reclamation.
 ## **Warning:** Alpha quality
 
 - Do not expect rock-solid stability yet.
-- Small-block performance is not optimized yet; expect higher overhead and RSS for tiny allocations.
+- Small-block performance is still being tuned in real-world workloads; microbench numbers below are preliminary.
 - Long-running RSS behavior can vary; it is still being tuned and tested.
 - Hardening modes are not audited; use with caution.
 - Extensive use of `unsafe` is required for direct syscalls, pointer arithmetic, and lock-free structures.
