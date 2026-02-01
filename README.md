@@ -89,7 +89,6 @@ ICC replaces a single global list with per-CPU shards:
 - Pushes and pops are batched for amortized atomic cost.
 - Local shard is preferred; other shards are used for victim stealing.
 - Uses `sched_getcpu()` for compatibility (not RSEQ, some custom kernels doesnt support RSEQ).
-- Shards are mapped with `MAP_NORESERVE` to keep VA usage cheap.
 
 ## VA management
 
@@ -173,8 +172,7 @@ sh6bench (Depending, could be higher or lower):
 Total elapsed time: 0.00 (0.1617 CPU) (601361296 clock ticks read from register)
 Occurred page faults: 13390
 
-Note: the page faults above are largely due to lazy initialization.
-Planned: run the remaining test suites soon.
+For more extensive benchmark suites see `benchmarks`.
 
 ## Tests and benchmarks
 
