@@ -19,7 +19,7 @@ Allocators included in these benchmarks:
 - **jemalloc**
 - **mimalloc**
 - **tcmalloc**
-- **oxidalloc** (Rust, end-to-end allocator)
+- **oxidalloc**
 
 All allocators are evaluated using the same benchmark harness and environment.
 
