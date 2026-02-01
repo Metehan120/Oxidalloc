@@ -11,6 +11,15 @@ long-running services).
 
 ---
 
+### Test system
+
+- **CPU:** AMD Ryzen 5 5600X
+- **Memory:** 16 GB DDR4 @ 3200 MHz CL16
+- **OS:** Linux
+- **Distro:** CachyOS
+
+---
+
 ## What is being compared
 
 Allocators included in these benchmarks:
