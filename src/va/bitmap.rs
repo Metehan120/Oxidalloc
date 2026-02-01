@@ -200,6 +200,7 @@ impl Radix {
         (l1, l2)
     }
 
+    #[inline(always)]
     unsafe fn set(&self, chunk_idx: usize, seg: usize) {
         if unlikely(chunk_idx >= RADIX_MAX_CHUNKS) {
             return;
@@ -217,6 +218,7 @@ impl Radix {
         *l2.add(j) = seg;
     }
 
+    #[inline(always)]
     unsafe fn get(&self, chunk_idx: usize) -> Option<usize> {
         if unlikely(chunk_idx >= RADIX_MAX_CHUNKS) {
             return None;

@@ -55,7 +55,8 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u64 {
     magic
 }
 
-#[inline(always)]
+#[cold]
+#[inline(never)]
 unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeader {
     let mut output = null_mut();
 
@@ -147,12 +148,16 @@ unsafe fn allocate_hot(class: usize) -> *mut c_void {
     #[cfg(feature = "hardened-malloc")]
     validate_ptr(cache);
 
-    (*cache).next = null_mut();
+    #[cfg(feature = "hardened-malloc")]
+    {
+        (*cache).next = null_mut();
+    }
     (*cache).magic = MAGIC;
 
     cache.add(1) as *mut c_void
 }
 
+#[cold]
 #[inline(always)]
 // Separated allocation function for better scalability in future
 unsafe fn allocate_boot_segment(class: usize) -> *mut c_void {
@@ -196,13 +201,17 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut c_void {
     #[cfg(feature = "hardened-malloc")]
     validate_ptr(cache);
 
-    (*cache).next = null_mut();
+    #[cfg(feature = "hardened-malloc")]
+    {
+        (*cache).next = null_mut();
+    }
     (*cache).magic = MAGIC;
 
     cache.add(1) as *mut c_void
 }
 
 #[cold]
+#[inline(never)]
 pub unsafe fn allocate_cold(size: usize) -> *mut u8 {
     boot_strap();
 
@@ -214,9 +223,11 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     if likely(size <= 4096 && size > 0) {
         let index = (size - 1) >> 4;
         let class = unsafe { *crate::slab::SIZE_LUT.get_unchecked(index) as usize };
-        if likely(HOT_READY) {
-            return allocate_hot(class);
-        }
+        return if likely(HOT_READY) {
+            allocate_hot(class)
+        } else {
+            allocate_boot_segment(class)
+        };
     }
 
     if unlikely(size > 1024 * 1024 * 1024 * 3) {
@@ -225,10 +236,11 @@ pub unsafe extern "C" fn malloc(size: size_t) -> *mut c_void {
     }
 
     if let Some(class) = match_size_class(size) {
-        if likely(HOT_READY) {
+        return if likely(HOT_READY) {
             return allocate_hot(class);
-        }
-        return allocate_boot_segment(class);
+        } else {
+            allocate_boot_segment(class)
+        };
     }
 
     return allocate_cold(size) as *mut c_void;
@@ -247,9 +259,9 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
     let mut raw_ptr = ptr;
     let mut offset: usize = 0;
     let tag_loc = (ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
-    let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
 
-    if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+    if unlikely(std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG) {
+        let raw_loc = (ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
         let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
         if is_ours(presumed_original_ptr as usize) {
             raw_ptr = presumed_original_ptr;
@@ -259,12 +271,8 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
     let header = (raw_ptr as *mut u8).sub(HEADER_SIZE) as *mut OxHeader;
 
-    if !is_ours(header as usize) {
-        return 0;
-    }
-
-    let mut size = (*header).class as usize;
-    if size == 100 {
+    let class = (*header).class as usize;
+    let raw_usable = if class == 100 {
         let payload_size = BIG_ALLOC_MAP
             .get(header as usize)
             .map(|meta| meta.size)
@@ -275,16 +283,11 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
                     None,
                 )
             });
-
-        size = payload_size;
+        payload_size
     } else {
-        size = SIZE_CLASSES[size]
-    }
-
-    let raw_usable = match match_size_class(size) {
-        Some(idx) => SIZE_CLASSES[idx],
-        None => size,
+        SIZE_CLASSES[class]
     };
+
     raw_usable.saturating_sub(offset) as size_t
 }
 

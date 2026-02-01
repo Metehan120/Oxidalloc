@@ -80,10 +80,8 @@ unsafe fn free_internal(ptr: *mut c_void) {
         return;
     }
 
-    let stamp = OX_CURRENT_STAMP;
-
     (*header).magic = FREED_MAGIC;
-    (*header).life_time = stamp;
+    (*header).life_time = OX_CURRENT_STAMP;
 
     let thread = ThreadLocalEngine::get_or_init();
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
@@ -99,7 +97,8 @@ unsafe fn free_fast(ptr: *mut c_void) {
     free_main!(ptr)
 }
 
-#[inline(always)]
+#[cold]
+#[inline(never)]
 unsafe fn free_boot_segment(ptr: *mut c_void) {
     TOTAL_MALLOC_FREE.fetch_add(1, Ordering::Relaxed);
 

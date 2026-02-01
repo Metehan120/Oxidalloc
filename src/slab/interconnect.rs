@@ -89,7 +89,7 @@ macro_rules! mmap {
             $size,
             MMapFlags {
                 prot: MProtFlags::READ | MProtFlags::WRITE,
-                map: MemoryFlags::PRIVATE | MemoryFlags::NORESERVE,
+                map: MemoryFlags::PRIVATE,
             },
         )
         .unwrap_or_else(|e| {
