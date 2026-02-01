@@ -91,6 +91,9 @@ are not representative of real-world workloads.
 - Cache benchmarks  
   ![](plots/rss_cache.svg)
 
+- Sheel benchmark
+  ![](plots/rss_shell.svg)
+
 ### Wall time
 - CPU workloads  
   ![](plots/time_cpu.svg)
@@ -103,6 +106,9 @@ are not representative of real-world workloads.
 
 - Cache benchmarks  
   ![](plots/time_cache.svg)
+
+- Shell benchmarks  
+  ![](plots/time_shell.svg)
 
 ---
 
