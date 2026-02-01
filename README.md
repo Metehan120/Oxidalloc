@@ -172,7 +172,7 @@ sh6bench (Depending, could be higher or lower):
 Total elapsed time: 0.00 (0.1617 CPU) (601361296 clock ticks read from register)
 Occurred page faults: 13390
 
-For more extensive benchmark suites see `benchmarks`.
+For more extensive benchmark suites see [`benchmarks`](benchmarks/OVERVIEW.md).
 
 ## Tests and benchmarks
 
