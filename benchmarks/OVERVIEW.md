@@ -18,6 +18,12 @@ long-running services).
 - **Kernel:** Linux 6.18.8-2-cachyos
 - **Distro:** CachyOS
 
+### Methodology
+
+- **Harness:** `mimalloc-bench` (default suite).
+- **Runs:** Each allocator is evaluated via the standard harness runner; no custom patching.
+- **Data:** Raw results live in `benchmarks.txt`; plots are derived from that file.
+
 ---
 
 ## What is being compared

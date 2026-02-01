@@ -1,4 +1,5 @@
 # test    alloc   time  rss    user  sys  page-faults page-reclaims
+# units: time/user/sys in seconds; rss is resident set size (units as reported by the harness).
 cfrac       pt   02.91 11188 2.90 0.00 0 1670
 espresso    pt   03.00 11252 2.97 0.02 0 1778
 barnes      pt   01.99 77076 1.97 0.01 0 2980

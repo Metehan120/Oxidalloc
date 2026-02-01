@@ -1,4 +1,4 @@
-# Note: This README is upfront for main branch and is not alpha release.
+# Note: This README targets the main branch and may differ from the alpha release.
 
 # Oxidalloc
 
@@ -45,7 +45,7 @@ explicit control over address-space and memory reclamation.
 
 ## Architecture (short version)
 
-High-level flow is described in `architecture.md`. In brief:
+High-level flow is described in `ARCHITECTURE.md`. In brief:
 
 Oxidalloc controls the full allocation lifecycle:
 it reserves address space, maps pages on demand, tracks ownership via headers, and
@@ -89,7 +89,7 @@ ICC replaces a single global list with per-CPU shards:
 
 - Pushes and pops are batched for amortized atomic cost.
 - Local shard is preferred; other shards are used for victim stealing.
-- Uses `sched_getcpu()` for compatibility (not RSEQ, some custom kernels doesnt support RSEQ).
+- Uses `sched_getcpu()` for compatibility (not RSEQ; some custom kernels don't support RSEQ).
 
 ## VA management
 
@@ -170,7 +170,7 @@ These numbers are preliminary and will be expanded as more benchmark suites are 
 - 1MB malloc+free (TLS, bench): ~6.5 ns
 - stress-ng: ~44M bogo ops/s
 
-### sh6bench
+### sh6benchN
 
 Total elapsed time: 0.00 (0.1617 CPU)  
 Clock ticks read from register: 601,361,296  
