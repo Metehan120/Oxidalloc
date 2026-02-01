@@ -1,19 +1,24 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
-use rustix::mm::{Advice, MapFlags, ProtFlags, madvise, mmap_anonymous};
-
 use crate::{
-    HEADER_SIZE, MAGIC, OX_USE_THP, OxHeader,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_FORCE_THP, OxHeader, OxidallocError,
+    internals::hashmap::{BIG_ALLOC_MAP, BigAllocMeta},
+    sys::memory_system::{
+        MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, madvise, mmap_memory,
+        protect_memory,
+    },
     va::{align_to, bitmap::VA_MAP},
 };
 use std::{
     os::raw::c_void,
-    ptr::{null_mut, write_bytes},
+    ptr::{null_mut, write, write_bytes},
 };
 
 pub unsafe fn big_malloc(size: usize) -> *mut u8 {
     // Align size to the page size so we don't explode later
-    let aligned_total = align_to(size + HEADER_SIZE, 4096);
+    let aligned_total = if OX_FORCE_THP {
+        align_to(size + HEADER_SIZE, 1024 * 1024 * 2)
+    } else {
+        align_to(size + HEADER_SIZE, 4096)
+    };
 
     // Reserve virtual space first
     let hint = match VA_MAP.alloc(aligned_total) {
@@ -21,60 +26,97 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         None => return null_mut(),
     };
 
-    let actual_ptr = match mmap_anonymous(
+    let is_err = protect_memory(
         hint as *mut c_void,
         aligned_total,
-        ProtFlags::WRITE | ProtFlags::READ,
-        MapFlags::PRIVATE | MapFlags::FIXED,
-    ) {
-        Ok(ptr) => ptr,
-        Err(_) => {
-            VA_MAP.free(hint, aligned_total);
-            return null_mut();
+        RMProtFlags::WRITE | RMProtFlags::READ,
+    )
+    .is_err();
+
+    let actual_ptr = if is_err {
+        match mmap_memory(
+            hint as *mut c_void,
+            aligned_total,
+            MMapFlags {
+                prot: MProtFlags::WRITE | MProtFlags::READ,
+                map: MemoryFlags::PRIVATE | MemoryFlags::FIXED,
+            },
+        ) {
+            Ok(ptr) => ptr,
+            Err(_) => {
+                VA_MAP.free(hint, aligned_total);
+                return null_mut();
+            }
         }
+    } else {
+        hint as *mut c_void
     } as *mut OxHeader;
 
-    if OX_USE_THP.load(std::sync::atomic::Ordering::Relaxed) {
+    if aligned_total % (1024 * 1024 * 2) == 0 {
         let _ = madvise(
             actual_ptr as *mut c_void,
             aligned_total,
-            Advice::LinuxHugepage,
+            MadviseFlags::HUGEPAGE,
         );
     }
 
-    // Initialize the header
-    (*actual_ptr).size = size as u64;
-    (*actual_ptr).magic = MAGIC;
-    (*actual_ptr).in_use = 1;
+    write(
+        actual_ptr,
+        OxHeader {
+            next: null_mut(),
+            class: 100,
+            magic: MAGIC,
+            life_time: 0,
+        },
+    );
+
+    BIG_ALLOC_MAP.insert(
+        actual_ptr as usize,
+        BigAllocMeta {
+            size,
+            class: 100,
+            life_time: 0,
+            flags: 0,
+        },
+    );
 
     (actual_ptr as *mut u8).add(HEADER_SIZE)
 }
 
-pub unsafe fn big_free(ptr: *mut c_void) {
-    let header = (ptr as *mut OxHeader).sub(1);
-    let payload_size = (*header).size as usize;
+pub unsafe fn big_free(ptr: *mut OxHeader) {
+    let header = ptr.sub(1);
+    let payload_size = BIG_ALLOC_MAP
+        .remove(header as usize)
+        .map(|meta| meta.size)
+        .unwrap_or_else(|| {
+            OxidallocError::AttackOrCorruption.log_and_abort(
+                header as *mut c_void,
+                "Missing big allocation metadata during free",
+                None,
+            )
+        });
 
     // Align size back to original size
-    let total_size = align_to(payload_size + HEADER_SIZE, 4096);
+    let total_size = if OX_FORCE_THP {
+        align_to(payload_size + HEADER_SIZE, 1024 * 1024 * 2)
+    } else {
+        align_to(payload_size + HEADER_SIZE, 4096)
+    };
+
+    if total_size % (1024 * 1024 * 2) == 0 {
+        let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
+    }
 
     // Make the header look free before we potentially lose write access.
-    (*header).in_use = 0;
-    (*header).magic = 0;
+    (*header).magic = FREED_MAGIC;
 
-    // If this fails (e.g. under a restrictive sandbox), fall back to `madvise(DONTNEED)`.
-    let remap_result = mmap_anonymous(
-        header as *mut c_void,
-        total_size,
-        ProtFlags::empty(),
-        MapFlags::PRIVATE | MapFlags::FIXED | MapFlags::NORESERVE,
-    );
-
-    if remap_result.is_err() {
-        let is_failed = madvise(header as *mut c_void, total_size, Advice::LinuxDontNeed);
-        if is_failed.is_err() {
-            write_bytes(header as *mut u8, 0, total_size);
-        }
+    let is_failed = madvise(header as *mut c_void, total_size, MadviseFlags::DONTNEED);
+    if is_failed.is_err() {
+        // Security: Zero out the memory before freeing it so it wont leak the info
+        write_bytes(header as *mut u8, 0, total_size);
     }
+
+    let _ = protect_memory(header as *mut c_void, total_size, RMProtFlags::NONE);
 
     VA_MAP.free(header as usize, total_size);
 }

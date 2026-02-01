@@ -1,36 +1,12 @@
-#![allow(unsafe_op_in_unsafe_fn)]
+use crate::{OxHeader, slab::interconnect::ICC};
 
-use crate::{
-    OxHeader,
-    slab::{NUM_SIZE_CLASSES, quarantine::quarantine},
-    va::va_helper::is_ours,
-};
-use std::ptr::null_mut;
-use std::sync::atomic::{AtomicUsize, Ordering};
+// ----------------------------------
 
-const TAG_BITS: usize = 4;
-const TAG_MASK: usize = (1 << TAG_BITS) - 1;
-const PTR_MASK: usize = !TAG_MASK;
-
-#[inline(always)]
-fn pack(ptr: *mut OxHeader, tag: usize) -> usize {
-    (ptr as usize) | (tag & TAG_MASK)
+#[cfg(feature = "hardened-linked-list")]
+pub(crate) unsafe fn reset_global_locks() {
+    ICC.reset_on_fork();
 }
 
-#[inline(always)]
-fn unpack_ptr(val: usize) -> *mut OxHeader {
-    (val & PTR_MASK) as *mut OxHeader
-}
-
-#[inline(always)]
-fn unpack_tag(val: usize) -> usize {
-    val & TAG_MASK
-}
-
-pub static GLOBAL: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
-pub static GLOBAL_USAGE: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES];
 pub struct GlobalHandler;
 
 impl GlobalHandler {
@@ -41,60 +17,89 @@ impl GlobalHandler {
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        loop {
-            let cur = GLOBAL[class].load(Ordering::Relaxed);
-            let cur_ptr = unpack_ptr(cur);
-            let cur_tag = unpack_tag(cur);
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            let mut curr = head;
+            while curr != tail {
+                use crate::{slab::xor_ptr_general, va::bootstrap::NUMA_KEY};
 
-            (*tail).next = cur_ptr;
-
-            let new = pack(head, cur_tag.wrapping_add(1));
-
-            if GLOBAL[class]
-                .compare_exchange(cur, new, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                GLOBAL_USAGE[class].fetch_add(batch_size, Ordering::Relaxed);
-                return;
+                let next_raw = (*curr).next;
+                (*curr).next = xor_ptr_general(next_raw, NUMA_KEY);
+                curr = next_raw;
             }
         }
+
+        ICC.try_push(class, head, tail, batch_size);
     }
 
-    pub unsafe fn pop_batch_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
-        loop {
-            let cur = GLOBAL[class].load(Ordering::Relaxed);
-            let head = unpack_ptr(cur);
-            let tag = unpack_tag(cur);
+    pub unsafe fn pop_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
+        ICC.try_pop(class, batch_size)
+    }
+}
 
-            if head.is_null() {
-                return null_mut();
-            }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::hint::black_box;
+    use std::ptr::null_mut;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+    use std::time::Instant;
 
-            if !is_ours(head as usize) {
-                quarantine(None, head as usize, class, false);
-                GLOBAL[class].store(0, Ordering::Relaxed);
-                GLOBAL_USAGE[class].store(0, Ordering::Relaxed);
-                return null_mut();
-            }
+    #[test]
+    fn test_global_speed_under_contention() {
+        let num_threads = 12;
+        let ops_per_thread = 50_000;
+        let class = 10;
+        let batch_size = 32;
 
-            let mut tail = head;
-            let mut count = 1;
-            while count < batch_size && !(*tail).next.is_null() {
-                tail = (*tail).next;
-                count += 1;
-            }
+        let barrier = Arc::new(Barrier::new(num_threads));
+        let mut handles = Vec::new();
 
-            let new_head = (*tail).next;
-            let new = pack(new_head, tag.wrapping_add(1));
+        let start_time = Instant::now();
 
-            if GLOBAL[class]
-                .compare_exchange(cur, new, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                (*tail).next = null_mut();
-                GLOBAL_USAGE[class].fetch_sub(count, Ordering::Relaxed);
-                return head;
-            }
+        for _ in 0..num_threads {
+            let barrier = Arc::clone(&barrier);
+
+            handles.push(thread::spawn(move || {
+                let mut headers = vec![
+                    OxHeader {
+                        next: null_mut(),
+                        class: class as u8,
+                        magic: 0x42,
+                        life_time: 0,
+                    };
+                    batch_size * 2
+                ];
+
+                barrier.wait();
+
+                for _ in 0..ops_per_thread {
+                    let head = &mut headers[0] as *mut OxHeader;
+                    let tail = &mut headers[batch_size - 1] as *mut OxHeader;
+
+                    unsafe {
+                        black_box(GlobalHandler.push_to_global(class, head, tail, batch_size));
+
+                        let res = black_box(GlobalHandler.pop_from_global(class, batch_size));
+
+                        std::hint::black_box(res);
+                    }
+                }
+            }));
         }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let duration = start_time.elapsed();
+        let total_ops = num_threads * ops_per_thread * 2;
+        println!(
+            "\nTotal Atomic Ops: {}\nTime: {:?}\nAvg Latency: {:.2} ns/op",
+            total_ops,
+            duration,
+            duration.as_nanos() as f64 / total_ops as f64
+        );
     }
 }

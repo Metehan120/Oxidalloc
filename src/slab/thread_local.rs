@@ -1,75 +1,20 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
-use libc::{pthread_getspecific, pthread_key_t, pthread_setspecific};
-use rustix::mm::{MapFlags, ProtFlags, mmap_anonymous, munmap};
 use std::{
+    cell::UnsafeCell,
+    hint::{likely, unlikely},
     os::raw::c_void,
     ptr::null_mut,
-    sync::{
-        OnceLock,
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
-    },
 };
 
+#[cfg(feature = "hardened-linked-list")]
+use crate::sys::memory_system::getrandom;
 use crate::{
-    OX_ENABLE_EXPERIMENTAL_HEALING, OxHeader, OxidallocError,
+    MetaData, OxHeader, OxidallocError,
     slab::{
-        NUM_SIZE_CLASSES,
-        global::{GLOBAL, GlobalHandler},
-        quarantine::quarantine,
+        NUM_SIZE_CLASSES, bulk_allocation::drain_pending, global::GlobalHandler, xor_ptr_general,
     },
-    va::va_helper::is_ours,
+    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
+    va::is_ours,
 };
-
-pub struct ThreadNode {
-    pub engine: AtomicPtr<ThreadLocalEngine>,
-    pub next: AtomicPtr<ThreadNode>,
-}
-
-pub static THREAD_REGISTER: AtomicPtr<ThreadNode> = AtomicPtr::new(null_mut());
-
-// Register a new thread node with the given, need for trimming
-unsafe fn register_node(ptr: *mut ThreadLocalEngine) -> *mut ThreadNode {
-    let node = match mmap_anonymous(
-        null_mut(),
-        size_of::<ThreadNode>(),
-        ProtFlags::READ | ProtFlags::WRITE,
-        MapFlags::PRIVATE,
-    ) {
-        Ok(mem) => mem,
-        Err(err) => OxidallocError::PThreadCacheFailed.log_and_abort(
-            0 as *mut c_void,
-            "PThread cache creation failed, cannot create thread node: errno({})",
-            Some(err),
-        ),
-    } as *mut ThreadNode;
-
-    std::ptr::write(
-        node,
-        ThreadNode {
-            engine: AtomicPtr::new(ptr),
-            next: AtomicPtr::new(null_mut()),
-        },
-    );
-
-    loop {
-        let head = THREAD_REGISTER.load(Ordering::Acquire);
-        (*node).next.store(head, Ordering::Relaxed);
-
-        if THREAD_REGISTER
-            .compare_exchange(head, node, Ordering::Release, Ordering::Acquire)
-            .is_ok()
-        {
-            break;
-        }
-    }
-
-    node
-}
-
-unsafe fn destroy_node(node: *mut ThreadNode) {
-    (*node).engine.swap(null_mut(), Ordering::AcqRel);
-}
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
@@ -83,175 +28,212 @@ pub fn prefetch(ptr: *const u8) {
     unsafe { core::arch::aarch64::_prefetch(ptr, core::arch::aarch64::PLDL1KEEP) }
 }
 
-static THREAD_KEY: OnceLock<pthread_key_t> = OnceLock::new();
+struct CleanupHandler;
 
-#[repr(C, align(16))]
-pub struct TlsBin {
-    pub head: AtomicPtr<OxHeader>,
-    pub usage: AtomicUsize,
-    pub latest_usage: AtomicUsize,
-    pub latest_next: AtomicPtr<OxHeader>,
+impl Drop for CleanupHandler {
+    fn drop(&mut self) {
+        unsafe { cleanup_thread_cache(TLS) };
+    }
 }
 
+#[repr(C)]
+pub struct TlsBin {
+    pub head: *mut OxHeader,
+    pub usage: usize,
+}
+
+#[repr(C, align(64))]
 pub struct ThreadLocalEngine {
     pub tls: [TlsBin; NUM_SIZE_CLASSES],
-    pub node: *mut ThreadNode,
+    pub pending: [*mut MetaData; NUM_SIZE_CLASSES],
+    #[cfg(feature = "hardened-linked-list")]
+    pub xor_key: usize,
+}
+
+#[thread_local]
+pub static mut TLS: *mut ThreadLocalEngine = null_mut();
+#[thread_local]
+static TLS_DESTRUCTOR: UnsafeCell<Option<CleanupHandler>> = UnsafeCell::new(None);
+
+#[inline(always)]
+unsafe fn touch_tls() {
+    let slot = TLS_DESTRUCTOR.get();
+    core::ptr::write_volatile(slot, Some(CleanupHandler));
+    core::ptr::read_volatile(slot);
 }
 
 impl ThreadLocalEngine {
     #[inline(always)]
-    pub unsafe fn get_or_init() -> &'static ThreadLocalEngine {
-        let key = THREAD_KEY.get_or_init(|| {
-            let mut key = 0;
-            libc::pthread_key_create(&mut key, Some(cleanup_thread_cache));
-            key
-        });
+    pub unsafe fn xor_ptr(&self, ptr: *mut OxHeader) -> *mut OxHeader {
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            if unlikely(ptr.is_null()) {
+                return null_mut();
+            }
+            ((ptr as usize) ^ self.xor_key) as *mut OxHeader
+        }
 
-        let cache_ptr = pthread_getspecific(*key) as *mut ThreadLocalEngine;
+        #[cfg(not(feature = "hardened-linked-list"))]
+        {
+            ptr
+        }
+    }
 
-        if cache_ptr.is_null() {
-            let tls_size = size_of::<TlsBin>() * NUM_SIZE_CLASSES;
-            let engine_size = size_of::<ThreadLocalEngine>();
-            let total_size = tls_size + engine_size;
+    #[cold]
+    #[inline(never)]
+    pub unsafe fn init_tls() -> *mut ThreadLocalEngine {
+        let total_size = size_of::<ThreadLocalEngine>();
 
-            let cache = mmap_anonymous(
+        let cache = mmap_memory(
+            null_mut(),
+            total_size,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
+        )
+        .unwrap_or_else(|_| {
+            OxidallocError::PThreadCacheFailed.log_and_abort(
                 null_mut(),
-                total_size,
-                ProtFlags::READ | ProtFlags::WRITE,
-                MapFlags::PRIVATE,
+                "PThread cache creation failed: errno({})",
+                None,
             )
-            .unwrap_or_else(|err| {
-                OxidallocError::PThreadCacheFailed.log_and_abort(
+        }) as *mut ThreadLocalEngine;
+
+        #[cfg(feature = "hardened-linked-list")]
+        let rand_s: usize;
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            let mut rand_slice = [0u8; 8];
+            let res = getrandom(&mut rand_slice);
+            if res.is_err() {
+                OxidallocError::SecurityViolation.log_and_abort(
                     null_mut(),
-                    "PThread cache creation failed: errno({})",
-                    Some(err),
-                )
-            }) as *mut ThreadLocalEngine;
-
-            std::ptr::write(
-                cache,
-                ThreadLocalEngine {
-                    tls: [const {
-                        TlsBin {
-                            head: AtomicPtr::new(null_mut()),
-                            usage: AtomicUsize::new(0),
-                            latest_usage: AtomicUsize::new(0),
-                            latest_next: AtomicPtr::new(null_mut()),
-                        }
-                    }; NUM_SIZE_CLASSES],
-                    node: null_mut(),
-                },
-            );
-
-            (*cache).node = register_node(cache);
-            pthread_setspecific(*key, cache as *mut c_void);
-            return &*cache;
+                    "Failed to generate per-thread encryption key",
+                    None,
+                );
+            }
+            rand_s = usize::from_ne_bytes(rand_slice);
         }
 
-        &*cache_ptr
+        // To register TLS write the needed areas, and write NUMA node ID so we can use it for numa allocation
+        std::ptr::write(
+            cache,
+            ThreadLocalEngine {
+                tls: [const {
+                    TlsBin {
+                        head: null_mut(),
+                        usage: 0,
+                    }
+                }; NUM_SIZE_CLASSES],
+                pending: [const { null_mut() }; NUM_SIZE_CLASSES],
+                #[cfg(feature = "hardened-linked-list")]
+                xor_key: rand_s,
+            },
+        );
+
+        touch_tls();
+        TLS = cache;
+
+        cache
+    }
+
+    pub unsafe fn get_or_init() -> &'static mut ThreadLocalEngine {
+        if likely(!TLS.is_null()) {
+            return &mut *TLS;
+        }
+
+        Self::get_or_init_cold()
+    }
+
+    #[inline(never)]
+    #[cold]
+    pub unsafe fn get_or_init_cold() -> &'static mut ThreadLocalEngine {
+        TLS = Self::init_tls();
+
+        &mut *TLS
     }
 
     #[inline(always)]
-    pub unsafe fn pop_from_thread(&self, class: usize) -> *mut OxHeader {
-        loop {
-            let mut header = self.tls[class].head.load(Ordering::Relaxed);
+    pub unsafe fn pop_from_thread(&mut self, class: usize) -> *mut OxHeader {
+        let bin = &mut self.tls[class];
 
-            if header.is_null() {
-                return null_mut();
-            }
-
-            // Check if the header is ours
-            if !is_ours(header as usize) {
-                // Try to recover, if fails return null
-                if !quarantine(
-                    Some(self),
-                    header as usize,
-                    class,
-                    OX_ENABLE_EXPERIMENTAL_HEALING.load(Ordering::Relaxed),
-                ) {
-                    self.tls[class].usage.store(0, Ordering::Relaxed);
-                    return null_mut();
-                }
-                header = self.tls[class].head.load(Ordering::Relaxed);
-            }
-
-            // Check if data is still valid
-            if header.is_null() || !is_ours(header as usize) {
-                return null_mut();
-            }
-
-            let next = (*header).next;
-            if !next.is_null() {
-                prefetch(next as *const u8);
-            }
-
-            if self.tls[class]
-                .head
-                .compare_exchange(header, next, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                self.tls[class].latest_next.store(next, Ordering::Relaxed);
-                let usage = self.tls[class].usage.fetch_sub(1, Ordering::Relaxed);
-                self.tls[class].latest_usage.store(usage, Ordering::Relaxed);
-                return header;
-            }
+        let current_header = bin.head;
+        if unlikely(current_header.is_null()) {
+            return null_mut();
         }
+
+        let header = self.xor_ptr(current_header);
+
+        let next = (*header).next;
+        #[cfg(not(feature = "hardened-linked-list"))]
+        if likely(!next.is_null()) {
+            prefetch(next as *const u8);
+        }
+        #[cfg(feature = "hardened-linked-list")]
+        if likely(!next.is_null()) {
+            prefetch(self.xor_ptr(next) as *const u8);
+        }
+
+        self.tls[class].head = next;
+        self.tls[class].usage -= 1;
+
+        header
     }
 
     #[inline(always)]
-    pub unsafe fn push_to_thread(&self, class: usize, head: *mut OxHeader) {
-        loop {
-            let current = self.tls[class].head.load(Ordering::Relaxed);
-            (*head).next = current;
+    pub unsafe fn push_to_thread(&mut self, class: usize, head: *mut OxHeader) {
+        let bin = &self.tls[class];
 
-            if self.tls[class]
-                .head
-                .compare_exchange(current, head, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                self.tls[class].usage.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-        }
+        let current = bin.head;
+        (*head).next = current;
+
+        self.tls[class].head = self.xor_ptr(head);
+        self.tls[class].usage += 1;
     }
 
     #[inline(always)]
     pub unsafe fn push_to_thread_tailed(
-        &self,
+        &mut self,
         class: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
         batch_size: usize,
     ) {
-        loop {
-            let current_header = self.tls[class].head.load(Ordering::Relaxed);
-            (*tail).next = current_header;
+        let bin = &self.tls[class];
 
-            if self.tls[class]
-                .head
-                .compare_exchange(current_header, head, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                self.tls[class]
-                    .usage
-                    .fetch_add(batch_size, Ordering::Relaxed);
-                return;
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            let mut curr = head;
+            while curr != tail {
+                let next_raw = (*curr).next;
+                (*curr).next = self.xor_ptr(next_raw);
+                curr = next_raw;
             }
         }
+
+        let current_header = bin.head;
+        (*tail).next = current_header;
+
+        self.tls[class].head = self.xor_ptr(head);
+        self.tls[class].usage += batch_size;
     }
 }
 
-unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
-    let cache = cache_ptr as *mut ThreadLocalEngine;
+unsafe fn cleanup_thread_cache(cache: *mut ThreadLocalEngine) {
+    TLS = null_mut();
     if cache.is_null() {
         return;
     }
 
-    destroy_node((*cache).node);
+    #[cfg(feature = "hardened-linked-list")]
+    let random_key = (*cache).xor_key;
+    #[cfg(not(feature = "hardened-linked-list"))]
+    let random_key = 0;
 
-    // Move all blocks to global
-    for class in 0..GLOBAL.len() {
-        let head = (*cache).tls[class].head.swap(null_mut(), Ordering::AcqRel);
+    for class in 0..NUM_SIZE_CLASSES {
+        let head = xor_ptr_general((*cache).tls[class].head, random_key);
+
         if !is_ours(head as usize) {
             continue;
         }
@@ -260,22 +242,93 @@ unsafe extern "C" fn cleanup_thread_cache(cache_ptr: *mut c_void) {
             let mut tail = head;
             let mut count = 1;
             loop {
-                let next = (*tail).next;
+                let next_encrypted = (*tail).next;
+                let next = xor_ptr_general(next_encrypted, random_key);
+
+                (*tail).next = next;
                 (*tail).life_time = 0;
+
                 if next.is_null() {
                     break;
                 }
+
                 if !is_ours(next as usize) {
                     (*tail).next = null_mut();
                     break;
                 }
+
                 tail = next;
                 count += 1;
             }
 
             GlobalHandler.push_to_global(class, head, tail, count);
         }
+
+        drain_pending(&mut *cache, class);
     }
 
-    let _ = munmap(cache_ptr, size_of::<ThreadLocalEngine>());
+    let total_size = size_of::<ThreadLocalEngine>();
+
+    let _ = unmap_memory(cache as *mut c_void, total_size);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{hint::black_box, time::Instant};
+
+    use crate::{FREED_MAGIC, sys::memory_system::MProtFlags};
+
+    use super::*;
+
+    #[test]
+    fn tls_speed_test() {
+        unsafe {
+            let tls = ThreadLocalEngine::get_or_init();
+            let start = Instant::now();
+            let header = mmap_memory(
+                null_mut(),
+                size_of::<OxHeader>(),
+                MMapFlags {
+                    prot: MProtFlags::READ | MProtFlags::WRITE,
+                    map: MemoryFlags::PRIVATE,
+                },
+            )
+            .unwrap() as *mut OxHeader;
+            std::ptr::write(
+                header,
+                OxHeader {
+                    next: null_mut(),
+                    class: 0,
+                    magic: FREED_MAGIC,
+                    life_time: 0,
+                },
+            );
+            tls.push_to_thread(1, header);
+
+            for _ in 0..1000000 {
+                let header = black_box(tls.pop_from_thread(1));
+                black_box(tls.push_to_thread(1, header));
+            }
+            let end = Instant::now();
+            let dur = end - start;
+            let ns = dur.as_nanos() as f64 / 1_000_000.0;
+            println!("TLS pop+push: {:.2} ns/op", ns);
+        }
+    }
+
+    #[test]
+    fn init_speed_test() {
+        unsafe {
+            const N: usize = 10_000_000;
+            let _tls = ThreadLocalEngine::get_or_init();
+
+            let start = Instant::now();
+            for _ in 0..N {
+                black_box(ThreadLocalEngine::get_or_init());
+            }
+            let end = Instant::now();
+            let ns = end.duration_since(start).as_nanos() as f64 / N as f64;
+            println!("Get speed: {:.2} ns/op", ns);
+        }
+    }
 }

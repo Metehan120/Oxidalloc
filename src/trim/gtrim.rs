@@ -1,23 +1,25 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 
-use rustix::mm::{Advice, madvise};
-
 use crate::{
-    AVERAGE_BLOCK_TIMES_GLOBAL, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    AVERAGE_BLOCK_TIMES_GLOBAL, FREED_MAGIC, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
+    OxidallocError,
     slab::{
-        ITERATIONS, SIZE_CLASSES, get_size_4096_class,
-        global::{GLOBAL_USAGE, GlobalHandler},
+        NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class, global::GlobalHandler,
+        interconnect::ICC,
     },
-    va::{bootstrap::SHUTDOWN, va_helper::is_ours},
+    sys::memory_system::{MadviseFlags, madvise},
+    trim::{
+        TimeDecay,
+        thread::{GLOBAL_DECAY, LAST_PRESSURE_CHECK},
+    },
+    va::is_ours,
 };
 
 pub struct GTrim;
 
 impl GTrim {
     unsafe fn pop_from_global(&self, class: usize) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_batch_from_global(class, 16);
+        let global_cache = GlobalHandler.pop_from_global(class, 16);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -27,7 +29,7 @@ impl GTrim {
         let mut real = 1;
 
         while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-            if (*block).in_use == 1 {
+            if (*block).magic != FREED_MAGIC {
                 OxidallocError::MemoryCorruption.log_and_abort(
                     block as *mut c_void,
                     "Find in_use block during PThread Trim / Memory Corruption",
@@ -40,26 +42,36 @@ impl GTrim {
         }
         (*block).next = null_mut();
 
+        #[cfg(feature = "hardened-malloc")]
+        {
+            if (*block).magic != FREED_MAGIC {
+                OxidallocError::MemoryCorruption.log_and_abort(
+                    block as *mut c_void,
+                    "Find in_use block during PThread Trim / Memory Corruption",
+                    None,
+                );
+            }
+        }
+
         (global_cache, real)
     }
 
     pub unsafe fn trim(&self, pad: usize) -> (i32, usize) {
-        if SHUTDOWN.load(Ordering::Relaxed) {
-            return (0, 0);
-        }
+        let pressure = LAST_PRESSURE_CHECK.load(Ordering::Relaxed);
+        let force_trim = pressure > 90;
 
-        let mut avg = 0;
+        let mut avg: u32 = 0;
         let mut total = 0;
         let mut total_freed = 0;
-        let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed);
+        let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed) as u32;
         let class_4096 = get_size_4096_class();
 
-        for class in class_4096..ITERATIONS.len() {
+        for class in class_4096..NUM_SIZE_CLASSES {
             if total_freed >= pad && pad != 0 {
                 return (1, total_freed);
             }
 
-            let class_usage = GLOBAL_USAGE[class].load(Ordering::Relaxed);
+            let class_usage = ICC.get_size(class);
             let mut to_trim = null_mut();
 
             for _ in 0..class_usage / 16 {
@@ -73,12 +85,10 @@ impl GTrim {
 
                 for _ in 0..size {
                     let next = (*block).next;
-                    let life_time = OX_CURRENT_STAMP
-                        .load(Ordering::Relaxed)
-                        .saturating_sub((*block).life_time);
+                    let life_time = OX_CURRENT_STAMP.saturating_sub((*block).life_time);
 
                     if life_time != 0 {
-                        avg += life_time;
+                        avg = avg.saturating_add(life_time);
                         total += 1;
                     }
 
@@ -112,7 +122,7 @@ impl GTrim {
             while !to_trim.is_null() {
                 let next = (*to_trim).next;
 
-                if total_freed <= pad || pad == 0 {
+                if (total_freed <= pad || pad == 0) || force_trim {
                     self.release_memory(to_trim, SIZE_CLASSES[class]);
                     total_freed += SIZE_CLASSES[class];
                 }
@@ -124,7 +134,9 @@ impl GTrim {
         }
 
         if total > 0 {
-            AVERAGE_BLOCK_TIMES_GLOBAL.store((avg / total).max(100).min(3000), Ordering::Relaxed);
+            let avg = (avg / total).max(100).min(10000);
+            AVERAGE_BLOCK_TIMES_GLOBAL.store(avg as usize, Ordering::Relaxed);
+            GLOBAL_DECAY.swap(TimeDecay::decide_on(avg as usize) as u8, Ordering::AcqRel);
         }
 
         if total_freed >= pad {
@@ -152,7 +164,7 @@ impl GTrim {
             }
             let length = page_end - page_start;
 
-            let _ = madvise(page_start as *mut c_void, length, Advice::LinuxDontNeed);
+            let _ = madvise(page_start as *mut c_void, length, MadviseFlags::DONTNEED);
         }
     }
 }

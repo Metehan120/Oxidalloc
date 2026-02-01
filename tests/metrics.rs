@@ -7,9 +7,6 @@ unsafe extern "C" {
 #[test]
 fn measure_slab_fragmentation() {
     unsafe {
-        println!(
-            "While this test measures internal fragmentation by allocating 4000 bytes, its not showing real results"
-        );
         println!("\nSlab Internal Fragmentation");
 
         let mut ptrs = Vec::new();
@@ -71,9 +68,6 @@ fn measure_thread_cache_fragmentation() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
-    println!(
-        "While this test measures thread cache fragmentation by allocating, its not showing real results"
-    );
     println!("\nThread Cache Fragmentation");
 
     let allocated = Arc::new(AtomicUsize::new(0));

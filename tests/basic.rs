@@ -1,9 +1,16 @@
-use oxidalloc::abi::{
-    align::posix_memalign,
-    free::free,
-    malloc::{malloc, malloc_usable_size},
-    realloc::realloc,
+use std::{
+    hint::black_box,
+    os::raw::{c_int, c_void},
+    ptr::write_bytes,
 };
+
+unsafe extern "C" {
+    pub fn malloc(size: usize) -> *mut c_void;
+    pub fn free(ptr: *mut c_void);
+    pub fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
+    pub fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, size: usize) -> c_int;
+    pub fn malloc_usable_size(ptr: *mut c_void) -> usize;
+}
 
 #[test]
 fn smoke_global_reuse() {
@@ -24,15 +31,6 @@ fn smoke_global_reuse() {
             free(ptr);
         }
     }
-}
-
-#[test]
-fn bootstrap_sets_va_len() {
-    use oxidalloc::va::bootstrap::{VA_LEN, boot_strap};
-    use std::sync::atomic::Ordering;
-
-    unsafe { boot_strap() };
-    assert!(VA_LEN.load(Ordering::Relaxed) > 0);
 }
 
 #[test]
@@ -59,6 +57,56 @@ fn realloc_handles_posix_memalign_pointer() {
             assert_eq!(after[i], (i as u8).wrapping_mul(3).wrapping_add(1));
         }
 
+        free(new_ptr);
+    }
+}
+
+#[test]
+fn testing_out_of_class_reallocs() {
+    unsafe {
+        let ptr = malloc(1024 * 1024 * 4);
+        assert!(!ptr.is_null(), "malloc failed");
+        let start = std::time::Instant::now();
+        let new_ptr = black_box(realloc(ptr, 1024 * 1024 * 8));
+        let elapsed = start.elapsed().as_nanos();
+        println!("Out of class realloc take (4mb -> 8mb) {}", elapsed);
+        assert!(!new_ptr.is_null(), "realloc failed");
+        free(new_ptr);
+    }
+}
+
+#[test]
+fn test_big_reallocs_1mb() {
+    unsafe {
+        let ptr = malloc(1024 * 1024);
+        assert!(!ptr.is_null(), "malloc failed");
+        black_box(write_bytes(ptr, 1, 1024 * 1024));
+        let start = std::time::Instant::now();
+        let new_ptr = black_box(realloc(ptr, 1024 * 1024 * 2));
+        let elapsed = start.elapsed().as_nanos();
+        assert!(!new_ptr.is_null(), "realloc failed");
+        black_box(write_bytes(new_ptr, 2, 1024 * 1024 * 2));
+        println!("Big realloc take (1mb -> 2mb) {}", elapsed);
+        free(new_ptr);
+    }
+}
+
+#[test]
+fn test_realloc_shrink() {
+    unsafe {
+        let ptr = malloc(1024 * 1024 * 2);
+        assert!(!ptr.is_null(), "malloc failed");
+        black_box(write_bytes(ptr, 1, 1024 * 1024 * 2));
+        let start = std::time::Instant::now();
+        let new_ptr = black_box(realloc(ptr, 1024 * 1024));
+        let elapsed = start.elapsed().as_nanos();
+        assert!(!new_ptr.is_null(), "realloc failed");
+        black_box(write_bytes(new_ptr, 1, 1024 * 1024));
+        let usable_size = malloc_usable_size(new_ptr);
+        println!(
+            "Big realloc shrink take (2mb ->1mb) {}, usable size {}",
+            elapsed, usable_size
+        );
         free(new_ptr);
     }
 }
