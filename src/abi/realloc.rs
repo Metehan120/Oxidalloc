@@ -23,7 +23,6 @@ use crate::{
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 
-// TODO: Better realloc implementation
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_void {
     if ptr.is_null() {
