@@ -33,7 +33,7 @@ Allocators included in these benchmarks:
 - **ptmalloc 6.x** (glibc)
 - **jemalloc 5.3.0**
 - **mimalloc 2.2.4**
-- **tcmalloc 4.6.3**
+- **tcmalloc 4.6.3** (gperftools-2.17.2)
 - **oxidalloc**
 
 All allocators are evaluated using the same benchmark harness and environment.
