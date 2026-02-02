@@ -6,11 +6,10 @@ use std::{
 
 use crate::{
     FREED_MAGIC, MAGIC, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OxidallocError,
-    REAL_NUMA_NODES,
     abi::{fallback::fallback_reinit_on_fork, malloc::reset_fork_thread_state},
     internals::{env::get_env_usize, once::Once, pthread_atfork},
     slab::thread_local::ThreadLocalEngine,
-    sys::memory_system::{get_cpu_count, get_mem_policy, getrandom},
+    sys::memory_system::{get_cpu_count, getrandom},
     va::bitmap::{reset_fork_locks, reset_fork_onces},
 };
 
@@ -62,33 +61,9 @@ pub unsafe fn register_fork_handlers() {
     let _ = pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
 }
 
-unsafe fn detect_numa_nodes() -> usize {
-    const BITS_PER_LONG: usize = std::mem::size_of::<usize>() * 8;
-
-    let mask = if let Ok(map) = get_mem_policy() {
-        map
-    } else {
-        return 1;
-    };
-
-    for (i, &word) in mask.iter().enumerate().rev() {
-        if word != 0 {
-            let bit_in_word = BITS_PER_LONG - 1 - (word.leading_zeros() as usize);
-            return ((i * BITS_PER_LONG) + bit_in_word + 1).max(1);
-        }
-    }
-
-    1
-}
-
 unsafe fn init_nthreads() {
     let thread_num = get_cpu_count();
     NTHREADS = thread_num;
-}
-
-pub(crate) unsafe fn init_numa_nodes() {
-    let nodes = detect_numa_nodes();
-    REAL_NUMA_NODES = nodes;
 }
 
 pub(crate) unsafe fn init_magic() {
@@ -212,7 +187,6 @@ pub unsafe fn boot_strap() {
         init_thp();
         init_random();
         init_magic();
-        init_numa_nodes();
         #[cfg(feature = "hardened-linked-list")]
         init_random_numa();
         init_nthreads();

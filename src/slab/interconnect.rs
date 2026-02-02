@@ -13,10 +13,11 @@ use rustix::thread::sched_getcpu;
 #[cfg(feature = "hardened-linked-list")]
 use crate::internals::lock::GlobalLock;
 use crate::{
-    OxHeader, OxidallocError,
+    MAX_NUMA_NODES, OxHeader, OxidallocError,
     internals::once::Once,
     slab::{NUM_SIZE_CLASSES, thread_local::prefetch, xor_ptr_general},
     sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
+    sys::numa::{MAX_CPUS, get_numa_maps},
     va::bootstrap::NUMA_KEY,
 };
 
@@ -79,6 +80,11 @@ pub struct InterConnectCache {
     #[cfg(feature = "hardened-linked-list")]
     pub locks: *mut GlobalLock,
     pub ncpu: usize,
+    pub node_offsets: *mut usize,
+    pub node_cpus: *mut usize,
+    pub node_count: usize,
+    pub node_cpu_count: usize,
+    pub cpu_to_node: *mut usize,
     pub once: Once,
 }
 
@@ -110,6 +116,11 @@ impl InterConnectCache {
             #[cfg(feature = "hardened-linked-list")]
             locks: null_mut(),
             ncpu: 0,
+            node_offsets: null_mut(),
+            node_cpus: null_mut(),
+            node_count: 0,
+            node_cpu_count: 0,
+            cpu_to_node: null_mut(),
             once: Once::new(),
         }
     }
@@ -135,6 +146,14 @@ impl InterConnectCache {
                 self.locks = locks as *mut GlobalLock
             };
             self.ncpu = thread_count;
+
+            if let Some(maps) = get_numa_maps(MAX_NUMA_NODES) {
+                self.node_offsets = maps.node_offsets;
+                self.node_cpus = maps.node_cpus;
+                self.cpu_to_node = maps.cpu_to_node;
+                self.node_count = maps.node_count;
+                self.node_cpu_count = maps.node_cpu_count;
+            }
         });
     }
 
@@ -198,6 +217,27 @@ impl InterConnectCache {
 
         if let Some(popped) = self.pop(class, batch_size, cpu) {
             return popped;
+        }
+
+        if self.node_count > 1 && !self.cpu_to_node.is_null() && cpu < ncpu {
+            let cpu_to_node_len = ncpu.min(MAX_CPUS);
+            let cpu_to_node = core::slice::from_raw_parts(self.cpu_to_node, cpu_to_node_len);
+            let node = cpu_to_node[cpu];
+            if node < self.node_count {
+                let offsets = core::slice::from_raw_parts(self.node_offsets, self.node_count + 1);
+                let cpus = core::slice::from_raw_parts(self.node_cpus, self.node_cpu_count);
+                let start = offsets[node];
+                let end = offsets[node + 1];
+
+                for &victim in &cpus[start..end] {
+                    if victim == cpu || victim >= ncpu {
+                        continue;
+                    }
+                    if let Some(block) = self.pop(class, batch_size, victim) {
+                        return block;
+                    }
+                }
+            }
         }
 
         for i in 1..ncpu {

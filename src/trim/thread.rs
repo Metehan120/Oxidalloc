@@ -84,3 +84,128 @@ pub unsafe fn spawn_gtrim_thread() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::abi::{free::free, malloc::malloc};
+    use crate::internals::size_t;
+    use crate::slab::interconnect::ICC;
+    use crate::slab::{SIZE_CLASSES, TLS_MAX_BLOCKS, match_size_class};
+    use crate::{AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn trim_releases_large_class_blocks() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        const SIZE: usize = 8192;
+        let class = match_size_class(SIZE).expect("size class exists");
+        assert!(SIZE_CLASSES[class] >= 4096, "test targets >= 4k classes");
+
+        let count = 128;
+        let mut ptrs = Vec::with_capacity(count);
+
+        unsafe {
+            OX_CURRENT_STAMP = 1;
+        }
+
+        for _ in 0..count {
+            let ptr = unsafe { malloc(SIZE as size_t) };
+            assert!(!ptr.is_null());
+            ptrs.push(ptr);
+        }
+
+        for ptr in ptrs {
+            unsafe { free(ptr) };
+        }
+
+        unsafe {
+            OX_CURRENT_STAMP = 10_000;
+        }
+        AVERAGE_BLOCK_TIMES_GLOBAL.store(1, Ordering::Relaxed);
+
+        let (ok, freed) = unsafe { GTrim.trim(0) };
+        assert_eq!(ok, 1, "trim should report success");
+        assert!(
+            freed > 0,
+            "trim should release some bytes for large classes"
+        );
+    }
+
+    #[test]
+    fn trim_releases_very_large_class_blocks() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        const SIZE: usize = 65536;
+        let class = match_size_class(SIZE).expect("size class exists");
+        assert!(SIZE_CLASSES[class] >= 4096, "test targets >= 4k classes");
+
+        let count = 64;
+        let mut ptrs = Vec::with_capacity(count);
+
+        unsafe {
+            OX_CURRENT_STAMP = 1;
+        }
+
+        for _ in 0..count {
+            let ptr = unsafe { malloc(SIZE as size_t) };
+            assert!(!ptr.is_null());
+            ptrs.push(ptr);
+        }
+
+        for ptr in ptrs {
+            unsafe { free(ptr) };
+        }
+
+        unsafe {
+            OX_CURRENT_STAMP = 10_000;
+        }
+        AVERAGE_BLOCK_TIMES_GLOBAL.store(1, Ordering::Relaxed);
+
+        let (ok, freed) = unsafe { GTrim.trim(0) };
+        assert_eq!(ok, 1, "trim should report success");
+        assert!(
+            freed > 0,
+            "trim should release some bytes for large classes"
+        );
+    }
+
+    #[test]
+    fn trim_does_not_touch_sub_4k_icc_class() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        const SIZE: usize = 1024;
+        let class = match_size_class(SIZE).expect("size class exists");
+        assert!(SIZE_CLASSES[class] < 4096, "test targets sub-4k classes");
+
+        // Allocate and free enough blocks to force some into the ICC for this class.
+        let count = TLS_MAX_BLOCKS[class] + 64;
+        let mut ptrs = Vec::with_capacity(count);
+
+        unsafe {
+            OX_CURRENT_STAMP = 1;
+        }
+
+        for _ in 0..count {
+            let ptr = unsafe { malloc(SIZE as size_t) };
+            assert!(!ptr.is_null());
+            ptrs.push(ptr);
+        }
+
+        for ptr in ptrs {
+            unsafe { free(ptr) };
+        }
+
+        let before = unsafe { ICC.get_size(class) };
+        assert!(before > 0, "expected sub-4k blocks to reach ICC");
+
+        unsafe {
+            OX_CURRENT_STAMP = 20_000;
+        }
+        AVERAGE_BLOCK_TIMES_GLOBAL.store(1, Ordering::Relaxed);
+
+        let (_ok, _freed) = unsafe { GTrim.trim(0) };
+        let after = unsafe { ICC.get_size(class) };
+        assert_eq!(after, before, "trim should not touch sub-4k ICC class");
+    }
+}

@@ -69,7 +69,10 @@ impl Sys {
     const SYS_MPROTECT: usize = 10;
     const SYS_GETRANDOM: usize = 318;
     const SYS_RSEQ: usize = 334;
-    pub const GET_MEM_POLICY: usize = 239;
+    const SYS_OPENAT: usize = 257;
+    const SYS_READ: usize = 0;
+    const SYS_CLOSE: usize = 3;
+    const SYS_SCHED_GETAFFINITY: usize = 204;
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -80,7 +83,10 @@ impl Sys {
     const SYS_MPROTECT: usize = 226;
     const SYS_GETRANDOM: usize = 278;
     const SYS_RSEQ: usize = 293;
-    pub const GET_MEM_POLICY: usize = 236;
+    const SYS_OPENAT: usize = 56;
+    const SYS_READ: usize = 63;
+    const SYS_CLOSE: usize = 57;
+    const SYS_SCHED_GETAFFINITY: usize = 123;
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -224,6 +230,57 @@ pub unsafe fn get_random_val<T>(buf: &mut [T]) -> Result<usize, SysErr> {
     );
 
     syscall_result(ret).map_err(|_| SysErr::RandomReqFail)
+}
+
+pub unsafe fn sched_getaffinity(mask: &mut [u64]) -> Result<(), i32> {
+    let ret = syscall6(
+        Sys::SYS_SCHED_GETAFFINITY,
+        0,
+        mask.len() * size_of::<u64>(),
+        mask.as_mut_ptr() as usize,
+        0,
+        0,
+        0,
+    );
+
+    syscall_result(ret).map(|_| ()).map_err(|e| e as i32)
+}
+
+pub unsafe fn openat_ro(path: *const u8) -> Result<i32, i32> {
+    const AT_FDCWD: isize = -100;
+    let ret = syscall6(
+        Sys::SYS_OPENAT,
+        AT_FDCWD as usize,
+        path as usize,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    syscall_result(ret)
+        .map(|fd| fd as i32)
+        .map_err(|e| e as i32)
+}
+
+pub unsafe fn read_fd(fd: i32, buf: &mut [u8]) -> Result<usize, i32> {
+    let ret = syscall6(
+        Sys::SYS_READ,
+        fd as usize,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        0,
+        0,
+        0,
+    );
+
+    syscall_result(ret).map_err(|e| e as i32)
+}
+
+pub unsafe fn close_fd(fd: i32) -> Result<(), i32> {
+    let ret = syscall6(Sys::SYS_CLOSE, fd as usize, 0, 0, 0, 0, 0);
+
+    syscall_result(ret).map(|_| ()).map_err(|e| e as i32)
 }
 
 #[thread_local]

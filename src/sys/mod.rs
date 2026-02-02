@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod numa;
 #[cfg(any(target_os = "linux"))]
 mod syscall_linux;
 
@@ -101,10 +103,19 @@ pub mod memory_system {
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, SysErr,
     };
     use crate::sys::syscall_linux::{
-        Sys, get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory,
-        register_rseq, syscall6,
+        get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory, register_rseq,
+        sched_getaffinity,
     };
-    use std::os::raw::{c_ulong, c_void};
+    use std::os::raw::c_void;
+
+    pub const CPU_AFFINITY_BYTES: usize = 8192;
+    pub const CPU_AFFINITY_WORDS: usize = CPU_AFFINITY_BYTES / 8;
+
+    #[derive(Debug, Copy, Clone)]
+    pub struct CpuAffinityInfo {
+        pub count: usize,
+        pub max_id: usize,
+    }
 
     pub unsafe fn unmap_memory(ptr: *mut c_void, size: usize) -> Result<(), SysErr> {
         munmap_memory(ptr, size)
@@ -145,45 +156,42 @@ pub mod memory_system {
         register_rseq(ptr, len, sig)
     }
 
-    pub unsafe fn get_cpu_count() -> usize {
-        let mut mask = [0u64; 8192 / 8]; // Supports up to 8192 cores
-        let ret = syscall6(
-            204,
-            0,
-            size_of_val(&mask),
-            mask.as_mut_ptr() as usize,
-            0,
-            0,
-            0,
-        );
-
-        if ret < 0 {
-            return 1;
+    pub unsafe fn get_cpu_affinity_mask(
+        mask: &mut [u64; CPU_AFFINITY_WORDS],
+    ) -> Option<CpuAffinityInfo> {
+        mask.fill(0);
+        if sched_getaffinity(mask).is_err() {
+            return None;
         }
 
-        mask.iter().map(|part| part.count_ones() as usize).sum()
+        let mut count = 0usize;
+        let mut max_id = 0usize;
+
+        for (word_index, word) in mask.iter().enumerate() {
+            let mut bits = *word;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                let cpu_id = word_index * 64 + bit;
+                count += 1;
+                if cpu_id > max_id {
+                    max_id = cpu_id;
+                }
+                bits &= bits - 1;
+            }
+        }
+
+        if count == 0 {
+            return None;
+        }
+
+        Some(CpuAffinityInfo { count, max_id })
     }
 
-    pub unsafe fn get_mem_policy() -> Result<[usize; 16], i32> {
-        const MPOL_F_MEMS_ALLOWED: usize = 1 << 2;
-        const MAX_NODES: usize = 1024;
-        const BITS_PER_LONG: usize = std::mem::size_of::<c_ulong>() * 8;
-        let mut mask: [usize; 16] = [0; MAX_NODES / BITS_PER_LONG];
+    pub unsafe fn get_cpu_count() -> usize {
+        let mut mask = [0u64; CPU_AFFINITY_WORDS];
 
-        let ret = syscall6(
-            Sys::GET_MEM_POLICY,
-            0,
-            mask.as_mut_ptr() as usize,
-            MAX_NODES as usize,
-            0 as usize,
-            MPOL_F_MEMS_ALLOWED,
-            0,
-        );
-
-        if ret != 0 {
-            return Err(1);
-        }
-
-        Ok(mask)
+        get_cpu_affinity_mask(&mut mask)
+            .map(|info| info.count)
+            .unwrap_or(1)
     }
 }

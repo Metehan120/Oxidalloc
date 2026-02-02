@@ -32,7 +32,6 @@ pub enum Err {
 
 pub const MAX_INTERCONNECT_CACHE: usize = 4;
 pub const MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
-pub static mut REAL_NUMA_NODES: usize = 0;
 
 pub const EROCMEF: i32 = 41; // harmless let it stay
 pub const VERSION: u32 = 0xABA01;
