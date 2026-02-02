@@ -1,3 +1,5 @@
+# Important: Alpha benchmark results may differ from later builds due to my idiocy—specifically, missing .cargo during the Alpha launch.
+
 # Oxidalloc
 
 Oxidalloc is a general-purpose Rust allocator for Linux that prioritizes predictable,
