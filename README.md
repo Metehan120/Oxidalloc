@@ -1,4 +1,4 @@
-# Important: Alpha benchmark results may differ from later builds due to my idiocy—specifically, missing .cargo during the Alpha launch.
+# Important: Alpha benchmark results may differ a few nanoseconds due to my idiocy—specifically, missing .cargo during the Alpha launch.
 # If you built earlier, a rebuild is recommended.
 
 # Oxidalloc
