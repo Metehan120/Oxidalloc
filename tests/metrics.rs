@@ -1,7 +1,9 @@
+use std::os::raw::c_void;
+
 unsafe extern "C" {
-    fn malloc(size: libc::size_t) -> *mut libc::c_void;
-    fn free(ptr: *mut libc::c_void);
-    fn malloc_usable_size(ptr: *mut libc::c_void) -> libc::size_t;
+    fn malloc(size: usize) -> *mut c_void;
+    fn free(ptr: *mut c_void);
+    fn malloc_usable_size(ptr: *mut c_void) -> usize;
 }
 
 #[test]

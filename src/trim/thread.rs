@@ -3,6 +3,8 @@ use std::{
     time::Duration,
 };
 
+use rustix::system::sysinfo;
+
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, OX_CURRENT_STAMP, OX_TRIM_THRESHOLD, get_clock,
     trim::{TimeDecay, gtrim::GTrim},
@@ -45,30 +47,24 @@ unsafe fn decide_global(decay: &TimeDecay) -> bool {
     false
 }
 
-fn check_memory_pressure() -> usize {
-    unsafe {
-        let mut info: libc::sysinfo = std::mem::zeroed();
+unsafe fn check_memory_pressure() -> usize {
+    let info = sysinfo();
 
-        if libc::sysinfo(&mut info) != 0 {
-            return 50;
-        }
+    let unit = info.mem_unit as usize;
+    let total_ram = (info.totalram as usize).saturating_mul(unit);
+    let free_ram = (info.freeram as usize).saturating_mul(unit);
+    let total_swap = (info.totalswap as usize).saturating_mul(unit);
+    let free_swap = (info.freeswap as usize).saturating_mul(unit);
 
-        let unit = info.mem_unit as usize;
-        let total_ram = (info.totalram as usize).saturating_mul(unit);
-        let free_ram = (info.freeram as usize).saturating_mul(unit);
-        let total_swap = (info.totalswap as usize).saturating_mul(unit);
-        let free_swap = (info.freeswap as usize).saturating_mul(unit);
+    let total_available = free_ram + free_swap;
+    let total_memory = total_ram + total_swap;
 
-        let total_available = free_ram + free_swap;
-        let total_memory = total_ram + total_swap;
-
-        if total_memory == 0 {
-            return 50;
-        }
-
-        let used = total_memory.saturating_sub(total_available);
-        (used * 100) / total_memory
+    if total_memory == 0 {
+        return 50;
     }
+
+    let used = total_memory.saturating_sub(total_available);
+    (used * 100) / total_memory
 }
 
 pub unsafe fn spawn_gtrim_thread() {

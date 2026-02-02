@@ -1,13 +1,14 @@
 use std::{
     hint::black_box,
+    os::raw::c_void,
     sync::{Arc, Barrier},
 };
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 unsafe extern "C" {
-    fn malloc(size: libc::size_t) -> *mut libc::c_void;
-    fn free(ptr: *mut libc::c_void);
+    fn malloc(size: usize) -> *mut c_void;
+    fn free(ptr: *mut c_void);
 }
 
 fn shuffle_indices(indices: &mut [usize]) {
@@ -119,7 +120,7 @@ fn bench_small_slab(c: &mut Criterion) {
                         for _ in 0..iters {
                             unsafe {
                                 for p in &mut ptrs {
-                                    let ptr = black_box(malloc(size as libc::size_t));
+                                    let ptr = black_box(malloc(size as usize));
                                     (ptr as *mut u8).write(0xA5);
                                     *p = ptr;
                                 }
@@ -151,7 +152,7 @@ fn bench_size_sweep(c: &mut Criterion) {
             &size,
             |b, &size| {
                 b.iter(|| unsafe {
-                    let ptr = black_box(malloc(size as libc::size_t));
+                    let ptr = black_box(malloc(size as usize));
                     (ptr as *mut u8).write(0xA5);
                     black_box(free(ptr));
                 });
@@ -176,7 +177,7 @@ fn bench_patterns(c: &mut Criterion) {
             |b, &size| {
                 b.iter(|| unsafe {
                     for p in &mut ptrs {
-                        let ptr = black_box(malloc(size as libc::size_t));
+                        let ptr = black_box(malloc(size as usize));
                         (ptr as *mut u8).write(0x5A);
                         *p = ptr;
                     }
@@ -193,7 +194,7 @@ fn bench_patterns(c: &mut Criterion) {
             |b, &size| {
                 b.iter(|| unsafe {
                     for p in &mut ptrs {
-                        let ptr = black_box(malloc(size as libc::size_t));
+                        let ptr = black_box(malloc(size as usize));
                         (ptr as *mut u8).write(0x5A);
                         *p = ptr;
                     }
@@ -210,7 +211,7 @@ fn bench_patterns(c: &mut Criterion) {
             |b, &size| {
                 b.iter(|| unsafe {
                     for p in &mut ptrs {
-                        let ptr = black_box(malloc(size as libc::size_t));
+                        let ptr = black_box(malloc(size as usize));
                         (ptr as *mut u8).write(0x5A);
                         *p = ptr;
                     }
@@ -236,7 +237,7 @@ fn bench_fragmentation(c: &mut Criterion) {
         b.iter(|| unsafe {
             for (i, p) in ptrs.iter_mut().enumerate() {
                 let size = sizes[i % sizes.len()];
-                let ptr = black_box(malloc(size as libc::size_t));
+                let ptr = black_box(malloc(size as usize));
                 (ptr as *mut u8).write(0x3C);
                 *p = ptr;
             }
@@ -250,7 +251,7 @@ fn bench_fragmentation(c: &mut Criterion) {
             for (i, p) in ptrs.iter_mut().enumerate() {
                 if (i & 1) == 0 {
                     let size = sizes[(i + 3) % sizes.len()];
-                    let ptr = black_box(malloc(size as libc::size_t));
+                    let ptr = black_box(malloc(size as usize));
                     (ptr as *mut u8).write(0xC3);
                     *p = ptr;
                 }

@@ -8,7 +8,7 @@ use std::{
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
-use libc::sched_getcpu;
+use rustix::thread::sched_getcpu;
 
 #[cfg(feature = "hardened-linked-list")]
 use crate::internals::lock::GlobalLock;
@@ -138,15 +138,6 @@ impl InterConnectCache {
         });
     }
 
-    pub unsafe fn get_cpu_id(&self) -> Result<usize, i32> {
-        let id = sched_getcpu();
-        if unlikely(id < 0) {
-            Err(id)
-        } else {
-            Ok(id as usize)
-        }
-    }
-
     pub unsafe fn try_push(
         &mut self,
         class: usize,
@@ -155,7 +146,7 @@ impl InterConnectCache {
         batch_size: usize,
     ) -> bool {
         self.ensure_cache();
-        let thread_id = self.get_cpu_id().unwrap_or(0);
+        let thread_id = sched_getcpu();
         #[cfg(feature = "hardened-linked-list")]
         let lock = &*self.locks.add(thread_id);
         #[cfg(feature = "hardened-linked-list")]
@@ -202,7 +193,7 @@ impl InterConnectCache {
     }
 
     pub unsafe fn try_pop(&mut self, class: usize, batch_size: usize) -> *mut OxHeader {
-        let cpu = self.get_cpu_id().unwrap_or(0);
+        let cpu = sched_getcpu();
         let ncpu = self.ncpu;
 
         if let Some(popped) = self.pop(class, batch_size, cpu) {

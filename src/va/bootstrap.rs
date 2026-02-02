@@ -8,9 +8,9 @@ use crate::{
     FREED_MAGIC, MAGIC, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM_THRESHOLD, OxidallocError,
     REAL_NUMA_NODES,
     abi::{fallback::fallback_reinit_on_fork, malloc::reset_fork_thread_state},
-    internals::{env::get_env_usize, once::Once},
+    internals::{env::get_env_usize, once::Once, pthread_atfork},
     slab::thread_local::ThreadLocalEngine,
-    sys::memory_system::{get_cpu_count, getrandom},
+    sys::memory_system::{get_cpu_count, get_mem_policy, getrandom},
     va::bitmap::{reset_fork_locks, reset_fork_onces},
 };
 
@@ -59,31 +59,17 @@ extern "C" fn fork_child() {
 }
 
 pub unsafe fn register_fork_handlers() {
-    let _ = libc::pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
+    let _ = pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
 }
 
-fn detect_numa_nodes() -> usize {
-    use libc::{SYS_get_mempolicy, c_int, c_ulong, syscall};
+unsafe fn detect_numa_nodes() -> usize {
+    const BITS_PER_LONG: usize = std::mem::size_of::<usize>() * 8;
 
-    const MPOL_F_MEMS_ALLOWED: c_ulong = 1 << 2;
-    const MAX_NODES: usize = 1024;
-    const BITS_PER_LONG: usize = std::mem::size_of::<c_ulong>() * 8;
-    let mut mask: [c_ulong; 16] = [0; MAX_NODES / BITS_PER_LONG];
-
-    let ret = unsafe {
-        syscall(
-            SYS_get_mempolicy,
-            std::ptr::null_mut::<c_int>(),
-            mask.as_mut_ptr(),
-            MAX_NODES as c_ulong,
-            0 as c_ulong,
-            MPOL_F_MEMS_ALLOWED,
-        )
-    };
-
-    if ret != 0 {
+    let mask = if let Ok(map) = get_mem_policy() {
+        map
+    } else {
         return 1;
-    }
+    };
 
     for (i, &word) in mask.iter().enumerate().rev() {
         if word != 0 {

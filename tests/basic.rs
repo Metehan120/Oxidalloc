@@ -36,7 +36,7 @@ fn smoke_global_reuse() {
 #[test]
 fn realloc_handles_posix_memalign_pointer() {
     unsafe {
-        let mut ptr: *mut libc::c_void = std::ptr::null_mut();
+        let mut ptr: *mut c_void = std::ptr::null_mut();
         assert_eq!(posix_memalign(&mut ptr, 64, 100), 0);
         assert!(!ptr.is_null());
         assert_eq!((ptr as usize) % 64, 0);

@@ -69,6 +69,7 @@ impl Sys {
     const SYS_MPROTECT: usize = 10;
     const SYS_GETRANDOM: usize = 318;
     const SYS_RSEQ: usize = 334;
+    pub const GET_MEM_POLICY: usize = 239;
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -79,6 +80,7 @@ impl Sys {
     const SYS_MPROTECT: usize = 226;
     const SYS_GETRANDOM: usize = 278;
     const SYS_RSEQ: usize = 293;
+    pub const GET_MEM_POLICY: usize = 236;
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -101,10 +101,10 @@ pub mod memory_system {
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, SysErr,
     };
     use crate::sys::syscall_linux::{
-        get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory, register_rseq,
-        syscall6,
+        Sys, get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory,
+        register_rseq, syscall6,
     };
-    use std::os::raw::c_void;
+    use std::os::raw::{c_ulong, c_void};
 
     pub unsafe fn unmap_memory(ptr: *mut c_void, size: usize) -> Result<(), SysErr> {
         munmap_memory(ptr, size)
@@ -162,5 +162,28 @@ pub mod memory_system {
         }
 
         mask.iter().map(|part| part.count_ones() as usize).sum()
+    }
+
+    pub unsafe fn get_mem_policy() -> Result<[usize; 16], i32> {
+        const MPOL_F_MEMS_ALLOWED: usize = 1 << 2;
+        const MAX_NODES: usize = 1024;
+        const BITS_PER_LONG: usize = std::mem::size_of::<c_ulong>() * 8;
+        let mut mask: [usize; 16] = [0; MAX_NODES / BITS_PER_LONG];
+
+        let ret = syscall6(
+            Sys::GET_MEM_POLICY,
+            0,
+            mask.as_mut_ptr() as usize,
+            MAX_NODES as usize,
+            0 as usize,
+            MPOL_F_MEMS_ALLOWED,
+            0,
+        );
+
+        if ret != 0 {
+            return Err(1);
+        }
+
+        Ok(mask)
     }
 }
