@@ -41,7 +41,6 @@ unsafe fn alloc_random() -> usize {
     RNG.next_usize()
 }
 
-// Security: Restored getrandom for strong ASLR on segment bases.
 unsafe fn randomize_base_hint() {
     let max = LATEST_TRIED.load(Ordering::Relaxed);
     if unlikely(max == 0) {
