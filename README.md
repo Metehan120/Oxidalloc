@@ -119,6 +119,7 @@ ICC replaces a single global list with per-CPU shards:
 - `OX_FORCE_THP=1` — forcing THP (`madvise(HUGEPAGE)` for every big allocations by aligning to 2MB)
 - `OX_TRIM_THRESHOLD=<bytes>` — minimum trim threshold (clamped to >= 1 MiB)
 - `OX_MAX_RESERVATION=<bytes>` — VA reservation cap (power-of-two, clamped to [16 GiB, 256 TiB])
+- `OX_ENABLE_TRIM_THREAD=1` — enables background trimming thread
 
 ## Limits / tradeoffs
 

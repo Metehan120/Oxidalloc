@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OxHeader, OxidallocError,
+    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_TRIM, OxHeader, OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     internals::{__errno_location, hashmap::BIG_ALLOC_MAP, size_t},
@@ -170,7 +170,9 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut c_void {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            spawn_gtrim_thread();
+            if OX_TRIM {
+                spawn_gtrim_thread();
+            }
             HOT_READY = true;
         }
     }
