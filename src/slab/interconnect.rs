@@ -16,10 +16,32 @@ use crate::{
     MAX_NUMA_NODES, OxHeader, OxidallocError,
     internals::once::Once,
     slab::{NUM_SIZE_CLASSES, thread_local::prefetch, xor_ptr_general},
-    sys::memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
-    sys::numa::{MAX_CPUS, get_numa_maps},
+    sys::{
+        memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
+        numa::{MAX_CPUS, get_numa_maps},
+    },
     va::bootstrap::NUMA_KEY,
 };
+
+macro_rules! mmap {
+    ($ptr:expr, $size:expr) => {
+        mmap_memory(
+            $ptr,
+            $size,
+            MMapFlags {
+                prot: MProtFlags::READ | MProtFlags::WRITE,
+                map: MemoryFlags::PRIVATE,
+            },
+        )
+        .unwrap_or_else(|e| {
+            OxidallocError::ICCFailedToInitialize.log_and_abort(
+                null_mut() as *mut c_void,
+                "MMAP call failed",
+                Some(e.get_errno()),
+            )
+        })
+    };
+}
 
 #[cfg(feature = "debug")]
 pub static HIT: AtomicUsize = AtomicUsize::new(0);
@@ -86,26 +108,6 @@ pub struct InterConnectCache {
     pub node_cpu_count: usize,
     pub cpu_to_node: *mut usize,
     pub once: Once,
-}
-
-macro_rules! mmap {
-    ($ptr:expr, $size:expr) => {
-        mmap_memory(
-            $ptr,
-            $size,
-            MMapFlags {
-                prot: MProtFlags::READ | MProtFlags::WRITE,
-                map: MemoryFlags::PRIVATE,
-            },
-        )
-        .unwrap_or_else(|e| {
-            OxidallocError::ICCFailedToInitialize.log_and_abort(
-                null_mut() as *mut c_void,
-                "MMAP call failed",
-                Some(e.get_errno()),
-            )
-        })
-    };
 }
 
 impl InterConnectCache {

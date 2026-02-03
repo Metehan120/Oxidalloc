@@ -1,4 +1,3 @@
-# Important: I have decided to move toward Span-Based design instead of per block header.
 # Note: This README targets the main branch and may differ from the alpha release.
 
 # Oxidalloc
