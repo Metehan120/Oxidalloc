@@ -21,9 +21,9 @@ use crate::{
 
 static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 const BATCH_MIN: usize = 8;
-const BATCH_MAX: usize = 128;
+const BATCH_MAX: usize = 32;
 pub static BATCH_HINTS: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(64) }; NUM_SIZE_CLASSES];
+    [const { AtomicUsize::new(32) }; NUM_SIZE_CLASSES];
 
 const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
