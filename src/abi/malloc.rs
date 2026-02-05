@@ -1,22 +1,23 @@
 use std::{
     hint::{likely, unlikely},
     os::raw::{c_int, c_void},
-    ptr::null_mut,
+    ptr::{null_mut, write},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crate::{
-    HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_TRIM, OxHeader, OxidallocError,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OX_TRIM, OxHeader,
+    OxidallocError,
     abi::fallback::malloc_usable_size_fallback,
     big_allocation::big_malloc,
     internals::{__errno_location, hashmap::BIG_ALLOC_MAP, size_t},
     slab::{
-        NUM_SIZE_CLASSES, SIZE_CLASSES, bulk_allocation::bulk_fill, global::GlobalHandler,
-        match_size_class, thread_local::ThreadLocalEngine,
+        NUM_SIZE_CLASSES, SIZE_CLASSES, bulk_allocation::bulk_fill, get_size_4096_class,
+        global::GlobalHandler, match_size_class, thread_local::ThreadLocalEngine,
     },
     sys::NOMEM,
     trim::{gtrim::GTrim, thread::spawn_gtrim_thread},
-    va::{bootstrap::boot_strap, is_ours},
+    va::{align_to, bootstrap::boot_strap, is_ours},
 };
 
 static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
@@ -29,6 +30,57 @@ const OFFSET_SIZE: usize = size_of::<usize>();
 const TAG_SIZE: usize = OFFSET_SIZE * 2;
 pub static TOTAL_MALLOC_FREE: AtomicUsize = AtomicUsize::new(0);
 pub static mut HOT_READY: bool = false;
+
+#[inline(always)]
+unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
+    let class_4096 = get_size_4096_class();
+    if class > class_4096 {
+        return null_mut();
+    }
+
+    let target_block = align_to(SIZE_CLASSES[class] + HEADER_SIZE, 16);
+
+    for donor in (class + 1)..=class_4096 {
+        let donor_block = align_to(SIZE_CLASSES[donor] + HEADER_SIZE, 16);
+        if donor_block != target_block * 2 {
+            continue;
+        }
+
+        let donor_header = GlobalHandler.pop_from_global(donor, 1);
+        if donor_header.is_null() {
+            continue;
+        }
+
+        let first = donor_header;
+        let second = (donor_header as *mut u8).add(target_block) as *mut OxHeader;
+
+        write(
+            first,
+            OxHeader {
+                next: null_mut(),
+                class: class as u8,
+                magic: FREED_MAGIC,
+                life_time: OX_CURRENT_STAMP,
+            },
+        );
+
+        write(
+            second,
+            OxHeader {
+                next: null_mut(),
+                class: class as u8,
+                magic: FREED_MAGIC,
+                life_time: OX_CURRENT_STAMP,
+            },
+        );
+
+        GlobalHandler.push_to_global(class, second, second, 1);
+
+        return first;
+    }
+
+    null_mut()
+}
 
 pub(crate) fn reset_fork_thread_state() {
     THREAD_SPAWNED.store(false, Ordering::Relaxed);
@@ -89,6 +141,11 @@ unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeade
     }
 
     bump_batch_hint(class, false);
+
+    let split = try_split_from_icc(class);
+    if !split.is_null() {
+        return split;
+    }
 
     for i in 0..3 {
         match bulk_fill(thread, class) {
