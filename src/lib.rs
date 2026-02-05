@@ -56,7 +56,7 @@ pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3000);
 
 pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
 pub static mut OX_FORCE_THP: bool = false;
-pub static mut OX_TRIM: bool = false;
+pub static mut OX_TRIM: bool = true;
 pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
 
 pub fn get_clock() -> &'static Instant {

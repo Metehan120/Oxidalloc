@@ -163,11 +163,11 @@ pub unsafe fn init_threshold() {
 }
 
 pub unsafe fn init_thread() {
-    let key = b"OX_ENABLE_TRIM_THREAD";
+    let key = b"OX_DISABLE_TRIM_THREAD";
 
     if let Some(val) = get_env_usize(key) {
         if val == 1 {
-            OX_TRIM = true;
+            OX_TRIM = false;
         }
     }
 }
