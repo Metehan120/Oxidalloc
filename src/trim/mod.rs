@@ -13,9 +13,9 @@ pub enum TimeDecay {
 impl TimeDecay {
     pub fn decide_on(avg_time: usize) -> TimeDecay {
         match avg_time {
-            0..=1000 => TimeDecay::Normal,
-            1001..=2000 => TimeDecay::Medium,
-            2001..=2500 => TimeDecay::High,
+            0..=1 => TimeDecay::Normal,
+            4..=5 => TimeDecay::Medium,
+            6..=10 => TimeDecay::High,
             _ => TimeDecay::Aggressive,
         }
     }
@@ -26,6 +26,15 @@ impl TimeDecay {
             TimeDecay::Medium => 120,
             TimeDecay::High => 100,
             TimeDecay::Aggressive => 20,
+        }
+    }
+
+    pub fn get_trim_time_for_global(&self) -> u64 {
+        match self {
+            TimeDecay::Normal => 2,
+            TimeDecay::Medium => 1,
+            TimeDecay::High => 1,
+            TimeDecay::Aggressive => 1,
         }
     }
 

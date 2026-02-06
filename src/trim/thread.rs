@@ -23,9 +23,7 @@ unsafe fn decide_global(decay: &TimeDecay) -> bool {
     }
 
     let total = TOTAL_TIME_GLOBAL.load(Ordering::Relaxed);
-    if total % 300 == 0 {
-        LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
-    }
+    LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
 
     if LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 85 {
         return true;
@@ -77,7 +75,8 @@ pub unsafe fn spawn_gtrim_thread() {
             let decay = TimeDecay::from_u8(GLOBAL_DECAY.load(Ordering::Relaxed));
             std::thread::sleep(Duration::from_millis(decay.get_trim_time()));
 
-            TOTAL_TIME_GLOBAL.fetch_add(decay.get_trim_time() as usize, Ordering::Relaxed);
+            TOTAL_TIME_GLOBAL
+                .fetch_add(decay.get_trim_time_for_global() as usize, Ordering::Relaxed);
 
             let time = get_clock().elapsed().as_secs() as u32;
             OX_CURRENT_STAMP = time;
