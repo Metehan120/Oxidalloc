@@ -134,7 +134,7 @@ impl GTrim {
         }
 
         if total > 0 {
-            let avg = (avg / total).max(100).min(10000);
+            let avg = (avg / total).max(1).min(10);
             AVERAGE_BLOCK_TIMES_GLOBAL.store(avg as usize, Ordering::Relaxed);
             GLOBAL_DECAY.swap(TimeDecay::decide_on(avg as usize) as u8, Ordering::AcqRel);
         }
