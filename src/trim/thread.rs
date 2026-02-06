@@ -25,9 +25,7 @@ unsafe fn decide_global(decay: &TimeDecay) -> bool {
     }
 
     let total = TOTAL_TIME_GLOBAL.load(Ordering::Relaxed);
-    if total % 300 == 0 {
-        LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
-    }
+    LAST_PRESSURE_CHECK.store(check_memory_pressure(), Ordering::Relaxed);
 
     if LAST_PRESSURE_CHECK.load(Ordering::Relaxed) > 85 {
         return true;
