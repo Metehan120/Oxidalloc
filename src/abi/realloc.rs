@@ -3,6 +3,7 @@ use std::{os::raw::c_void, ptr::null_mut};
 use crate::{
     HEADER_SIZE, OX_ALIGN_TAG, OxHeader, OxidallocError,
     abi::{
+        calloc::calloc,
         fallback::realloc_fallback,
         free::{free, validate_ptr_for_abi},
         malloc::malloc,
@@ -267,4 +268,43 @@ pub unsafe extern "C" fn reallocarray(
     };
 
     realloc(ptr, total_size)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn recallocarray(
+    ptr: *mut c_void,
+    oldnmemb: size_t,
+    newnmemb: size_t,
+    size: size_t,
+) -> *mut c_void {
+    if ptr.is_null() {
+        return calloc(newnmemb, size);
+    }
+
+    let new_size = match newnmemb.checked_mul(size) {
+        Some(s) => s,
+        None => {
+            if let Some(errno_ptr) = __errno_location().as_mut() {
+                *errno_ptr = NOMEM;
+            }
+            return null_mut();
+        }
+    };
+
+    let old_size = match oldnmemb.checked_mul(size) {
+        Some(s) => s,
+        None => 0,
+    };
+
+    if new_size <= old_size {
+        return realloc(ptr, new_size);
+    }
+
+    let new_ptr = realloc(ptr, new_size);
+    if !new_ptr.is_null() {
+        let grow_size = new_size - old_size;
+        std::ptr::write_bytes((new_ptr as *mut u8).add(old_size), 0, grow_size);
+    }
+
+    new_ptr
 }

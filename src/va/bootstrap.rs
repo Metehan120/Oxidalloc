@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    FREED_MAGIC, MAGIC, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM, OX_TRIM_THRESHOLD,
-    OxidallocError,
+    FREED_MAGIC, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM,
+    OX_TRIM_THRESHOLD, OxidallocError,
     abi::{fallback::fallback_reinit_on_fork, malloc::reset_fork_thread_state},
     internals::{env::get_env_usize, once::Once, pthread_atfork},
     slab::thread_local::ThreadLocalEngine,
@@ -151,6 +151,16 @@ pub unsafe fn init_thp() {
     }
 }
 
+pub unsafe fn init_disable_thp() {
+    let key = b"OX_DISABLE_THP";
+
+    if let Some(val) = get_env_usize(key) {
+        if val == 1 && !OX_FORCE_THP {
+            OX_DISABLE_THP = true;
+        }
+    }
+}
+
 pub unsafe fn init_threshold() {
     let key = b"OX_TRIM_THRESHOLD";
 
@@ -196,6 +206,7 @@ pub unsafe fn boot_strap() {
         init_reverse();
         init_threshold();
         init_thp();
+        init_disable_thp();
         init_random();
         init_magic();
         #[cfg(feature = "hardened-linked-list")]

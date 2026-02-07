@@ -352,7 +352,5 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> size_t {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc_trim(pad: size_t) -> c_int {
-    let is_ok_g = GTrim.trim(pad);
-
-    is_ok_g.0
+    GTrim.trim(pad).0
 }

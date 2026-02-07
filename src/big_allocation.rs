@@ -1,5 +1,5 @@
 use crate::{
-    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_FORCE_THP, OxHeader, OxidallocError,
+    FREED_MAGIC, HEADER_SIZE, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OxHeader, OxidallocError,
     internals::hashmap::{BIG_ALLOC_MAP, BigAllocMeta},
     sys::memory_system::{
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, madvise, mmap_memory,
@@ -52,7 +52,7 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
         hint as *mut c_void
     } as *mut OxHeader;
 
-    if aligned_total % (1024 * 1024 * 2) == 0 {
+    if aligned_total % (1024 * 1024 * 2) == 0 && !OX_DISABLE_THP {
         let _ = madvise(
             actual_ptr as *mut c_void,
             aligned_total,
@@ -103,10 +103,6 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
         align_to(payload_size + HEADER_SIZE, 4096)
     };
 
-    if total_size % (1024 * 1024 * 2) == 0 {
-        let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
-    }
-
     // Make the header look free before we potentially lose write access.
     (*header).magic = FREED_MAGIC;
 
@@ -116,6 +112,9 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
         write_bytes(header as *mut u8, 0, total_size);
     }
 
+    if total_size % (1024 * 1024 * 2) == 0 && !OX_DISABLE_THP {
+        let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
+    }
     let _ = protect_memory(header as *mut c_void, total_size, RMProtFlags::NONE);
 
     VA_MAP.free(header as usize, total_size);

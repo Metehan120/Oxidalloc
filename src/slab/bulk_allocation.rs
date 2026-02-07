@@ -4,7 +4,8 @@ use std::{
 };
 
 use crate::{
-    Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OxHeader, OxidallocError,
+    Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_DISABLE_THP, OxHeader,
+    OxidallocError,
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, global::GlobalHandler,
         thread_local::ThreadLocalEngine,
@@ -121,7 +122,7 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
         },
     );
 
-    if class == NUM_SIZE_CLASSES - 1 {
+    if class == NUM_SIZE_CLASSES - 1 && !OX_DISABLE_THP {
         let _ = madvise(
             (mem as *mut u8).add(HEADER_SIZE) as *mut c_void,
             payload_size,

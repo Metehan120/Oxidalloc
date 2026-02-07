@@ -7,6 +7,7 @@ use crate::{
     abi::malloc::malloc,
     internals::size_t,
     sys::{EINVAL, NOMEM},
+    va::align_to,
 };
 
 const OFFSET_SIZE: usize = size_of::<usize>();
@@ -84,4 +85,16 @@ pub unsafe extern "C" fn aligned_alloc(alignment: size_t, size: size_t) -> *mut 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn valloc(size: size_t) -> *mut c_void {
     memalign(4096, size)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pvalloc(size: size_t) -> *mut c_void {
+    let page_size = 4096;
+    let rounded_size = if size == 0 {
+        page_size
+    } else {
+        align_to(size, page_size)
+    };
+
+    memalign(page_size, rounded_size)
 }

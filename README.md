@@ -120,6 +120,7 @@ ICC replaces a single global list with per-CPU shards:
 - `OX_TRIM_THRESHOLD=<bytes>` — minimum trim threshold (clamped to >= 1 MiB)
 - `OX_MAX_RESERVATION=<bytes>` — VA reservation cap (power-of-two, clamped to [16 GiB, 256 TiB])
 - `OX_DISABLE_TRIM_THREAD=1` — disables background trimming thread
+- `OX_DISABLE_THP=1` — disables transparent huge pages / If THP forced, this flag will be ignored.
 
 ## Limits / tradeoffs
 

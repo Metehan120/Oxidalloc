@@ -159,6 +159,7 @@ impl InterConnectCache {
         });
     }
 
+    #[inline(always)]
     pub unsafe fn try_push(
         &mut self,
         class: usize,
@@ -213,6 +214,7 @@ impl InterConnectCache {
         total
     }
 
+    #[inline(always)]
     pub unsafe fn try_pop(&mut self, class: usize, batch_size: usize) -> *mut OxHeader {
         let cpu = sched_getcpu();
         let ncpu = self.ncpu;
@@ -253,6 +255,7 @@ impl InterConnectCache {
         null_mut()
     }
 
+    #[inline(always)]
     pub unsafe fn pop(
         &mut self,
         class: usize,

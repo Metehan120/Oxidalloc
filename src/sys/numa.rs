@@ -5,7 +5,7 @@ use core::{
 
 use crate::internals::oncelock::OnceLock;
 use crate::sys::{
-    memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory},
+    memory_system::{MMapFlags, MProtFlags, MemoryFlags, mmap_memory, unmap_memory},
     syscall_linux::{close_fd, openat_ro, read_fd},
 };
 
@@ -114,10 +114,13 @@ fn parse_cpulist_bytes(
 }
 
 fn build_numa_maps(max_nodes: usize) -> Option<NumaMaps> {
+    let offsets_size = size_of::<usize>() * (max_nodes + 1);
+    let cpu_map_size = size_of::<usize>() * MAX_CPUS;
+
     let node_offsets = unsafe {
         mmap_memory(
             core::ptr::null_mut(),
-            size_of::<usize>() * (max_nodes + 1),
+            offsets_size,
             MMapFlags {
                 prot: MProtFlags::READ | MProtFlags::WRITE,
                 map: MemoryFlags::PRIVATE,
@@ -126,29 +129,44 @@ fn build_numa_maps(max_nodes: usize) -> Option<NumaMaps> {
         .ok()?
     } as *mut usize;
 
-    let node_cpus = unsafe {
+    let node_cpus = match unsafe {
         mmap_memory(
             core::ptr::null_mut(),
-            size_of::<usize>() * MAX_CPUS,
+            cpu_map_size,
             MMapFlags {
                 prot: MProtFlags::READ | MProtFlags::WRITE,
                 map: MemoryFlags::PRIVATE,
             },
         )
-        .ok()?
-    } as *mut usize;
+    } {
+        Ok(ptr) => ptr as *mut usize,
+        Err(_) => {
+            unsafe {
+                let _ = unmap_memory(node_offsets as *mut _, offsets_size);
+            }
+            return None;
+        }
+    };
 
-    let cpu_to_node = unsafe {
+    let cpu_to_node = match unsafe {
         mmap_memory(
             core::ptr::null_mut(),
-            size_of::<usize>() * MAX_CPUS,
+            cpu_map_size,
             MMapFlags {
                 prot: MProtFlags::READ | MProtFlags::WRITE,
                 map: MemoryFlags::PRIVATE,
             },
         )
-        .ok()?
-    } as *mut usize;
+    } {
+        Ok(ptr) => ptr as *mut usize,
+        Err(_) => {
+            unsafe {
+                let _ = unmap_memory(node_offsets as *mut _, offsets_size);
+                let _ = unmap_memory(node_cpus as *mut _, cpu_map_size);
+            }
+            return None;
+        }
+    };
 
     let offsets = unsafe { core::slice::from_raw_parts_mut(node_offsets, max_nodes + 1) };
     let cpus = unsafe { core::slice::from_raw_parts_mut(node_cpus, MAX_CPUS) };
@@ -198,6 +216,11 @@ fn build_numa_maps(max_nodes: usize) -> Option<NumaMaps> {
     }
 
     if node_count == 0 {
+        unsafe {
+            let _ = unmap_memory(node_offsets as *mut _, offsets_size);
+            let _ = unmap_memory(node_cpus as *mut _, cpu_map_size);
+            let _ = unmap_memory(cpu_to_node as *mut _, cpu_map_size);
+        }
         return None;
     }
 

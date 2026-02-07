@@ -10,6 +10,32 @@ unsafe extern "C" {
     pub fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
     pub fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, size: usize) -> c_int;
     pub fn malloc_usable_size(ptr: *mut c_void) -> usize;
+    pub fn valloc(size: usize) -> *mut c_void;
+    pub fn pvalloc(size: usize) -> *mut c_void;
+}
+
+#[test]
+fn test_valloc_and_pvalloc() {
+    unsafe {
+        let ptr1 = valloc(100);
+        assert!(!ptr1.is_null());
+        assert_eq!((ptr1 as usize) % 4096, 0);
+        free(ptr1);
+
+        let ptr2 = pvalloc(100);
+        assert!(!ptr2.is_null());
+        assert_eq!((ptr2 as usize) % 4096, 0);
+        let usable2 = malloc_usable_size(ptr2);
+        assert!(usable2 >= 4096);
+        free(ptr2);
+
+        let ptr3 = pvalloc(5000);
+        assert!(!ptr3.is_null());
+        assert_eq!((ptr3 as usize) % 4096, 0);
+        let usable3 = malloc_usable_size(ptr3);
+        assert!(usable3 >= 8192);
+        free(ptr3);
+    }
 }
 
 #[test]
