@@ -19,6 +19,9 @@ compile_error!(
 
 #[cfg(feature = "global-alloc")]
 pub use crate::inner::global_alloc::Oxidalloc;
+#[cfg(feature = "global-alloc")]
+pub use crate::inner::global_alloc::OxidallocConfig;
+
 use crate::internals::oncelock::OnceLock;
 use std::{fmt::Debug, sync::atomic::AtomicUsize, time::Instant, usize};
 
@@ -36,7 +39,6 @@ pub(crate) enum Err {
     OutOfMemory,
 }
 
-pub const MAX_INTERCONNECT_CACHE: usize = 4;
 pub const MAX_NUMA_NODES: usize = 32; // Adapt this to the number of NUMA nodes in your system
 pub const VERSION_STR: &str = "1.0.0-alpha-2";
 
