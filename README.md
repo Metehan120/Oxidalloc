@@ -1,5 +1,4 @@
-# Important: Alpha benchmark results may differ a few nanoseconds due to my idiocy—specifically, missing .cargo during the Alpha launch.
-# If you built earlier, a rebuild is recommended.
+# Because of the messy Alpha launch, Alpha-2 is going to be released soon with better RSS, fragmentation, stability, and performance. You can expect it around Feb 8th–12th (or a little bit later; I am going to try not to delay too much).
 
 # Oxidalloc
 
