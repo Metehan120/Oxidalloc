@@ -37,13 +37,10 @@ impl Once {
         }
     }
 
+    #[cfg(not(feature = "global-alloc"))]
     pub fn reset_at_fork(&self) {
         let _ = self
             .state
             .compare_exchange(1, 0, Ordering::AcqRel, Ordering::Relaxed);
-    }
-
-    pub fn get_state(&self) -> u8 {
-        self.state.load(Ordering::Relaxed)
     }
 }

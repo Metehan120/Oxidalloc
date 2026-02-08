@@ -103,7 +103,7 @@ pub mod memory_system {
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, SysErr,
     };
     use crate::sys::syscall_linux::{
-        get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory, register_rseq,
+        get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory,
         sched_getaffinity,
     };
     use std::os::raw::c_void;
@@ -114,7 +114,6 @@ pub mod memory_system {
     #[derive(Debug, Copy, Clone)]
     pub struct CpuAffinityInfo {
         pub count: usize,
-        pub max_id: usize,
     }
 
     pub unsafe fn unmap_memory(ptr: *mut c_void, size: usize) -> Result<(), SysErr> {
@@ -152,10 +151,6 @@ pub mod memory_system {
         get_random_val(buf)
     }
 
-    pub unsafe fn reg_rseq(ptr: *mut c_void, len: usize, sig: u32) -> Result<(), i32> {
-        register_rseq(ptr, len, sig)
-    }
-
     pub unsafe fn get_cpu_affinity_mask(
         mask: &mut [u64; CPU_AFFINITY_WORDS],
     ) -> Option<CpuAffinityInfo> {
@@ -184,7 +179,7 @@ pub mod memory_system {
             return None;
         }
 
-        Some(CpuAffinityInfo { count, max_id })
+        Some(CpuAffinityInfo { count })
     }
 
     pub unsafe fn get_cpu_count() -> usize {

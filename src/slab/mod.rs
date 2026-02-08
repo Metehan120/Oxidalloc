@@ -5,7 +5,6 @@ use crate::{HEADER_SIZE, OxHeader, internals::oncelock::OnceLock, va::align_to};
 pub mod bulk_allocation;
 pub mod global;
 pub mod interconnect;
-pub mod quarantine;
 pub mod thread_local;
 
 pub const SIZE_CLASSES: [usize; 34] = [
@@ -94,6 +93,7 @@ pub fn get_size_4096_class() -> usize {
     *CLASS_4096.get_or_init(|| SIZE_CLASSES.iter().position(|&s| s >= 4096).unwrap())
 }
 
+#[cfg(not(feature = "global-alloc"))]
 pub(crate) fn reset_fork_onces() {
     CLASS_4096.reset_on_fork();
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // ⚠️ WARNING ⚠️
 // This file intentionally talks directly to the Linux kernel.
 // It exists to provide the smallest possible abstraction layer

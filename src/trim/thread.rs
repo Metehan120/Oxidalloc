@@ -15,7 +15,6 @@ static LAST_TRIM_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
 
 pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
-pub static PTRIM_DECAY: AtomicU8 = AtomicU8::new(0);
 
 unsafe fn decide_global(decay: &TimeDecay) -> bool {
     if (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) < decay.get_threshold() as usize)
@@ -87,7 +86,8 @@ pub unsafe fn spawn_gtrim_thread() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::{free::free, malloc::malloc};
+    use crate::inner::alloc::alloc_inner;
+    use crate::inner::free::free_inner;
     use crate::internals::size_t;
     use crate::slab::interconnect::ICC;
     use crate::slab::{SIZE_CLASSES, TLS_MAX_BLOCKS, match_size_class};
@@ -111,13 +111,13 @@ mod tests {
         }
 
         for _ in 0..count {
-            let ptr = unsafe { malloc(SIZE as size_t) };
+            let ptr = unsafe { alloc_inner(SIZE as size_t) };
             assert!(!ptr.is_null());
             ptrs.push(ptr);
         }
 
         for ptr in ptrs {
-            unsafe { free(ptr) };
+            unsafe { free_inner(ptr) };
         }
 
         unsafe {
@@ -148,13 +148,13 @@ mod tests {
         }
 
         for _ in 0..count {
-            let ptr = unsafe { malloc(SIZE as size_t) };
+            let ptr = unsafe { alloc_inner(SIZE as size_t) };
             assert!(!ptr.is_null());
             ptrs.push(ptr);
         }
 
         for ptr in ptrs {
-            unsafe { free(ptr) };
+            unsafe { free_inner(ptr) };
         }
 
         unsafe {
@@ -186,13 +186,13 @@ mod tests {
         }
 
         for _ in 0..count {
-            let ptr = unsafe { malloc(SIZE as size_t) };
+            let ptr = unsafe { alloc_inner(SIZE as size_t) };
             assert!(!ptr.is_null());
             ptrs.push(ptr);
         }
 
         for ptr in ptrs {
-            unsafe { free(ptr) };
+            unsafe { free_inner(ptr) };
         }
 
         let before = unsafe { ICC.get_size(class) };

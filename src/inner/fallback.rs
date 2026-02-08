@@ -8,6 +8,8 @@ use crate::internals::{RTLD_NEXT, dlsym, once::Once, size_t};
 
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type ReallocFn = unsafe extern "C" fn(*mut c_void, size_t) -> *mut c_void;
+
+#[cfg(not(feature = "global-alloc"))]
 type MallocUsableSizeFn = unsafe extern "C" fn(*mut c_void) -> size_t;
 
 static FREE_INIT: Once = Once::new();
@@ -16,15 +18,20 @@ static FREE_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static REALLOC_INIT: Once = Once::new();
 static REALLOC_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
+#[cfg(not(feature = "global-alloc"))]
 static MUS_INIT: Once = Once::new();
+#[cfg(not(feature = "global-alloc"))]
 static MUS_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
+#[cfg(not(feature = "global-alloc"))]
 pub fn fallback_reinit_on_fork() {
     FREE_INIT.reset_at_fork();
     REALLOC_INIT.reset_at_fork();
     MUS_INIT.reset_at_fork();
 }
 
+#[cold]
+#[inline(never)]
 fn get_symbol(name: &[u8], init: &Once, slot: &AtomicPtr<c_void>) -> *mut c_void {
     init.call_once(|| {
         let sym = unsafe { dlsym(RTLD_NEXT, name.as_ptr() as *const c_char) };
@@ -33,6 +40,8 @@ fn get_symbol(name: &[u8], init: &Once, slot: &AtomicPtr<c_void>) -> *mut c_void
     slot.load(Ordering::Relaxed)
 }
 
+#[cold]
+#[inline(never)]
 pub unsafe fn free_fallback(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
@@ -47,6 +56,8 @@ pub unsafe fn free_fallback(ptr: *mut c_void) {
     func(ptr);
 }
 
+#[cold]
+#[inline(never)]
 pub unsafe fn realloc_fallback(ptr: *mut c_void, size: size_t) -> *mut c_void {
     let sym = get_symbol(b"realloc\0", &REALLOC_INIT, &REALLOC_PTR);
     if sym.is_null() {
@@ -57,6 +68,9 @@ pub unsafe fn realloc_fallback(ptr: *mut c_void, size: size_t) -> *mut c_void {
     func(ptr, size)
 }
 
+#[cold]
+#[inline(never)]
+#[cfg(not(feature = "global-alloc"))]
 pub unsafe fn malloc_usable_size_fallback(ptr: *mut c_void) -> size_t {
     if ptr.is_null() {
         return 0;

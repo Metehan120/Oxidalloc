@@ -1,36 +1,38 @@
-use std::{
-    mem::transmute,
-    ptr::null_mut,
-    sync::{Mutex, MutexGuard, atomic::Ordering},
-};
+#[cfg(not(feature = "global-alloc"))]
+use std::sync::{Mutex, MutexGuard};
+use std::{ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
     FREED_MAGIC, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM,
     OX_TRIM_THRESHOLD, OxidallocError,
-    abi::{fallback::fallback_reinit_on_fork, malloc::reset_fork_thread_state},
-    internals::{env::get_env_usize, once::Once, pthread_atfork},
+    internals::{env::get_env_usize, once::Once},
     slab::thread_local::ThreadLocalEngine,
     sys::memory_system::{get_cpu_count, getrandom},
-    va::bitmap::{reset_fork_locks, reset_fork_onces},
 };
 
 pub static mut NTHREADS: usize = 0;
+#[cfg(not(feature = "global-alloc"))]
 pub static BOOTSTRAP_LOCK: Mutex<()> = Mutex::new(());
 pub static mut GLOBAL_RANDOM: usize = 0;
 pub static mut NUMA_KEY: usize = 0;
 
+#[cfg(not(feature = "global-alloc"))]
 static mut ATFORK_GUARD: Option<MutexGuard<'static, ()>> = None;
 
+#[cfg(not(feature = "global-alloc"))]
 extern "C" fn fork_prepare() {
     let guard = BOOTSTRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         // Keep the lock held across fork so parent/child can safely drop it.
+
+        use std::mem::transmute;
         ATFORK_GUARD = Some(transmute::<MutexGuard<'_, ()>, MutexGuard<'static, ()>>(
             guard,
         ));
     }
 }
 
+#[cfg(not(feature = "global-alloc"))]
 extern "C" fn fork_parent() {
     unsafe {
         if let Some(guard) = ATFORK_GUARD.take() {
@@ -39,7 +41,13 @@ extern "C" fn fork_parent() {
     }
 }
 
+#[cfg(not(feature = "global-alloc"))]
 extern "C" fn fork_child() {
+    use crate::{
+        inner::{alloc::reset_fork_thread_state, fallback::fallback_reinit_on_fork},
+        va::bitmap::{reset_fork_locks, reset_fork_onces},
+    };
+
     unsafe {
         if let Some(guard) = ATFORK_GUARD.take() {
             drop(guard);
@@ -58,7 +66,10 @@ extern "C" fn fork_child() {
     ONCE.reset_at_fork();
 }
 
+#[cfg(not(feature = "global-alloc"))]
 pub unsafe fn register_fork_handlers() {
+    use crate::internals::pthread_atfork;
+
     let _ = pthread_atfork(Some(fork_prepare), Some(fork_parent), Some(fork_child));
 }
 
@@ -202,6 +213,7 @@ static ONCE: Once = Once::new();
 pub unsafe fn boot_strap() {
     ONCE.call_once(|| {
         ThreadLocalEngine::get_or_init();
+        #[cfg(not(feature = "global-alloc"))]
         register_fork_handlers();
         init_reverse();
         init_threshold();
@@ -209,6 +221,7 @@ pub unsafe fn boot_strap() {
         init_disable_thp();
         init_random();
         init_magic();
+        init_thread();
         #[cfg(feature = "hardened-linked-list")]
         init_random_numa();
         init_nthreads();

@@ -47,6 +47,7 @@ impl SerialLock {
         self.state.store(false, Ordering::Release);
     }
 
+    #[cfg(not(feature = "global-alloc"))]
     pub fn reset_on_fork(&self) {
         self.unlock();
     }

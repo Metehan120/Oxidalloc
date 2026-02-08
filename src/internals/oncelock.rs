@@ -33,10 +33,7 @@ impl<T> OnceLock<T> {
         unsafe { &*(*self.value.get()).as_ptr() }
     }
 
-    pub fn get(&self) -> &T {
-        unsafe { &*(*self.value.get()).as_ptr() }
-    }
-
+    #[cfg(not(feature = "global-alloc"))]
     pub fn reset_on_fork(&self) {
         self.init.reset_at_fork();
     }

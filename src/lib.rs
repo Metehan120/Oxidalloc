@@ -13,64 +13,65 @@
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 
+#[cfg(feature = "global-alloc")]
+pub use crate::inner::global_alloc::Oxidalloc;
+use crate::internals::oncelock::OnceLock;
 use std::{fmt::Debug, sync::atomic::AtomicUsize, time::Instant, usize};
 
-use crate::internals::oncelock::OnceLock;
+#[cfg(not(feature = "global-alloc"))]
+pub(crate) mod abi;
+pub(crate) mod big_allocation;
+pub(crate) mod inner;
+pub(crate) mod internals;
+pub(crate) mod slab;
+pub(crate) mod sys;
+pub(crate) mod trim;
+pub(crate) mod va;
 
-pub mod abi;
-pub mod big_allocation;
-pub mod internals;
-pub mod slab;
-pub mod sys;
-pub mod trim;
-pub mod va;
-
-pub enum Err {
-    OutOfReservation,
+pub(crate) enum Err {
     OutOfMemory,
 }
 
 pub const MAX_INTERCONNECT_CACHE: usize = 4;
-pub const MAX_NUMA_NODES: usize = 4; // Adapt this to the number of NUMA nodes in your system
+pub const MAX_NUMA_NODES: usize = 32; // Adapt this to the number of NUMA nodes in your system
+pub const VERSION_STR: &str = "1.0.0-alpha-2";
 
-pub const EROCMEF: i32 = 41; // harmless let it stay
-pub const VERSION: u32 = 0xABA01;
-pub const OX_ALIGN_TAG: usize = usize::from_le_bytes(*b"OXIDALGN");
-pub const FLAG_ALIGNED: u8 = 2;
+pub(crate) const OX_ALIGN_TAG: usize = usize::from_le_bytes(*b"OXIDALGN");
 
 #[cfg(feature = "hardened-malloc")]
-pub static mut MAGIC: u64 = 0x01B01698BF0BEEF;
+pub(crate) static mut MAGIC: u64 = 0x01B01698BF0BEEF;
 #[cfg(feature = "hardened-malloc")]
-pub static mut FREED_MAGIC: u64 = 0x12BE34FF09EBEAFF;
+pub(crate) static mut FREED_MAGIC: u64 = 0x12BE34FF09EBEAFF;
 
 #[cfg(not(feature = "hardened-malloc"))]
-pub static mut MAGIC: u8 = 0;
+pub(crate) static mut MAGIC: u8 = 0;
 #[cfg(not(feature = "hardened-malloc"))]
-pub static mut FREED_MAGIC: u8 = 1;
+pub(crate) static mut FREED_MAGIC: u8 = 1;
 
-pub static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
-pub static mut OX_CURRENT_STAMP: u32 = 0;
+pub(crate) static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
+pub(crate) static mut OX_CURRENT_STAMP: u32 = 0;
 
-pub static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3);
-pub static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
-pub static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
+pub(crate) static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3);
+pub(crate) static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
+pub(crate) static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
 
-pub static mut OX_DISABLE_THP: bool = false;
-pub static mut OX_FORCE_THP: bool = false;
-pub static mut OX_TRIM: bool = true;
+pub(crate) static mut OX_DISABLE_THP: bool = false;
+pub(crate) static mut OX_FORCE_THP: bool = false;
+pub(crate) static mut OX_TRIM: bool = true;
 
-pub fn get_clock() -> &'static Instant {
+pub(crate) fn get_clock() -> &'static Instant {
     OX_GLOBAL_STAMP.get_or_init(|| Instant::now())
 }
 
+#[cfg(not(feature = "global-alloc"))]
 pub(crate) fn reset_fork_onces() {
     OX_GLOBAL_STAMP.reset_on_fork();
 }
 
-pub const HEADER_SIZE: usize = size_of::<OxHeader>();
+pub(crate) const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
-pub struct MetaData {
+pub(crate) struct MetaData {
     pub start: usize,
     pub end: usize,
     pub next: usize,
@@ -79,7 +80,7 @@ pub struct MetaData {
 #[derive(Debug, Clone)]
 #[cfg(not(feature = "hardened-linked-list"))]
 #[repr(C, align(16))]
-pub struct OxHeader {
+pub(crate) struct OxHeader {
     pub next: *mut OxHeader,
     pub class: u8,
     pub magic: u8,
@@ -89,7 +90,7 @@ pub struct OxHeader {
 #[derive(Debug, Clone)]
 #[cfg(feature = "hardened-linked-list")]
 #[repr(C, align(16))]
-pub struct OxHeader {
+pub(crate) struct OxHeader {
     pub magic: u64,
     pub next: *mut OxHeader,
     pub class: u8,
@@ -97,17 +98,13 @@ pub struct OxHeader {
 }
 
 #[repr(u32)]
-pub enum OxidallocError {
+pub(crate) enum OxidallocError {
     DoubleFree = 0x1000,
     MemoryCorruption = 0x1001,
-    InvalidSize = 0x1002,
     OutOfMemory = 0x1003,
     VaBitmapExhausted = 0x1004,
     VAIinitFailed = 0x1005,
     PThreadCacheFailed = 0x1006,
-    TooMuchQuarantine = 0x1007,
-    DoubleQuarantine = 0x1008,
-    ReservationExceeded = 0x1009,
     SecurityViolation = 0x100A,
     AttackOrCorruption = 0x100B,
     ICCFailedToInitialize = 0x100C,
@@ -118,14 +115,10 @@ impl Debug for OxidallocError {
         match self {
             Self::DoubleFree => write!(f, "DoubleFree (0x1000)"),
             Self::MemoryCorruption => write!(f, "MemoryCorruption (0x1001)"),
-            Self::InvalidSize => write!(f, "InvalidSize (0x1002)"),
             Self::OutOfMemory => write!(f, "OutOfMemory (0x1003)"),
             Self::VaBitmapExhausted => write!(f, "VaBitmapExhausted (0x1004)"),
             Self::VAIinitFailed => write!(f, "VAIinitFailed (0x1005)"),
             Self::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
-            Self::TooMuchQuarantine => write!(f, "TooMuchQuarantine (0x1007)"),
-            Self::DoubleQuarantine => write!(f, "DoubleQuarantine (0x1008)"),
-            Self::ReservationExceeded => write!(f, "ReservationExceeded (0x1009)"),
             Self::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
             Self::AttackOrCorruption => write!(f, "AttackOrCorruption (0x100B)"),
             Self::ICCFailedToInitialize => write!(f, "ICCFailedToInitialize (0x100C)"),

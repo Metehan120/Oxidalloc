@@ -26,7 +26,6 @@ pub static ONCE: Once = Once::new();
 pub static ONCE_PROTECTION: Once = Once::new();
 pub static mut BASE_HINT: usize = 0;
 pub static mut BASE_INIT: bool = false;
-pub static mut LOOP: u8 = 0;
 
 #[thread_local]
 pub static mut RNG: Rng = Rng::new(0);
@@ -143,12 +142,14 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
 pub const BLOCK_SIZE: usize = 4096;
 pub static mut VA_MAP: VaBitmap = VaBitmap::new();
 
+#[cfg(not(feature = "global-alloc"))]
 pub(crate) fn reset_fork_locks() {
     unsafe {
         VA_MAP.lock.reset_on_fork();
     }
 }
 
+#[cfg(not(feature = "global-alloc"))]
 pub(crate) fn reset_fork_onces() {
     ONCE.reset_at_fork();
     ONCE_PROTECTION.reset_at_fork();
