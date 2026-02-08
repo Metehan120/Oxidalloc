@@ -10,6 +10,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: size_t) -> *mut c_v
     realloc_inner(ptr, new_size)
 }
 
+static REALLOC: unsafe extern "C" fn(*mut c_void, size_t) -> *mut c_void = realloc;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn reallocarray(
     ptr: *mut c_void,
@@ -26,7 +28,7 @@ pub unsafe extern "C" fn reallocarray(
         }
     };
 
-    realloc_inner(ptr, total_size)
+    (REALLOC)(ptr, total_size)
 }
 
 #[unsafe(no_mangle)]
@@ -56,10 +58,10 @@ pub unsafe extern "C" fn recallocarray(
     };
 
     if new_size <= old_size {
-        return realloc_inner(ptr, new_size);
+        return (REALLOC)(ptr, new_size);
     }
 
-    let new_ptr = realloc_inner(ptr, new_size);
+    let new_ptr = (REALLOC)(ptr, new_size);
     if !new_ptr.is_null() {
         let grow_size = new_size - old_size;
         std::ptr::write_bytes((new_ptr as *mut u8).add(old_size), 0, grow_size);

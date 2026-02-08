@@ -1,4 +1,3 @@
-#![warn(clippy::nursery, clippy::pedantic)]
 #![allow(
     static_mut_refs,
     unsafe_op_in_unsafe_fn,
@@ -57,8 +56,8 @@ pub(crate) static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub(crate) static mut OX_CURRENT_STAMP: u32 = 0;
 
 pub(crate) static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3);
-pub(crate) static OX_TRIM_THRESHOLD: AtomicUsize = AtomicUsize::new(1024 * 1024 * 10);
-pub(crate) static OX_MAX_RESERVATION: AtomicUsize = AtomicUsize::new(1024 * 1024 * 1024 * 16);
+pub(crate) static mut OX_TRIM_THRESHOLD: usize = 1024 * 1024 * 10;
+pub(crate) static mut OX_MAX_RESERVATION: usize = 1024 * 1024 * 1024 * 16;
 
 pub(crate) static mut OX_DISABLE_THP: bool = false;
 pub(crate) static mut OX_FORCE_THP: bool = false;

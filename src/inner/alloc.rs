@@ -114,7 +114,7 @@ pub(crate) unsafe fn validate_ptr(ptr: *mut OxHeader) -> u64 {
 
     let magic = read_volatile(&(*ptr).magic);
     if unlikely(magic != MAGIC && magic != FREED_MAGIC) {
-        OxidallocError::AttackOrCorruption.log_and_abort(
+        crate::OxidallocError::AttackOrCorruption.log_and_abort(
             null_mut() as *mut c_void,
             "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
             None,
@@ -215,7 +215,7 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut c_void {
     #[cfg(feature = "hardened-malloc")]
     {
         if unlikely(!is_ours(cache as usize)) {
-            OxidallocError::AttackOrCorruption.log_and_abort(
+            crate::OxidallocError::AttackOrCorruption.log_and_abort(
                 null_mut() as *mut c_void,
                 "Attack or corruption detected; aborting process. External system access and RAM module checks highly recommended.",
                 None,
@@ -265,7 +265,7 @@ unsafe fn allocate_hot(class: usize) -> *mut c_void {
     #[cfg(feature = "hardened-malloc")]
     {
         if unlikely(!is_ours(cache as usize)) {
-            OxidallocError::AttackOrCorruption.log_and_abort(
+            crate::OxidallocError::AttackOrCorruption.log_and_abort(
                 null_mut() as *mut c_void,
                 "Attack or corruption detected; aborting process. External system access and RAM module checks recommended.",
                 None,

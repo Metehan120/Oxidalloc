@@ -17,10 +17,8 @@ pub static LAST_PRESSURE_CHECK: AtomicUsize = AtomicUsize::new(0);
 pub static GLOBAL_DECAY: AtomicU8 = AtomicU8::new(0);
 
 unsafe fn decide_global(decay: &TimeDecay) -> bool {
-    if (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) < decay.get_threshold() as usize)
-        && (OX_TRIM_THRESHOLD.load(Ordering::Relaxed) != 0)
-    {
-        OX_TRIM_THRESHOLD.store(decay.get_threshold() as usize, Ordering::Relaxed);
+    if (OX_TRIM_THRESHOLD < decay.get_threshold() as usize) && (OX_TRIM_THRESHOLD != 0) {
+        OX_TRIM_THRESHOLD = decay.get_threshold() as usize;
     }
 
     let total = TOTAL_TIME_GLOBAL.load(Ordering::Relaxed);
@@ -77,7 +75,7 @@ pub unsafe fn spawn_gtrim_thread() {
             OX_CURRENT_STAMP = time;
 
             if decide_global(&decay) {
-                GTrim.trim(OX_TRIM_THRESHOLD.load(Ordering::Relaxed));
+                GTrim.trim(OX_TRIM_THRESHOLD);
             }
         }
     });

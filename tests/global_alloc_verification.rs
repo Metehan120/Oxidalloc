@@ -4,7 +4,7 @@ pub mod tests {
     use std::alloc::{GlobalAlloc, Layout};
 
     #[global_allocator]
-    static GLOBAL: Oxidalloc = Oxidalloc;
+    static GLOBAL: Oxidalloc = Oxidalloc::new();
 
     #[test]
     fn test_vec_growth() {

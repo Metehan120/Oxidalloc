@@ -2,7 +2,6 @@
 rustflags = [
   "-C", "link-arg=-Wl,-z,now",
   "-Z", "tls-model=initial-exec",
-  "-C", "force-unwind-tables=no",
 ]
 
 [host]

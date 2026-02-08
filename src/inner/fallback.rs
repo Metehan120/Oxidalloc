@@ -18,12 +18,9 @@ static FREE_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static REALLOC_INIT: Once = Once::new();
 static REALLOC_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
-#[cfg(not(feature = "global-alloc"))]
 static MUS_INIT: Once = Once::new();
-#[cfg(not(feature = "global-alloc"))]
 static MUS_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
-#[cfg(not(feature = "global-alloc"))]
 pub fn fallback_reinit_on_fork() {
     FREE_INIT.reset_at_fork();
     REALLOC_INIT.reset_at_fork();
@@ -70,7 +67,6 @@ pub unsafe fn realloc_fallback(ptr: *mut c_void, size: size_t) -> *mut c_void {
 
 #[cold]
 #[inline(never)]
-#[cfg(not(feature = "global-alloc"))]
 pub unsafe fn malloc_usable_size_fallback(ptr: *mut c_void) -> size_t {
     if ptr.is_null() {
         return 0;

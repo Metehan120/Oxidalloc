@@ -1,6 +1,6 @@
+use std::ptr::null_mut;
 #[cfg(not(feature = "global-alloc"))]
 use std::sync::{Mutex, MutexGuard};
-use std::{ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
     FREED_MAGIC, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM,
@@ -179,7 +179,7 @@ pub unsafe fn init_threshold() {
         if val == 0 || val < 1024 * 1024 {
             val = 1024 * 1024;
         }
-        OX_TRIM_THRESHOLD.store(val, Ordering::Relaxed);
+        OX_TRIM_THRESHOLD = val;
     }
 }
 
@@ -203,7 +203,7 @@ pub unsafe fn init_reverse() {
             .max(1024 * 1024 * 1024 * 16)
             .min(1024 * 1024 * 1024 * 1024 * 256);
 
-        OX_MAX_RESERVATION.store(next_power_of_two, Ordering::Relaxed);
+        OX_MAX_RESERVATION = next_power_of_two;
     }
 }
 

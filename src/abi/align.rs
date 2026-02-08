@@ -23,17 +23,19 @@ pub unsafe extern "C" fn memalign(alignment: size_t, size: size_t) -> *mut c_voi
     memalign_inner(alignment, size)
 }
 
+static MEMALIGN: unsafe extern "C" fn(alignment: size_t, size: size_t) -> *mut c_void = memalign;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn aligned_alloc(alignment: size_t, size: size_t) -> *mut c_void {
     if alignment == 0 || !alignment.is_power_of_two() {
         return null_mut();
     }
-    memalign_inner(alignment, size)
+    (MEMALIGN)(alignment, size)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn valloc(size: size_t) -> *mut c_void {
-    memalign_inner(4096, size)
+    (MEMALIGN)(4096, size)
 }
 
 #[unsafe(no_mangle)]
@@ -45,5 +47,5 @@ pub unsafe extern "C" fn pvalloc(size: size_t) -> *mut c_void {
         align_to(size, page_size)
     };
 
-    memalign_inner(page_size, rounded_size)
+    (MEMALIGN)(page_size, rounded_size)
 }

@@ -60,20 +60,9 @@ pub struct GlobalLock {
 
 #[cfg(feature = "hardened-linked-list")]
 impl GlobalLock {
-    pub const fn new() -> Self {
-        GlobalLock {
-            locks: [const { SerialLock::new() }; NUM_SIZE_CLASSES],
-        }
-    }
-
     #[inline(always)]
     pub fn lock(&self, class: usize) -> _LockGuard {
         self.locks[class].lock()
-    }
-
-    #[inline(always)]
-    pub fn unlock(&self, class: usize) {
-        self.locks[class].unlock();
     }
 
     pub fn reset_on_fork(&self) {

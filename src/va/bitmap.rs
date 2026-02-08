@@ -72,7 +72,7 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
         LATEST_TRIED.load(Ordering::Relaxed)
     } else {
         RESERVE.fetch_add(1, Ordering::Relaxed);
-        OX_MAX_RESERVATION.load(Ordering::Relaxed)
+        OX_MAX_RESERVATION
     };
 
     let mut size = MAX_SIZE;
