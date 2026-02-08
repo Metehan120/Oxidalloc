@@ -13,6 +13,11 @@
 #![feature(thread_local)]
 #![feature(likely_unlikely)]
 
+#[cfg(not(target_os = "linux"))]
+compile_error!(
+    "Oxidalloc requires Linux-specific syscalls. Please use the default allocator or a supported alternative on this platform."
+);
+
 #[cfg(feature = "global-alloc")]
 pub use crate::inner::global_alloc::Oxidalloc;
 use crate::internals::oncelock::OnceLock;
