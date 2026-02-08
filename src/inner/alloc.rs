@@ -32,7 +32,7 @@ pub static mut HOT_READY: bool = false;
 #[inline(always)]
 unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
     let class_4096 = get_size_4096_class();
-    if class > class_4096 {
+    if class >= class_4096 {
         return null_mut();
     }
 
@@ -40,7 +40,9 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
 
     for donor in (class + 1)..=class_4096 {
         let donor_block = align_to(SIZE_CLASSES[donor] + HEADER_SIZE, 16);
-        if donor_block != target_block * 2 {
+        let count = donor_block / target_block;
+
+        if count < 2 || donor_block % target_block != 0 {
             continue;
         }
 
@@ -49,8 +51,8 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
             continue;
         }
 
-        let first = donor_header;
-        let second = (donor_header as *mut u8).add(target_block) as *mut OxHeader;
+        let base = donor_header as *mut u8;
+        let first = base as *mut OxHeader;
 
         write(
             first,
@@ -62,17 +64,32 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
             },
         );
 
-        write(
-            second,
-            OxHeader {
-                next: null_mut(),
-                class: class as u8,
-                magic: FREED_MAGIC,
-                life_time: OX_CURRENT_STAMP,
-            },
-        );
+        let mut head_push = null_mut();
+        let mut tail_push: *mut OxHeader = null_mut();
 
-        GlobalHandler.push_to_global(class, second, second, 1);
+        for i in 1..count {
+            let offset = i * target_block;
+            let ptr = base.add(offset) as *mut OxHeader;
+
+            write(
+                ptr,
+                OxHeader {
+                    next: head_push,
+                    class: class as u8,
+                    magic: FREED_MAGIC,
+                    life_time: OX_CURRENT_STAMP,
+                },
+            );
+
+            if tail_push.is_null() {
+                tail_push = ptr;
+            }
+            head_push = ptr;
+        }
+
+        if !head_push.is_null() {
+            GlobalHandler.push_to_global(class, head_push, tail_push, count - 1);
+        }
 
         return first;
     }

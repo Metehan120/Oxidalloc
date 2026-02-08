@@ -147,7 +147,7 @@ impl InterConnectCache {
             {
                 self.locks = locks as *mut GlobalLock
             };
-            self.ncpu = thread_count;
+            self.ncpu = thread_count.max(1);
 
             if let Some(maps) = get_numa_maps(MAX_NUMA_NODES) {
                 self.node_offsets = maps.node_offsets;
@@ -168,7 +168,11 @@ impl InterConnectCache {
         batch_size: usize,
     ) -> bool {
         self.ensure_cache();
-        let thread_id = sched_getcpu();
+        let mut thread_id = sched_getcpu();
+        if thread_id >= self.ncpu && thread_id > 0 && self.ncpu > 0 {
+            thread_id %= self.ncpu;
+        }
+
         #[cfg(feature = "hardened-linked-list")]
         let lock = &*self.locks.add(thread_id);
         #[cfg(feature = "hardened-linked-list")]
@@ -205,7 +209,9 @@ impl InterConnectCache {
         true
     }
 
-    pub unsafe fn get_size(&self, class: usize) -> usize {
+    pub unsafe fn get_size(&mut self, class: usize) -> usize {
+        self.ensure_cache();
+
         let mut total = 0;
         for i in 0..self.ncpu {
             let usage = &*self.usage.add(i);
@@ -216,7 +222,10 @@ impl InterConnectCache {
 
     #[inline(always)]
     pub unsafe fn try_pop(&mut self, class: usize, batch_size: usize) -> *mut OxHeader {
-        let cpu = sched_getcpu();
+        let mut cpu = sched_getcpu();
+        if cpu >= self.ncpu && cpu > 0 && self.ncpu > 0 {
+            cpu %= self.ncpu;
+        }
         let ncpu = self.ncpu;
 
         if let Some(popped) = self.pop(class, batch_size, cpu) {

@@ -188,5 +188,6 @@ pub mod memory_system {
         get_cpu_affinity_mask(&mut mask)
             .map(|info| info.count)
             .unwrap_or(1)
+            .max(1)
     }
 }

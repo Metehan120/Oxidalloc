@@ -24,6 +24,7 @@ pub mod tests {
     }
 
     #[repr(align(256))]
+    #[allow(dead_code)]
     struct AlignedStruct(u8);
 
     #[test]

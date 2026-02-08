@@ -66,7 +66,7 @@ unsafe fn init_blocks(
 pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<(), Err> {
     let payload_size = SIZE_CLASSES[class];
     let block_size = align_to(payload_size + HEADER_SIZE, 16);
-    let num_blocks = ITERATIONS[class];
+
     let blocks_per_4k = 4096 / block_size;
     let max_init = if blocks_per_4k >= 48 {
         48
@@ -89,7 +89,17 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
         thread.pending[class] = null_mut();
     }
 
-    let total = size_of::<MetaData>() + (block_size * num_blocks);
+    let mut num_blocks = ITERATIONS[class];
+    let mut total = size_of::<MetaData>() + (block_size * num_blocks);
+
+    let pages = (total + 4095) / 4096;
+    let available_bytes = pages * 4096 - size_of::<MetaData>();
+    let max_blocks_in_pages = available_bytes / block_size;
+
+    if max_blocks_in_pages > num_blocks {
+        num_blocks = max_blocks_in_pages;
+        total = size_of::<MetaData>() + (block_size * num_blocks);
+    }
 
     let hint = VA_MAP.alloc(total).unwrap_or_else(|| {
         OxidallocError::VaBitmapExhausted.log_and_abort(
