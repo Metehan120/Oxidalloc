@@ -207,7 +207,7 @@ impl InterConnectCache {
         batch_size: usize,
         need_push_pushed: bool,
         is_trimmed: bool,
-    ) -> bool {
+    ) {
         self.ensure_cache();
         let thread_id = self.get_cpu_fast();
 
@@ -259,8 +259,6 @@ impl InterConnectCache {
                 Err(actual) => current_head = actual,
             }
         }
-
-        true
     }
 
     pub unsafe fn get_size(&mut self, class: usize) -> usize {
