@@ -221,7 +221,7 @@ impl InterConnectCache {
         #[cfg(feature = "debug")]
         INTER.fetch_add(1, Ordering::Relaxed);
 
-        let list = if is_trimmed {
+        let list = if unlikely(is_trimmed) {
             &*self.cache.trimmed.add(thread_id)
         } else if need_push_pushed {
             let has_pushed = &*self.cache.has_pushed.add(thread_id);
