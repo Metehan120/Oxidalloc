@@ -286,21 +286,21 @@ pub unsafe fn close_fd(fd: i32) -> Result<(), i32> {
 }
 
 #[thread_local]
-static mut RSEQ_STATE: i8 = 0;
+pub static mut RSEQ_STATE: bool = false;
+#[thread_local]
+pub static mut RSEQ_FAILED: bool = false;
 
 #[inline(always)]
 pub unsafe fn register_rseq(ptr: *mut c_void, len: usize, sig: u32) -> Result<(), i32> {
-    if RSEQ_STATE != 0 {
-        return if RSEQ_STATE == 1 { Ok(()) } else { Err(-1) };
-    }
-
     let ret = syscall6(Sys::SYS_RSEQ, ptr as usize, len, 0, sig as usize, 0, 0);
 
     if ret < 0 {
-        RSEQ_STATE = -1;
+        RSEQ_STATE = true;
+        RSEQ_FAILED = true;
         Err(-ret as i32)
     } else {
-        RSEQ_STATE = 1;
+        RSEQ_STATE = true;
+        RSEQ_FAILED = false;
         Ok(())
     }
 }

@@ -85,7 +85,7 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
     let thread = ThreadLocalEngine::get_or_init();
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
-        GlobalHandler.push_to_global(class, header, header, 1);
+        GlobalHandler.push_to_global(class, header, header, 1, false, false);
         return;
     };
 

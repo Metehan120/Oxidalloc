@@ -57,7 +57,7 @@ pub(crate) static mut FREED_MAGIC: u8 = 1;
 pub(crate) static OX_GLOBAL_STAMP: OnceLock<Instant> = OnceLock::new();
 pub(crate) static mut OX_CURRENT_STAMP: u32 = 0;
 
-pub(crate) static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(3);
+pub(crate) static AVERAGE_BLOCK_TIMES_GLOBAL: AtomicUsize = AtomicUsize::new(1);
 pub(crate) static mut OX_TRIM_THRESHOLD: usize = 1024 * 1024 * 10;
 pub(crate) static mut OX_MAX_RESERVATION: usize = 1024 * 1024 * 1024 * 16;
 

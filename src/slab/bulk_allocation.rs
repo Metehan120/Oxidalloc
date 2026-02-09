@@ -147,7 +147,7 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
     }
 
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
-        GlobalHandler.push_to_global(class, head, tail, count);
+        GlobalHandler.push_to_global(class, head, tail, count, false, false);
         if remaining_blocks(metadata, block_size) > 0 {
             thread.pending[class] = metadata;
         }
@@ -177,7 +177,7 @@ pub unsafe fn drain_pending(thread: &mut ThreadLocalEngine, class: usize) {
         let (head, tail, count) =
             init_blocks(class as u8, pending, block_size, remaining, current_stamp);
         if count > 0 {
-            GlobalHandler.push_to_global(class, head, tail, count);
+            GlobalHandler.push_to_global(class, head, tail, count, false, false);
         }
     }
 

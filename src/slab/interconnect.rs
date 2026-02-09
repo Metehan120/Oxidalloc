@@ -5,7 +5,7 @@ use std::{
     hint::unlikely,
     os::raw::c_void,
     ptr::null_mut,
-    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
 
 use rustix::thread::sched_getcpu;
@@ -57,6 +57,11 @@ const ABA_TAG_MASK: usize = (1 << ABA_TAG_BITS) - 1;
 #[cfg(not(feature = "hardened-linked-list"))]
 const ABA_PTR_MASK: usize = !ABA_TAG_MASK;
 
+#[thread_local]
+static mut CACHED_CPU_ID: usize = 0;
+#[thread_local]
+static mut ALLOC_COUNT: u32 = 0;
+
 #[inline(always)]
 fn head_pack(ptr: *mut OxHeader, tag: usize) -> *mut OxHeader {
     #[cfg(not(feature = "hardened-linked-list"))]
@@ -95,10 +100,17 @@ fn head_tag(val: *mut OxHeader) -> usize {
     }
 }
 
-#[repr(C, align(64))]
-pub struct InterConnectCache {
+pub struct InternalCache {
     pub list: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
     pub usage: *mut [AtomicUsize; NUM_SIZE_CLASSES],
+    pub pushed: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub trimmed: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub has_pushed: *mut AtomicBool,
+}
+
+#[repr(C, align(64))]
+pub struct InterConnectCache {
+    pub cache: InternalCache,
     #[cfg(feature = "hardened-linked-list")]
     pub locks: *mut GlobalLock,
     pub ncpu: usize,
@@ -113,8 +125,13 @@ pub struct InterConnectCache {
 impl InterConnectCache {
     pub const fn new() -> Self {
         InterConnectCache {
-            list: null_mut(),
-            usage: null_mut(),
+            cache: InternalCache {
+                list: null_mut(),
+                usage: null_mut(),
+                pushed: null_mut(),
+                has_pushed: null_mut(),
+                trimmed: null_mut(),
+            },
             #[cfg(feature = "hardened-linked-list")]
             locks: null_mut(),
             ncpu: 0,
@@ -134,6 +151,15 @@ impl InterConnectCache {
                 null_mut(),
                 size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
             );
+            let trimmed = mmap!(
+                null_mut(),
+                size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
+            );
+            let pushed = mmap!(
+                null_mut(),
+                size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
+            );
+            let has_pushed = mmap!(null_mut(), size_of::<AtomicBool>() * thread_count);
             let usage = mmap!(
                 null_mut(),
                 size_of::<[AtomicUsize; NUM_SIZE_CLASSES]>() * thread_count
@@ -141,8 +167,12 @@ impl InterConnectCache {
             #[cfg(feature = "hardened-linked-list")]
             let locks = mmap!(null_mut(), size_of::<GlobalLock>() * thread_count);
 
-            self.list = list as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
-            self.usage = usage as *mut [AtomicUsize; NUM_SIZE_CLASSES];
+            self.cache.list = list as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
+            self.cache.usage = usage as *mut [AtomicUsize; NUM_SIZE_CLASSES];
+            self.cache.pushed = pushed as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
+            self.cache.trimmed = trimmed as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
+            self.cache.has_pushed = has_pushed as *mut AtomicBool;
+
             #[cfg(feature = "hardened-linked-list")]
             {
                 self.locks = locks as *mut GlobalLock
@@ -160,30 +190,54 @@ impl InterConnectCache {
     }
 
     #[inline(always)]
+    pub unsafe fn get_cpu_fast(&self) -> usize {
+        if ALLOC_COUNT % 4 == 0 {
+            CACHED_CPU_ID = sched_getcpu() % self.ncpu;
+        }
+        ALLOC_COUNT += 1;
+        CACHED_CPU_ID
+    }
+
+    #[inline(always)]
     pub unsafe fn try_push(
         &mut self,
         class: usize,
         head: *mut OxHeader,
         tail: *mut OxHeader,
         batch_size: usize,
+        need_push_pushed: bool,
+        is_trimmed: bool,
     ) -> bool {
         self.ensure_cache();
-        let mut thread_id = sched_getcpu();
-        if thread_id >= self.ncpu && thread_id > 0 && self.ncpu > 0 {
-            thread_id %= self.ncpu;
-        }
+        let thread_id = self.get_cpu_fast();
 
         #[cfg(feature = "hardened-linked-list")]
         let lock = &*self.locks.add(thread_id);
         #[cfg(feature = "hardened-linked-list")]
         let _guard = lock.lock(class);
 
-        let usage = &*self.usage.add(thread_id);
+        let usage = &*self.cache.usage.add(thread_id);
 
         #[cfg(feature = "debug")]
         INTER.fetch_add(1, Ordering::Relaxed);
 
-        let list = &*self.list.add(thread_id);
+        let list = if is_trimmed {
+            &*self.cache.trimmed.add(thread_id)
+        } else if need_push_pushed {
+            let has_pushed = &*self.cache.has_pushed.add(thread_id);
+            if !has_pushed.load(Ordering::Relaxed) {
+                let _ = has_pushed.compare_exchange_weak(
+                    false,
+                    true,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
+            }
+            &*self.cache.pushed.add(thread_id)
+        } else {
+            &*self.cache.list.add(thread_id)
+        };
+
         let mut current_head = list[class].load(Ordering::Relaxed);
 
         loop {
@@ -214,21 +268,25 @@ impl InterConnectCache {
 
         let mut total = 0;
         for i in 0..self.ncpu {
-            let usage = &*self.usage.add(i);
+            let usage = &*self.cache.usage.add(i);
             total += usage[class].load(Ordering::Relaxed);
         }
         total
     }
 
     #[inline(always)]
-    pub unsafe fn try_pop(&mut self, class: usize, batch_size: usize) -> *mut OxHeader {
-        let mut cpu = sched_getcpu();
-        if cpu >= self.ncpu && cpu > 0 && self.ncpu > 0 {
-            cpu %= self.ncpu;
-        }
+    pub unsafe fn try_pop(
+        &mut self,
+        class: usize,
+        batch_size: usize,
+        need_pushed: bool,
+    ) -> *mut OxHeader {
+        self.ensure_cache();
+        let cpu = self.get_cpu_fast();
+
         let ncpu = self.ncpu;
 
-        if let Some(popped) = self.pop(class, batch_size, cpu) {
+        if let Some(popped) = self.pop(class, batch_size, cpu, need_pushed) {
             return popped;
         }
 
@@ -246,7 +304,7 @@ impl InterConnectCache {
                     if victim == cpu || victim >= ncpu {
                         continue;
                     }
-                    if let Some(block) = self.pop(class, batch_size, victim) {
+                    if let Some(block) = self.pop(class, batch_size, victim, need_pushed) {
                         return block;
                     }
                 }
@@ -256,7 +314,7 @@ impl InterConnectCache {
         for i in 1..ncpu {
             let victim = (cpu + i) % ncpu;
 
-            if let Some(block) = self.pop(class, batch_size, victim) {
+            if let Some(block) = self.pop(class, batch_size, victim, need_pushed) {
                 return block;
             }
         }
@@ -270,11 +328,11 @@ impl InterConnectCache {
         class: usize,
         batch_size: usize,
         thread_id: usize,
+        need_pushed: bool,
     ) -> Option<*mut OxHeader> {
-        self.ensure_cache();
         #[cfg(feature = "hardened-linked-list")]
         let _guard = (*self.locks.add(thread_id)).lock(class);
-        let usage = &*self.usage.add(thread_id);
+        let usage = &*self.cache.usage.add(thread_id);
 
         if usage[class].load(Ordering::Relaxed) == 0 {
             return None;
@@ -282,12 +340,38 @@ impl InterConnectCache {
 
         #[cfg(feature = "debug")]
         INTER.fetch_add(1, Ordering::Relaxed);
-        let list = &*self.list.add(thread_id);
+        let mut list = &*self.cache.list.add(thread_id);
+
+        let mut tried_trim_list = false;
+        let mut tried_pushed = false;
 
         loop {
             let cur = list[class].load(Ordering::Relaxed);
             let head_enc = cur;
+
             if unlikely(head_ptr(head_enc).is_null()) {
+                let has_pushed = &*self.cache.has_pushed.add(thread_id);
+                if has_pushed.load(Ordering::Relaxed) && need_pushed && !tried_pushed {
+                    list = &*self.cache.pushed.add(thread_id);
+                    tried_pushed = true;
+                    continue;
+                }
+
+                if tried_pushed && !tried_trim_list {
+                    let _ = has_pushed.compare_exchange_weak(
+                        true,
+                        false,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
+                }
+
+                if !tried_trim_list && need_pushed {
+                    list = &*self.cache.trimmed.add(thread_id);
+                    tried_trim_list = true;
+                    continue;
+                }
+
                 return None;
             }
 

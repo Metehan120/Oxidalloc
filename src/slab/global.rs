@@ -16,6 +16,8 @@ impl GlobalHandler {
         head: *mut OxHeader,
         tail: *mut OxHeader,
         batch_size: usize,
+        need_push_pushed: bool,
+        is_trimmed: bool,
     ) {
         #[cfg(feature = "hardened-linked-list")]
         {
@@ -29,11 +31,16 @@ impl GlobalHandler {
             }
         }
 
-        ICC.try_push(class, head, tail, batch_size);
+        ICC.try_push(class, head, tail, batch_size, need_push_pushed, is_trimmed);
     }
 
-    pub unsafe fn pop_from_global(&self, class: usize, batch_size: usize) -> *mut OxHeader {
-        ICC.try_pop(class, batch_size)
+    pub unsafe fn pop_from_global(
+        &self,
+        class: usize,
+        batch_size: usize,
+        need_pushed: bool,
+    ) -> *mut OxHeader {
+        ICC.try_pop(class, batch_size, need_pushed)
     }
 }
 
@@ -79,9 +86,13 @@ mod tests {
                     let tail = &mut headers[batch_size - 1] as *mut OxHeader;
 
                     unsafe {
-                        black_box(GlobalHandler.push_to_global(class, head, tail, batch_size));
+                        black_box(
+                            GlobalHandler
+                                .push_to_global(class, head, tail, batch_size, false, false),
+                        );
 
-                        let res = black_box(GlobalHandler.pop_from_global(class, batch_size));
+                        let res =
+                            black_box(GlobalHandler.pop_from_global(class, batch_size, false));
 
                         std::hint::black_box(res);
                     }

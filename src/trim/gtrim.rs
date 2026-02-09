@@ -18,8 +18,8 @@ use crate::{
 pub struct GTrim;
 
 impl GTrim {
-    unsafe fn pop_from_global(&self, class: usize) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_from_global(class, 16);
+    unsafe fn pop_from_global(&self, class: usize, need_pushed: bool) -> (*mut OxHeader, usize) {
+        let global_cache = GlobalHandler.pop_from_global(class, 16, need_pushed);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -73,10 +73,17 @@ impl GTrim {
 
             let class_usage = ICC.get_size(class);
             let mut to_trim = null_mut();
+            let mut total_loop = 0;
 
+            let mut need_pushed = false;
             for _ in 0..class_usage / 16 {
-                let (cache, size) = self.pop_from_global(class);
+                let (cache, size) = self.pop_from_global(class, need_pushed);
                 if cache.is_null() {
+                    if total_loop < (class_usage / 16) && !need_pushed {
+                        need_pushed = true;
+                        continue;
+                    }
+
                     break;
                 }
 
@@ -107,27 +114,31 @@ impl GTrim {
                     continue;
                 }
 
-                let mut block = to_push;
+                let mut tail = to_push;
                 let mut real = 1;
 
-                while real < 16 && !(*block).next.is_null() && is_ours((*block).next as usize) {
-                    block = (*block).next;
+                while real < 16 && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
+                    tail = (*tail).next;
                     real += 1;
                 }
-                (*block).next = null_mut();
+                (*tail).next = null_mut();
 
-                GlobalHandler.push_to_global(class, to_push, block, real);
+                GlobalHandler.push_to_global(class, to_push, tail, real, true, false);
+
+                total_loop += 1;
             }
 
             while !to_trim.is_null() {
                 let next = (*to_trim).next;
 
+                let mut trimmed = false;
                 if (total_freed <= pad || pad == 0) || force_trim {
                     self.release_memory(to_trim, SIZE_CLASSES[class]);
                     total_freed += SIZE_CLASSES[class];
+                    trimmed = true;
                 }
 
-                GlobalHandler.push_to_global(class, to_trim, to_trim, 1);
+                GlobalHandler.push_to_global(class, to_trim, to_trim, 1, true, trimmed);
 
                 to_trim = next;
             }

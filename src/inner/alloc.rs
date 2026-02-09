@@ -46,7 +46,7 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
             continue;
         }
 
-        let donor_header = GlobalHandler.pop_from_global(donor, 1);
+        let donor_header = GlobalHandler.pop_from_global(donor, 1, true);
         if donor_header.is_null() {
             continue;
         }
@@ -88,7 +88,7 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
         }
 
         if !head_push.is_null() {
-            GlobalHandler.push_to_global(class, head_push, tail_push, count - 1);
+            GlobalHandler.push_to_global(class, head_push, tail_push, count - 1, false, false);
         }
 
         return first;
@@ -132,7 +132,7 @@ unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeade
         .load(Ordering::Relaxed)
         .clamp(BATCH_MIN, BATCH_MAX);
 
-    let global_cache = GlobalHandler.pop_from_global(class, batch);
+    let global_cache = GlobalHandler.pop_from_global(class, batch, true);
 
     if !global_cache.is_null() {
         let mut tail = global_cache;

@@ -261,7 +261,7 @@ unsafe fn cleanup_thread_cache(cache: *mut ThreadLocalEngine) {
                 count += 1;
             }
 
-            GlobalHandler.push_to_global(class, head, tail, count);
+            GlobalHandler.push_to_global(class, head, tail, count, false, false);
         }
 
         drain_pending(&mut *cache, class);
