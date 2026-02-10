@@ -7,16 +7,14 @@ pub mod lock;
 pub mod once;
 pub mod oncelock;
 
+#[cfg(not(feature = "global-alloc"))]
 unsafe extern "C" {
-    #[cfg(not(feature = "global-alloc"))]
     pub fn __errno_location() -> *mut c_int;
-    #[cfg(not(feature = "global-alloc"))]
     pub fn pthread_atfork(
         prepare: Option<unsafe extern "C" fn()>,
         parent: Option<unsafe extern "C" fn()>,
         child: Option<unsafe extern "C" fn()>,
     ) -> c_int;
-    #[cfg(not(feature = "global-alloc"))]
     pub fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 
