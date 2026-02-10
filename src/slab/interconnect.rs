@@ -8,8 +8,6 @@ use std::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
 
-use rustix::thread::sched_getcpu;
-
 #[cfg(feature = "hardened-linked-list")]
 use crate::internals::lock::GlobalLock;
 use crate::{
@@ -22,6 +20,7 @@ use crate::{
     },
     va::bootstrap::NUMA_KEY,
 };
+use rustix::thread::sched_getcpu;
 
 macro_rules! mmap {
     ($ptr:expr, $size:expr) => {

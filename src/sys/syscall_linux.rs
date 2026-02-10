@@ -285,22 +285,57 @@ pub unsafe fn close_fd(fd: i32) -> Result<(), i32> {
     syscall_result(ret).map(|_| ()).map_err(|e| e as i32)
 }
 
+#[repr(C, align(32))]
+pub struct rseq_cs {
+    pub version: u32,
+    pub flags: u32,
+    pub start_ip: u64,
+    pub post_commit_offset: u64,
+    pub abort_ip: u64,
+}
+
+#[repr(C, align(32))]
+pub struct rseq {
+    pub cpu_id_start: u32,
+    pub cpu_id: u32,
+    pub rseq_cs: u64,
+    pub flags: u32,
+}
+
 #[thread_local]
-pub static mut RSEQ_STATE: bool = false;
+pub static mut RSEQ: rseq = rseq {
+    cpu_id_start: 0,
+    cpu_id: u32::MAX,
+    rseq_cs: 0,
+    flags: 0,
+};
+
 #[thread_local]
-pub static mut RSEQ_FAILED: bool = false;
+static mut RSEQ_STATE: bool = false;
+
+pub const RSEQ_SIG: u32 = 0x53053053;
 
 #[inline(always)]
-pub unsafe fn register_rseq(ptr: *mut c_void, len: usize, sig: u32) -> Result<(), i32> {
-    let ret = syscall6(Sys::SYS_RSEQ, ptr as usize, len, 0, sig as usize, 0, 0);
+pub unsafe fn register_rseq() -> Result<(), i32> {
+    if RSEQ_STATE {
+        return Ok(());
+    }
 
-    if ret < 0 {
+    let ptr = &raw mut RSEQ;
+
+    if (ptr as usize) % 32 != 0 {
+        return Err(22);
+    }
+
+    let ret = syscall6(334, ptr as usize, 32, 0, RSEQ_SIG as usize, 0, 0);
+
+    if ret == 0 || ret == -16 {
+        eprintln!("Failed: {}", -ret);
         RSEQ_STATE = true;
-        RSEQ_FAILED = true;
-        Err(-ret as i32)
-    } else {
-        RSEQ_STATE = true;
-        RSEQ_FAILED = false;
         Ok(())
+    } else {
+        eprintln!("Failed: {}", -ret);
+
+        Err(-ret as i32)
     }
 }

@@ -31,7 +31,7 @@ pub(crate) mod big_allocation;
 pub(crate) mod inner;
 pub(crate) mod internals;
 pub(crate) mod slab;
-pub(crate) mod sys;
+pub mod sys;
 pub(crate) mod trim;
 pub(crate) mod va;
 

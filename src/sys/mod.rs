@@ -104,8 +104,8 @@ pub mod memory_system {
         MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, RMProtFlags, SysErr,
     };
     use crate::sys::syscall_linux::{
-        RSEQ_FAILED, RSEQ_STATE, get_random_val, madvise_memory, map_memory, mprotect_memory,
-        munmap_memory, register_rseq, sched_getaffinity,
+        get_random_val, madvise_memory, map_memory, mprotect_memory, munmap_memory, register_rseq,
+        sched_getaffinity,
     };
     use std::os::raw::c_void;
 
@@ -192,15 +192,7 @@ pub mod memory_system {
             .max(1)
     }
 
-    pub unsafe fn get_init() -> bool {
-        RSEQ_STATE
-    }
-
-    pub unsafe fn get_state() -> bool {
-        !RSEQ_FAILED
-    }
-
-    pub unsafe fn rseq(ptr: *mut c_void, len: usize, sig: u32) -> Result<(), i32> {
-        register_rseq(ptr, len, sig)
+    pub unsafe fn rseq() -> Result<(), i32> {
+        register_rseq()
     }
 }
