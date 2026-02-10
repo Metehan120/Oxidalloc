@@ -218,6 +218,48 @@ impl ThreadLocalEngine {
         self.tls[class].head = self.xor_ptr(head);
         self.tls[class].usage += batch_size;
     }
+
+    pub unsafe fn pop_batch(
+        &mut self,
+        class: usize,
+        batch_size: usize,
+    ) -> (*mut OxHeader, *mut OxHeader, usize) {
+        if unlikely(self.tls[class].usage == 0) {
+            return (null_mut(), null_mut(), 0);
+        }
+
+        let real_batch = batch_size.min(self.tls[class].usage);
+        let head_enc = self.tls[class].head;
+        let head = self.xor_ptr(head_enc);
+
+        let mut tail = head;
+        for _ in 1..real_batch {
+            let next_enc = (*tail).next;
+            if next_enc.is_null() {
+                break;
+            }
+            tail = self.xor_ptr(next_enc);
+        }
+
+        let new_head_enc = (*tail).next;
+        (*tail).next = null_mut();
+
+        self.tls[class].head = new_head_enc;
+        self.tls[class].usage -= real_batch;
+
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            let mut curr = head;
+            while curr != tail {
+                let next_enc = (*curr).next;
+                let next_raw = self.xor_ptr(next_enc);
+                (*curr).next = next_raw;
+                curr = next_raw;
+            }
+        }
+
+        (head, tail, real_batch)
+    }
 }
 
 unsafe fn cleanup_thread_cache(cache: *mut ThreadLocalEngine) {

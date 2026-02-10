@@ -3,6 +3,7 @@ use std::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, FREED_MAGIC, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     OxidallocError,
+    big_allocation::trim_big_allocations,
     slab::{
         NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class, global::GlobalHandler,
         interconnect::ICC,
@@ -63,6 +64,8 @@ impl GTrim {
         let mut avg: u32 = 0;
         let mut total = 0;
         let mut total_freed = 0;
+        total_freed += trim_big_allocations();
+
         let timing = AVERAGE_BLOCK_TIMES_GLOBAL.load(Ordering::Relaxed) as u32;
         let class_4096 = get_size_4096_class();
 
@@ -158,24 +161,22 @@ impl GTrim {
     }
 
     #[inline]
-    fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) {
-        unsafe {
-            const PAGE_SIZE: usize = 4096;
-            const PAGE_MASK: usize = !(PAGE_SIZE - 1);
+    unsafe fn release_memory(&self, header_ptr: *mut OxHeader, size: usize) {
+        const PAGE_SIZE: usize = 4096;
+        const PAGE_MASK: usize = !(PAGE_SIZE - 1);
 
-            let header = header_ptr as usize;
-            let user_start = header + HEADER_SIZE;
-            let user_end = user_start + size;
+        let header = header_ptr as usize;
+        let user_start = header + HEADER_SIZE;
+        let user_end = user_start + size;
 
-            let page_start = (user_start + PAGE_SIZE - 1) & PAGE_MASK;
-            let page_end = user_end & PAGE_MASK;
+        let page_start = (user_start + PAGE_SIZE - 1) & PAGE_MASK;
+        let page_end = user_end & PAGE_MASK;
 
-            if page_start >= page_end {
-                return;
-            }
-            let length = page_end - page_start;
-
-            let _ = madvise(page_start as *mut c_void, length, MadviseFlags::DONTNEED);
+        if page_start >= page_end {
+            return;
         }
+        let length = page_end - page_start;
+
+        let _ = madvise(page_start as *mut c_void, length, MadviseFlags::DONTNEED);
     }
 }

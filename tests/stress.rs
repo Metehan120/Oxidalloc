@@ -151,3 +151,35 @@ fn stress_thread_with_random_calls_and_random_mallocs() {
         thread.join().unwrap();
     }
 }
+
+#[test]
+fn stress_batch_draining() {
+    let num_threads = thread::available_parallelism().unwrap().get();
+    let mut threads = Vec::new();
+
+    for _ in 0..num_threads {
+        threads.push(std::thread::spawn(|| {
+            let size = 64;
+            let count = 10000;
+            let mut ptrs = Vec::with_capacity(count);
+
+            for _ in 0..count {
+                let ptr = unsafe { malloc(size) };
+                assert!(!ptr.is_null());
+                unsafe { (ptr as *mut u8).write(0xAA) };
+                ptrs.push(ptr);
+            }
+
+            for ptr in ptrs {
+                unsafe {
+                    assert_eq!(*(ptr as *mut u8), 0xAA);
+                    free(ptr);
+                }
+            }
+        }));
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
+    }
+}

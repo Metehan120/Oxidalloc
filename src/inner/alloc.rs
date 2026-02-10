@@ -20,9 +20,9 @@ use crate::{internals::__errno_location, sys::NOMEM};
 
 static THREAD_SPAWNED: AtomicBool = AtomicBool::new(false);
 const BATCH_MIN: usize = 8;
-const BATCH_MAX: usize = 32;
+const BATCH_MAX: usize = 48;
 pub static BATCH_HINTS: [AtomicUsize; NUM_SIZE_CLASSES] =
-    [const { AtomicUsize::new(32) }; NUM_SIZE_CLASSES];
+    [const { AtomicUsize::new(48) }; NUM_SIZE_CLASSES];
 
 pub const OFFSET_SIZE: usize = size_of::<usize>();
 pub const TAG_SIZE: usize = OFFSET_SIZE * 2;
