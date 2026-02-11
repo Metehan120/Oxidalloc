@@ -38,37 +38,39 @@ pub const ITERATIONS: [usize; 34] = [
     1, 1, 1, 1, 1, 1, 1,
 ];
 
-const TLS_BIG_CLASS_BYTES: usize = 1024 * 64;
-const TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 96;
-const TLS_SMALL_CLASS_BYTES: usize = 1024 * 128;
-pub const TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
-    let mut arr = [0; NUM_SIZE_CLASSES];
-    let mut i = 0;
+static mut TLS_BIG_CLASS_BYTES: usize = 1024 * 64;
+static mut TLS_MEDIUM_CLASS_BYTES: usize = 1024 * 96;
+static mut TLS_SMALL_CLASS_BYTES: usize = 1024 * 128;
+pub static TLS_MAX_BLOCKS: [usize; NUM_SIZE_CLASSES] = {
+    unsafe {
+        let mut arr = [0; NUM_SIZE_CLASSES];
+        let mut i = 0;
 
-    while i < NUM_SIZE_CLASSES {
-        let payload = SIZE_CLASSES[i];
-        let block_size = align_to(payload + HEADER_SIZE, 16);
-        let mut blocks = if block_size > 1024 * 1024 * 16 {
-            0
-        } else {
-            if payload < 256 {
-                TLS_SMALL_CLASS_BYTES / block_size
-            } else if payload < 1024 * 16 {
-                TLS_MEDIUM_CLASS_BYTES / block_size
+        while i < NUM_SIZE_CLASSES {
+            let payload = SIZE_CLASSES[i];
+            let block_size = align_to(payload + HEADER_SIZE, 16);
+            let mut blocks = if block_size > 1024 * 1024 * 16 {
+                0
             } else {
-                TLS_BIG_CLASS_BYTES / block_size
-            }
-        };
+                if payload < 256 {
+                    TLS_SMALL_CLASS_BYTES / block_size
+                } else if payload < 1024 * 16 {
+                    TLS_MEDIUM_CLASS_BYTES / block_size
+                } else {
+                    TLS_BIG_CLASS_BYTES / block_size
+                }
+            };
 
-        if blocks == 0 {
-            blocks = 1;
+            if blocks == 0 {
+                blocks = 1;
+            }
+
+            arr[i] = blocks;
+            i += 1;
         }
 
-        arr[i] = blocks;
-        i += 1;
+        arr
     }
-
-    arr
 };
 
 pub static SIZE_LUT: [u8; 256] = {

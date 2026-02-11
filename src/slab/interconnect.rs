@@ -190,7 +190,7 @@ impl InterConnectCache {
 
     #[inline(always)]
     pub unsafe fn get_cpu_fast(&self) -> usize {
-        if ALLOC_COUNT % 4 == 0 {
+        if ALLOC_COUNT % 2 == 0 {
             CACHED_CPU_ID = sched_getcpu() % self.ncpu;
         }
         ALLOC_COUNT += 1;
