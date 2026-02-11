@@ -67,6 +67,18 @@ pub unsafe fn validate_ptr_for_abi(header: *mut OxHeader) {
     );
 }
 
+#[inline(never)]
+unsafe fn push_global(
+    class: usize,
+    head: *mut OxHeader,
+    tail: *mut OxHeader,
+    batch_size: usize,
+    need_push_pushed: bool,
+    is_trimmed: bool,
+) {
+    ICC.try_push(class, head, tail, batch_size, need_push_pushed, is_trimmed);
+}
+
 #[inline(always)]
 unsafe fn free_internal(ptr: *mut c_void) {
     let header_addr = (ptr as usize).wrapping_sub(HEADER_SIZE);
@@ -89,9 +101,9 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
         if batch_count > 0 {
             (*header).next = batch_head;
-            ICC.try_push(class, header, batch_tail, batch_count + 1, false, false);
+            push_global(class, header, batch_tail, batch_count + 1, false, false);
         } else {
-            ICC.try_push(class, header, header, 1, false, false);
+            push_global(class, header, header, 1, false, false);
         }
 
         return;
