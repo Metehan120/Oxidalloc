@@ -57,7 +57,7 @@ extern "C" fn fork_child() {
     reset_fork_onces();
     #[cfg(feature = "hardened-linked-list")]
     unsafe {
-        crate::slab::global::reset_global_locks()
+        crate::slab::interconnect::reset_global_locks()
     };
     reset_fork_thread_state();
     crate::slab::reset_fork_onces();

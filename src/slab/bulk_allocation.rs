@@ -7,7 +7,7 @@ use crate::{
     Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_DISABLE_THP, OxHeader,
     OxidallocError,
     slab::{
-        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, global::GlobalHandler,
+        ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, interconnect::ICC,
         thread_local::ThreadLocalEngine,
     },
     sys::memory_system::{MMapFlags, MProtFlags, MadviseFlags, MemoryFlags, madvise, mmap_memory},
@@ -147,7 +147,7 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
     }
 
     if thread.tls[class].usage >= TLS_MAX_BLOCKS[class] {
-        GlobalHandler.push_to_global(class, head, tail, count, false, false);
+        ICC.try_push(class, head, tail, count, false, false);
         if remaining_blocks(metadata, block_size) > 0 {
             thread.pending[class] = metadata;
         }
@@ -177,7 +177,7 @@ pub unsafe fn drain_pending(thread: &mut ThreadLocalEngine, class: usize) {
         let (head, tail, count) =
             init_blocks(class as u8, pending, block_size, remaining, current_stamp);
         if count > 0 {
-            GlobalHandler.push_to_global(class, head, tail, count, false, false);
+            ICC.try_push(class, head, tail, count, false, false);
         }
     }
 

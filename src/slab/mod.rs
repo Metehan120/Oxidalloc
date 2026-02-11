@@ -3,7 +3,6 @@ use std::hint::unlikely;
 use crate::{HEADER_SIZE, OxHeader, internals::oncelock::OnceLock, va::align_to};
 
 pub mod bulk_allocation;
-pub mod global;
 pub mod interconnect;
 pub mod thread_local;
 

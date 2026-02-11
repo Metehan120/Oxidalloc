@@ -4,10 +4,7 @@ use crate::{
     AVERAGE_BLOCK_TIMES_GLOBAL, FREED_MAGIC, HEADER_SIZE, OX_CURRENT_STAMP, OxHeader,
     OxidallocError,
     big_allocation::trim_big_allocations,
-    slab::{
-        NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class, global::GlobalHandler,
-        interconnect::ICC,
-    },
+    slab::{NUM_SIZE_CLASSES, SIZE_CLASSES, get_size_4096_class, interconnect::ICC},
     sys::memory_system::{MadviseFlags, madvise},
     trim::{
         TimeDecay,
@@ -20,7 +17,7 @@ pub struct GTrim;
 
 impl GTrim {
     unsafe fn pop_from_global(&self, class: usize, need_pushed: bool) -> (*mut OxHeader, usize) {
-        let global_cache = GlobalHandler.pop_from_global(class, 16, need_pushed);
+        let global_cache = ICC.try_pop(class, 16, need_pushed);
 
         if global_cache.is_null() {
             return (null_mut(), 0);
@@ -126,7 +123,7 @@ impl GTrim {
                 }
                 (*tail).next = null_mut();
 
-                GlobalHandler.push_to_global(class, to_push, tail, real, true, false);
+                ICC.try_push(class, to_push, tail, real, true, false);
 
                 total_loop += 1;
             }
@@ -141,7 +138,7 @@ impl GTrim {
                     trimmed = true;
                 }
 
-                GlobalHandler.push_to_global(class, to_trim, to_trim, 1, true, trimmed);
+                ICC.try_push(class, to_trim, to_trim, 1, true, trimmed);
 
                 to_trim = next;
             }

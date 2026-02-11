@@ -207,6 +207,18 @@ impl InterConnectCache {
         need_push_pushed: bool,
         is_trimmed: bool,
     ) {
+        #[cfg(feature = "hardened-linked-list")]
+        {
+            let mut curr = head;
+            while curr != tail {
+                use crate::{slab::xor_ptr_general, va::bootstrap::NUMA_KEY};
+
+                let next_raw = (*curr).next;
+                (*curr).next = xor_ptr_general(next_raw, NUMA_KEY);
+                curr = next_raw;
+            }
+        }
+
         self.ensure_cache();
         let thread_id = self.get_cpu_fast();
 
@@ -441,4 +453,9 @@ impl InterConnectCache {
             lock.reset_on_fork();
         }
     }
+}
+
+#[cfg(feature = "hardened-linked-list")]
+pub(crate) unsafe fn reset_global_locks() {
+    ICC.reset_on_fork();
 }

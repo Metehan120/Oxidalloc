@@ -11,7 +11,7 @@ use crate::{
     FREED_MAGIC, HEADER_SIZE, MAGIC, OX_ALIGN_TAG, OX_CURRENT_STAMP, OxHeader, OxidallocError,
     big_allocation::big_free,
     inner::alloc::{HOT_READY, TOTAL_MALLOC_FREE},
-    slab::{TLS_MAX_BLOCKS, global::GlobalHandler, thread_local::ThreadLocalEngine},
+    slab::{TLS_MAX_BLOCKS, interconnect::ICC, thread_local::ThreadLocalEngine},
     va::is_ours,
 };
 
@@ -89,9 +89,9 @@ unsafe fn free_internal(ptr: *mut c_void) {
 
         if batch_count > 0 {
             (*header).next = batch_head;
-            GlobalHandler.push_to_global(class, header, batch_tail, batch_count + 1, false, false);
+            ICC.try_push(class, header, batch_tail, batch_count + 1, false, false);
         } else {
-            GlobalHandler.push_to_global(class, header, header, 1, false, false);
+            ICC.try_push(class, header, header, 1, false, false);
         }
 
         return;
