@@ -31,6 +31,10 @@ hardened-malloc = []
 name = "bench"
 harness = false
 
+[[bench]]
+name = "speed"
+harness = false
+
 [profile.dev]
 opt-level = 3
 debug = true

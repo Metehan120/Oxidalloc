@@ -7,15 +7,35 @@ pub mod interconnect;
 pub mod rseq_general;
 pub mod thread_local;
 
-pub const SIZE_CLASSES: [usize; 18] = [
-    16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288,
-    1048576, 2097152,
+pub const SIZE_CLASSES: [usize; 34] = [
+    // Tiny (16-128) - 16 Byte steps
+    16, 32, 48, 64, 80, 96, 128, // Small (160-512) - 32/64 Byte steps
+    160, 192, 256, 320, 384, 512, // Medium (768-3072) - Large steps
+    768, 1024, 1280, 1536, 1792, 2048, 2560, 3072, // Large (3840-24KB)
+    3840, 4096, 8192, 12288, 16384, 24576, // Very Large (32KB+)
+    32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
 ];
 
-pub const ITERATIONS: [usize; 18] = [
-    2048, 1024, 512, 256, // 16-128 (Targets ~32KB)
-    32, 16, 8, 4, 2, // 256-4096 (Targets ~8KB)
-    1, 1, 1, 1, 1, 1, 1, 1, 1, // 8KB+ (1 Block)
+pub const ITERATIONS: [usize; 34] = [
+    // TINY (Targets ~32KB / 8 Pages)
+    // 16B  -> Block 80B  -> 32768 / 80  = 409 (48B Waste)
+    // 32B  -> Block 96B  -> 32768 / 96  = 341 (32B Waste)
+    409, 341, 292, 255, 227, 153, 170,
+    // --- SMALL (Targets ~8KB / 2 Pages)
+    // 160B -> Block 224B -> 8192 / 224 = 36 (128B Waste)
+    36, 31, 25, 21, 18, 14,
+    // MEDIUM (Targets ~8KB or ~4KB)
+    // 768B -> Block 832B -> 8192 / 832 = 9 (704B Waste)
+    // We drop to N=1 quickly for sizes > 2KB to prevent VIRT bloat
+    9, 7, 6, 2, 4, 3, 1, 2,
+    // LARGE (Targets 1 Block)
+    // For sizes > 3KB, we want Malloc/Free to be 1:1 with mmap/munmap logic
+    // via bulk_fill to allow immediate reclamation by gtrim and ptrim
+    1, 1, 1, 1, 1, 1,
+    // --- VERY LARGE ---
+    //
+    // Always 1. Let the OS handle the pages.
+    1, 1, 1, 1, 1, 1, 1,
 ];
 
 const TLS_MAX_SIZE_CLASS: usize = 1024 * 256;
@@ -58,7 +78,7 @@ pub static SIZE_LUT: [u8; 256] = {
     while i < 256 {
         let size = (i + 1) * 16;
         let mut class = 0;
-        while class < 18 && SIZE_CLASSES[class] < size {
+        while class < 34 && SIZE_CLASSES[class] < size {
             class += 1;
         }
         lut[i] = class as u8;

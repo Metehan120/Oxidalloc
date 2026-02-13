@@ -1,8 +1,5 @@
-// This implementation does not intended to be used with RSEQ
-// Not every kernel supports RSEQ, so we need to handle with sched_getcpu() for kernel compatibility
-
 use std::{
-    hint::{likely, unlikely},
+    hint::unlikely,
     os::raw::c_void,
     ptr::null_mut,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
@@ -13,19 +10,13 @@ use crate::internals::lock::GlobalLock;
 use crate::{
     MAX_NUMA_NODES, OxHeader, OxidallocError,
     internals::once::Once,
-    slab::{
-        NUM_SIZE_CLASSES,
-        rseq_general::{get_cpu_id, is_glibc_new_enough},
-        thread_local::prefetch,
-        xor_ptr_general,
-    },
+    slab::{NUM_SIZE_CLASSES, rseq_general::get_cpu_id, xor_ptr_general},
     sys::{
         memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
         numa::{MAX_CPUS, get_numa_maps},
     },
     va::bootstrap::NUMA_KEY,
 };
-use rustix::thread::sched_getcpu;
 
 macro_rules! mmap {
     ($ptr:expr, $size:expr) => {
@@ -61,11 +52,6 @@ const ABA_TAG_BITS: usize = 4;
 const ABA_TAG_MASK: usize = (1 << ABA_TAG_BITS) - 1;
 #[cfg(not(feature = "hardened-linked-list"))]
 const ABA_PTR_MASK: usize = !ABA_TAG_MASK;
-
-#[thread_local]
-static mut CACHED_CPU_ID: usize = 0;
-#[thread_local]
-static mut ALLOC_COUNT: u32 = 0;
 
 #[inline(always)]
 fn head_pack(ptr: *mut OxHeader, tag: usize) -> *mut OxHeader {
@@ -106,16 +92,16 @@ fn head_tag(val: *mut OxHeader) -> usize {
 }
 
 pub struct InternalCache {
-    pub list: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
-    pub usage: *mut [AtomicUsize; NUM_SIZE_CLASSES],
-    pub pushed: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
-    pub trimmed: *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
-    pub has_pushed: *mut AtomicBool,
+    pub list: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub usage: [AtomicUsize; NUM_SIZE_CLASSES],
+    pub pushed: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub trimmed: [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES],
+    pub has_pushed: AtomicBool,
 }
 
 #[repr(C, align(64))]
 pub struct InterConnectCache {
-    pub cache: InternalCache,
+    pub cache: *mut InternalCache,
     #[cfg(feature = "hardened-linked-list")]
     pub locks: *mut GlobalLock,
     pub ncpu: usize,
@@ -130,13 +116,7 @@ pub struct InterConnectCache {
 impl InterConnectCache {
     pub const fn new() -> Self {
         InterConnectCache {
-            cache: InternalCache {
-                list: null_mut(),
-                usage: null_mut(),
-                pushed: null_mut(),
-                has_pushed: null_mut(),
-                trimmed: null_mut(),
-            },
+            cache: null_mut(),
             #[cfg(feature = "hardened-linked-list")]
             locks: null_mut(),
             ncpu: 0,
@@ -149,34 +129,15 @@ impl InterConnectCache {
         }
     }
 
+    #[inline(never)]
     pub unsafe fn ensure_cache(&mut self) {
         self.once.call_once(|| {
             let thread_count = get_cpu_count();
-            let list = mmap!(
-                null_mut(),
-                size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
-            );
-            let trimmed = mmap!(
-                null_mut(),
-                size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
-            );
-            let pushed = mmap!(
-                null_mut(),
-                size_of::<[AtomicPtr<OxHeader>; NUM_SIZE_CLASSES]>() * thread_count
-            );
-            let has_pushed = mmap!(null_mut(), size_of::<AtomicBool>() * thread_count);
-            let usage = mmap!(
-                null_mut(),
-                size_of::<[AtomicUsize; NUM_SIZE_CLASSES]>() * thread_count
-            );
+            let list = mmap!(null_mut(), size_of::<InternalCache>() * thread_count);
             #[cfg(feature = "hardened-linked-list")]
             let locks = mmap!(null_mut(), size_of::<GlobalLock>() * thread_count);
 
-            self.cache.list = list as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
-            self.cache.usage = usage as *mut [AtomicUsize; NUM_SIZE_CLASSES];
-            self.cache.pushed = pushed as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
-            self.cache.trimmed = trimmed as *mut [AtomicPtr<OxHeader>; NUM_SIZE_CLASSES];
-            self.cache.has_pushed = has_pushed as *mut AtomicBool;
+            self.cache = list as *mut InternalCache;
 
             #[cfg(feature = "hardened-linked-list")]
             {
@@ -196,15 +157,7 @@ impl InterConnectCache {
 
     #[inline(always)]
     pub unsafe fn get_cpu_fast(&self) -> usize {
-        if likely(is_glibc_new_enough()) {
-            return get_cpu_id() as usize;
-        }
-
-        if ALLOC_COUNT % 2 == 0 {
-            CACHED_CPU_ID = sched_getcpu() % self.ncpu;
-        }
-        ALLOC_COUNT += 1;
-        CACHED_CPU_ID
+        get_cpu_id() as usize
     }
 
     #[inline(always)]
@@ -237,15 +190,16 @@ impl InterConnectCache {
         #[cfg(feature = "hardened-linked-list")]
         let _guard = lock.lock(class);
 
-        let usage = &*self.cache.usage.add(thread_id);
+        let internalcache = &*self.cache.add(thread_id);
+        let usage = &internalcache.usage;
 
         #[cfg(feature = "debug")]
         INTER.fetch_add(1, Ordering::Relaxed);
 
         let list = if unlikely(is_trimmed) {
-            &*self.cache.trimmed.add(thread_id)
-        } else if need_push_pushed {
-            let has_pushed = &*self.cache.has_pushed.add(thread_id);
+            &internalcache.trimmed
+        } else if unlikely(need_push_pushed) {
+            let has_pushed = &internalcache.has_pushed;
             if !has_pushed.load(Ordering::Relaxed) {
                 let _ = has_pushed.compare_exchange_weak(
                     false,
@@ -254,9 +208,9 @@ impl InterConnectCache {
                     Ordering::Relaxed,
                 );
             }
-            &*self.cache.pushed.add(thread_id)
+            &internalcache.pushed
         } else {
-            &*self.cache.list.add(thread_id)
+            &internalcache.list
         };
 
         let mut current_head = list[class].load(Ordering::Relaxed);
@@ -287,27 +241,22 @@ impl InterConnectCache {
 
         let mut total = 0;
         for i in 0..self.ncpu {
-            let usage = &*self.cache.usage.add(i);
+            let usage = &(*self.cache.add(i)).usage;
             total += usage[class].load(Ordering::Relaxed);
         }
         total
     }
 
-    #[inline(always)]
-    pub unsafe fn try_pop(
+    #[cold]
+    #[inline(never)]
+    pub unsafe fn steal(
         &mut self,
         class: usize,
         batch_size: usize,
         need_pushed: bool,
+        cpu: usize,
     ) -> *mut OxHeader {
-        self.ensure_cache();
-        let cpu = self.get_cpu_fast();
-
         let ncpu = self.ncpu;
-
-        if let Some(popped) = self.pop(class, batch_size, cpu, need_pushed) {
-            return popped;
-        }
 
         if self.node_count > 1 && !self.cpu_to_node.is_null() && cpu < ncpu {
             let cpu_to_node_len = ncpu.min(MAX_CPUS);
@@ -342,6 +291,23 @@ impl InterConnectCache {
     }
 
     #[inline(always)]
+    pub unsafe fn try_pop(
+        &mut self,
+        class: usize,
+        batch_size: usize,
+        need_pushed: bool,
+    ) -> *mut OxHeader {
+        self.ensure_cache();
+        let cpu = self.get_cpu_fast();
+
+        if let Some(popped) = self.pop(class, batch_size, cpu, need_pushed) {
+            return popped;
+        }
+
+        self.steal(class, batch_size, need_pushed, cpu)
+    }
+
+    #[inline(always)]
     pub unsafe fn pop(
         &mut self,
         class: usize,
@@ -351,7 +317,9 @@ impl InterConnectCache {
     ) -> Option<*mut OxHeader> {
         #[cfg(feature = "hardened-linked-list")]
         let _guard = (*self.locks.add(thread_id)).lock(class);
-        let usage = &*self.cache.usage.add(thread_id);
+        let internalcache = &*self.cache.add(thread_id);
+
+        let usage = &internalcache.usage;
 
         if usage[class].load(Ordering::Relaxed) == 0 {
             return None;
@@ -359,7 +327,7 @@ impl InterConnectCache {
 
         #[cfg(feature = "debug")]
         INTER.fetch_add(1, Ordering::Relaxed);
-        let mut list = &*self.cache.list.add(thread_id);
+        let mut list = &internalcache.list;
 
         let mut tried_trim_list = false;
         let mut tried_pushed = false;
@@ -369,9 +337,9 @@ impl InterConnectCache {
             let head_enc = cur;
 
             if unlikely(head_ptr(head_enc).is_null()) {
-                let has_pushed = &*self.cache.has_pushed.add(thread_id);
+                let has_pushed = &internalcache.has_pushed;
                 if has_pushed.load(Ordering::Relaxed) && need_pushed && !tried_pushed {
-                    list = &*self.cache.pushed.add(thread_id);
+                    list = &internalcache.pushed;
                     tried_pushed = true;
                     continue;
                 }
@@ -386,7 +354,7 @@ impl InterConnectCache {
                 }
 
                 if !tried_trim_list && need_pushed {
-                    list = &*self.cache.trimmed.add(thread_id);
+                    list = &internalcache.trimmed;
                     tried_trim_list = true;
                     continue;
                 }
@@ -407,15 +375,10 @@ impl InterConnectCache {
                 count += 1;
             }
 
-            let new_head_enc = (*tail).next;
-            if !new_head_enc.is_null() {
-                prefetch(xor_ptr_general(new_head_enc, NUMA_KEY) as *const u8);
-            }
-
             if list[class]
                 .compare_exchange(
                     cur,
-                    head_pack(new_head_enc, head_tag(cur).wrapping_add(1)),
+                    head_pack((*tail).next, head_tag(cur).wrapping_add(1)),
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 )

@@ -7,6 +7,7 @@
     unsafe_op_in_unsafe_fn,
     named_asm_labels,
     invalid_reference_casting,
+    binary_asm_labels,
     clippy::ptr_as_ptr,
     clippy::inline_always,
     clippy::new_without_default,
@@ -36,12 +37,12 @@ pub(crate) mod abi;
 pub(crate) mod big_allocation;
 pub(crate) mod inner;
 pub(crate) mod internals;
-pub(crate) mod slab;
+pub mod slab;
 pub mod sys;
 pub(crate) mod trim;
 pub(crate) mod va;
 
-pub(crate) enum Err {
+pub enum Err {
     OutOfMemory,
 }
 
@@ -83,7 +84,7 @@ pub(crate) fn reset_fork_onces() {
 pub(crate) const HEADER_SIZE: usize = size_of::<OxHeader>();
 
 #[repr(C, align(16))]
-pub(crate) struct MetaData {
+pub struct MetaData {
     pub start: usize,
     pub end: usize,
     pub next: usize,
@@ -92,7 +93,7 @@ pub(crate) struct MetaData {
 #[derive(Debug, Clone)]
 #[cfg(not(feature = "hardened-linked-list"))]
 #[repr(C, align(16))]
-pub(crate) struct OxHeader {
+pub struct OxHeader {
     pub next: *mut OxHeader,
     pub class: u8,
     pub magic: u8,
@@ -102,7 +103,7 @@ pub(crate) struct OxHeader {
 #[derive(Debug, Clone)]
 #[cfg(feature = "hardened-linked-list")]
 #[repr(C, align(16))]
-pub(crate) struct OxHeader {
+pub struct OxHeader {
     pub magic: u64,
     pub next: *mut OxHeader,
     pub class: u8,
