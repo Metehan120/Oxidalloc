@@ -1,4 +1,5 @@
 # Because of the messy Alpha launch, Alpha-2 is going to be released soon with better RSS, fragmentation, stability, and performance. You can expect it around Feb 8th–12th (or a little bit later; I am going to try not to delay too much).
+# Alright let's be real, I have to delay Alpha-2 a bit more. Around Feb 16th–20th.
 
 # Oxidalloc
 
