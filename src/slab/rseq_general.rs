@@ -1,5 +1,4 @@
 use core::arch::asm;
-use libc::ptrdiff_t;
 use std::os::raw::c_char;
 
 unsafe extern "C" {
@@ -7,7 +6,7 @@ unsafe extern "C" {
 }
 
 unsafe extern "C" {
-    static __rseq_offset: ptrdiff_t;
+    static __rseq_offset: isize;
     static __rseq_size: u32;
 }
 

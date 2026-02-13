@@ -5,6 +5,8 @@
 #![allow(
     static_mut_refs,
     unsafe_op_in_unsafe_fn,
+    named_asm_labels,
+    invalid_reference_casting,
     clippy::ptr_as_ptr,
     clippy::inline_always,
     clippy::new_without_default,
