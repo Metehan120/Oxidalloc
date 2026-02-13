@@ -5,3 +5,5 @@ use std::os::raw::c_void;
 pub unsafe extern "C" fn calloc(nmemb: size_t, size: size_t) -> *mut c_void {
     calloc_inner(nmemb, size)
 }
+
+pub static CALLOC: unsafe extern "C" fn(nmemb: size_t, size: size_t) -> *mut c_void = calloc;

@@ -12,7 +12,8 @@ every file.
 
 ## Layout and key modules
 - `src/abi/`: C ABI surface (`malloc`, `free`, `realloc`, `calloc`, `posix_memalign`, etc.).
-- `src/slab/`: Size-classed allocator, thread-local caches, global/interconnect cache.
+- `src/inner/`: Internal implementation of allocator traits and fallback logic.
+- `src/slab/`: Size-classed allocator, thread-local caches, interconnect cache.
 - `src/va/`: Virtual address reservation and VA bitmap management.
 - `src/big_allocation.rs`: Page-granular allocations for large sizes.
 - `src/trim/`: Trimming policies and background trim thread.
@@ -24,8 +25,7 @@ every file.
   a linked-list `next` pointer.
 - **Size classes** (`src/slab/mod.rs`): fixed sizes up to 2 MiB. Above that uses big allocation.
 - **VA bitmap / segments** (`src/va/bitmap.rs`): tracks reserved ranges and avoids collisions.
-- **InterConnect Cache (ICC)** (`src/slab/interconnect.rs`): per-CPU sharded cache used as the
-  global exchange point. This implementation uses `sched_getcpu()` (not RSEQ).
+- **InterConnect Cache (ICC)** (`src/slab/interconnect.rs`): per-CPU sharded cache used as the global exchange point.
 
 ## Allocation paths
 ### Small/medium allocations
@@ -90,4 +90,3 @@ every file.
 
 ## Testing notes
 - Stress tests are under `tests/` and `benches/`.
-- The global/interconnect contention test is in `src/slab/global.rs` (test module).

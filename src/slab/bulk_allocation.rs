@@ -5,7 +5,6 @@ use std::{
 
 use crate::{
     Err, FREED_MAGIC, HEADER_SIZE, MetaData, OX_CURRENT_STAMP, OX_DISABLE_THP, OxHeader,
-    OxidallocError,
     slab::{
         ITERATIONS, NUM_SIZE_CLASSES, SIZE_CLASSES, TLS_MAX_BLOCKS, interconnect::ICC,
         thread_local::ThreadLocalEngine,
@@ -101,13 +100,11 @@ pub unsafe fn bulk_fill(thread: &mut ThreadLocalEngine, class: usize) -> Result<
         total = size_of::<MetaData>() + (block_size * num_blocks);
     }
 
-    let hint = VA_MAP.alloc(total).unwrap_or_else(|| {
-        OxidallocError::VaBitmapExhausted.log_and_abort(
-            null_mut(),
-            "VA bitmap exhausted | This is expected",
-            None,
-        )
-    });
+    let hint = if let Some(mem) = VA_MAP.alloc(total) {
+        mem
+    } else {
+        return Err(Err::OutOfMemory);
+    };
 
     let mem = mmap_memory(
         hint as *mut c_void,

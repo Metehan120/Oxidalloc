@@ -1,5 +1,6 @@
 use crate::{
-    inner::{calloc::calloc_inner, realloc::realloc_inner},
+    abi::calloc::CALLOC,
+    inner::realloc::realloc_inner,
     internals::{__errno_location, size_t},
     sys::NOMEM,
 };
@@ -39,7 +40,7 @@ pub unsafe extern "C" fn recallocarray(
     size: size_t,
 ) -> *mut c_void {
     if ptr.is_null() {
-        return calloc_inner(newnmemb, size);
+        return (CALLOC)(newnmemb, size);
     }
 
     let new_size = match newnmemb.checked_mul(size) {

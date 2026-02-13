@@ -6,12 +6,14 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     free_inner(ptr);
 }
 
+pub static FREE: unsafe extern "C" fn(*mut c_void) = free;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_sized(ptr: *mut c_void, _: size_t) {
-    free(ptr);
+    (FREE)(ptr);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_aligned_sized(ptr: *mut c_void, _: size_t, _: size_t) {
-    free(ptr);
+    (FREE)(ptr);
 }

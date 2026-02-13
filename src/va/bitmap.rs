@@ -767,7 +767,14 @@ impl Segment {
                     Ordering::Acquire,
                     Ordering::Relaxed,
                 ) {
-                    Ok(_) => break,
+                    Ok(_) => {
+                        let recheck_map = map[chunk_idx].load(Ordering::Acquire);
+                        if unlikely((recheck_map & mask) != 0) {
+                            self.rollback_claim(start_idx, bits_processed + bits_in_this_chunk);
+                            return false;
+                        }
+                        break;
+                    }
                     Err(actual) => claim_val = actual,
                 }
             }

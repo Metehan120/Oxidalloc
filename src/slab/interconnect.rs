@@ -2,7 +2,7 @@
 // Not every kernel supports RSEQ, so we need to handle with sched_getcpu() for kernel compatibility
 
 use std::{
-    hint::unlikely,
+    hint::{likely, unlikely},
     os::raw::c_void,
     ptr::null_mut,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
@@ -13,7 +13,12 @@ use crate::internals::lock::GlobalLock;
 use crate::{
     MAX_NUMA_NODES, OxHeader, OxidallocError,
     internals::once::Once,
-    slab::{NUM_SIZE_CLASSES, thread_local::prefetch, xor_ptr_general},
+    slab::{
+        NUM_SIZE_CLASSES,
+        rseq_general::{get_cpu_id, is_glibc_new_enough},
+        thread_local::prefetch,
+        xor_ptr_general,
+    },
     sys::{
         memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
         numa::{MAX_CPUS, get_numa_maps},
@@ -48,6 +53,7 @@ pub static HIT: AtomicUsize = AtomicUsize::new(0);
 pub static INTER: AtomicUsize = AtomicUsize::new(0);
 
 pub static mut ICC: InterConnectCache = InterConnectCache::new();
+pub static mut SHOULD_USE_RSEQ: bool = false;
 
 #[cfg(not(feature = "hardened-linked-list"))]
 const ABA_TAG_BITS: usize = 4;
@@ -190,6 +196,10 @@ impl InterConnectCache {
 
     #[inline(always)]
     pub unsafe fn get_cpu_fast(&self) -> usize {
+        if likely(is_glibc_new_enough()) {
+            return get_cpu_id() as usize;
+        }
+
         if ALLOC_COUNT % 2 == 0 {
             CACHED_CPU_ID = sched_getcpu() % self.ncpu;
         }

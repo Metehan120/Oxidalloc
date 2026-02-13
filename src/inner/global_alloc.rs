@@ -82,7 +82,7 @@ impl Oxidalloc {
 }
 
 unsafe impl GlobalAlloc for Oxidalloc {
-    #[inline(always)]
+    #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.init();
 
@@ -93,30 +93,21 @@ unsafe impl GlobalAlloc for Oxidalloc {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         self.init();
 
         free_inner(ptr as *mut c_void);
     }
 
+    #[inline]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         self.init();
 
-        if likely(layout.align() <= 16) {
-            realloc_inner(ptr as *mut c_void, new_size) as *mut u8
-        } else {
-            let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-            let new_ptr = self.alloc(new_layout);
-            if !new_ptr.is_null() {
-                std::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size().min(new_size));
-                self.dealloc(ptr, layout);
-            }
-            new_ptr
-        }
+        realloc_inner(ptr as *mut c_void, new_size) as *mut u8
     }
 
-    #[inline(always)]
+    #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         self.init();
 

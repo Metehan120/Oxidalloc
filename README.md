@@ -1,6 +1,4 @@
-# Note: This README targets the main branch and may differ from the alpha release.
-
-# Oxidalloc
+# Oxidalloc Alpha-2
 
 Oxidalloc is a general-purpose Rust allocator for Linux that prioritizes predictable,
 low-latency allocation, long-running stability, and modern hardening options. It is not a
@@ -22,11 +20,16 @@ explicit control over address-space and memory reclamation.
 
 ## **Warning:** Alpha quality
 
-- Do not expect rock-solid stability yet.
-- Small-block performance is still being tuned in real-world workloads; microbench numbers below are preliminary.
-- Long-running RSS behavior can vary; it is still being tuned and tested.
-- Hardening modes are not audited; use with caution.
-- Extensive use of `unsafe` is required for direct syscalls, pointer arithmetic, and lock-free structures.
+> [!CAUTION]
+> Oxidalloc is in early alpha. It is **not production-ready**. You should expect crashes, memory corruption, or deadlocks when running complex or highly-contended workloads.
+
+- **Stability**: While core paths are verified with `loom` and stress tests, edge cases in `realloc` or heavy cross-thread contention may still trigger `SIGSEGV` or `SIGABRT` even if low probability.
+- **Performance**: Small-block hot paths are fast in microbenchmarks, but real-world "cache-unfriendly" workloads may exhibit different characteristics. Tuning is ongoing.
+- **Memory Footprint**: Long-running Resident Set Size (RSS) behavior is still being optimized. trimmers may not be aggressive enough for all use cases.
+- **Security**: Hardening modes (pointer tagging, XOR lists) provide a layer of protection but have **not been professionally audited**.
+- **Platform**: Primarily tested on Linux x86_64. Other Linux architectures may have subtle syscall or memory ordering issues.
+- **Unsafe Code**: The codebase relies heavily on manual pointer management and raw syscalls. Use only in environments where you can afford an experimental memory manager.
+- **Modern glibc requirement**: Because of migration through `rseq` modern glibc versions are required (2.35+).
 
 ## Status
 
@@ -37,11 +40,11 @@ explicit control over address-space and memory reclamation.
 ## Design highlights
 
 - Per-CPU InterConnect Cache replaces a single global heap and scales with core count.
-- VA bitmap + radix tree makes large VA reservations safe and collision-aware.
+- **Radix Tree**: VA bitmap + radix tree makes large VA reservations and pointer identification safe even under high concurrency.
 - In-place `realloc` growth/shrink when address space allows it.
 - TLS cache caps prevent unbounded growth in long-running workloads.
 - Hardened modes add pointer integrity checks and XOR-masked lists.
-- Fork-aware reset logic to avoid sharing unsafe state across fork.
+- **Fork-Safe**: Fork-aware reset logic (via `pthread_atfork`) ensures that internal state, locks, and TLS are safely reinitialized across clones.
 
 ## Architecture (short version)
 
@@ -55,6 +58,7 @@ complete allocator with its own VA management, metadata, and cache topology.
 Key files to start reading:
 
 - `src/abi/` (C ABI entry points)
+- `src/inner/` (Allocator internal components)
 - `src/slab/` (size classes, TLS caches, ICC)
 - `src/va/` (VA bitmap + reservations)
 - `src/trim/` (trimming and background thread)
@@ -89,7 +93,6 @@ ICC replaces a single global list with per-CPU shards:
 
 - Pushes and pops are batched for amortized atomic cost.
 - Local shard is preferred; other shards are used for victim stealing.
-- Uses `sched_getcpu()` for compatibility (not RSEQ; some custom kernels don't support RSEQ).
 
 ## VA management
 
@@ -114,13 +117,20 @@ ICC replaces a single global list with per-CPU shards:
 - `hardened-linked-list`: XOR-masks pointers + stronger global locks.
 - Expect overhead; not audited yet.
 
+## Proxy Mode and Fallback
+
+When Oxidalloc is used as a `cdylib` (e.g., via `LD_PRELOAD`), it automatically enters **Proxy Mode**. It uses an internal radix tree to identify whether a pointer belongs to its managed regions.
+- **Owned Pointers**: Handled by Oxidalloc's high-speed caches.
+- **External Pointers**: Safely delegated to the system's fallback allocator (glibc or whatever comes after).
+This ensures compatibility with libraries that may have allocated memory before Oxidalloc was loaded or that bypass the standard allocation path.
+
 ## Configuration (environment)
 
-- `OX_FORCE_THP=1` — forcing THP (`madvise(HUGEPAGE)` for every big allocations by aligning to 2MB)
-- `OX_TRIM_THRESHOLD=<bytes>` — minimum trim threshold (clamped to >= 1 MiB)
-- `OX_MAX_RESERVATION=<bytes>` — VA reservation cap (power-of-two, clamped to [16 GiB, 256 TiB])
-- `OX_DISABLE_TRIM_THREAD=1` — disables background trimming thread
-- `OX_DISABLE_THP=1` — disables transparent huge pages / If THP forced, this flag will be ignored.
+- `OX_FORCE_THP=1` — Forces Transparent Huge Pages (THP) for all big allocations by aligning to 2MB and using `madvise(HUGEPAGE)`.
+- `OX_TRIM_THRESHOLD=<bytes>` — Minimum threshold of free memory before the trim thread reclaims it (clamped to >= 1 MiB).
+- `OX_MAX_RESERVATION=<bytes>` — Total Virtual Address (VA) reservation cap (power-of-two, clamped to [16 GiB, 256 TiB]).
+- `OX_DISABLE_TRIM_THREAD=1` — Disables the background trimming thread.
+- `OX_DISABLE_THP=1` — Disables transparent huge pages. If `OX_FORCE_THP` is set, this is ignored.
 
 ## Limits / tradeoffs
 
@@ -139,7 +149,12 @@ This builds `liboxidalloc.so` in `target/release/`.
 
 ## ABI and integration
 
-- Exposes standard C allocator symbols (`malloc`, `free`, `realloc`, `calloc`, `posix_memalign`, etc.).
+- Exposes standard C allocator symbols.
+- **Complete C ABI Support**:
+    - `malloc`, `free`, `realloc`, `calloc`
+    - `posix_memalign`, `memalign`, `aligned_alloc`, `valloc`, `pvalloc`
+    - `reallocarray`, `recallocarray`
+    - `malloc_usable_size`, `malloc_trim`
 - Intended to be loaded via `LD_PRELOAD` or linked as a `cdylib`.
 - “Just enough” compatibility: optimized behavior over strict libc edge-case parity.
 
@@ -147,6 +162,54 @@ This builds `liboxidalloc.so` in `target/release/`.
 
 ```bash
 LD_PRELOAD=./target/release/liboxidalloc.so <your_program>
+```
+
+## Usage as Global Allocator
+
+You can use Oxidalloc as the global allocator in your Rust project. This requires the `global-alloc` feature.
+
+### 1. Update `Cargo.toml`
+
+```toml
+[dependencies]
+oxidalloc = { version = "1.0.0-public-alpha-2", features = ["global-alloc"] }
+```
+
+### 2. Configure in `main.rs` or `lib.rs`
+
+```rust
+use oxidalloc::{Oxidalloc, OxidallocConfig};
+
+#[global_allocator]
+static ALLOC: Oxidalloc = Oxidalloc::new();
+
+// Or with custom configuration:
+/*
+static ALLOC: Oxidalloc = Oxidalloc::new_with_config(OxidallocConfig {
+    disable_trim: false,
+    disable_thp: false,
+    force_thp: false,
+    ..OxidallocConfig::new()
+});
+*/
+
+fn main() {
+    let mut v = Vec::new();
+    v.push(1);
+    println!("Allocations are now handled by Oxidalloc!");
+}
+```
+
+> [!IMPORTANT]
+> When using `global-alloc`, ensure you are building with `+nightly` as Oxidalloc relies on nightly features for performance.
+
+## Verified Lock-Free Structures
+
+Oxidalloc's core synchronization primitives, including the InterConnect Cache (ICC), are verified using [loom](https://github.com/tokio-rs/loom) to ensure correctness under concurrency and detect potential data races or ABA issues.
+
+To run the verification tests:
+```bash
+cargo +nightly test --test "*loom"
 ```
 
 ## Features
@@ -182,9 +245,33 @@ For more extensive benchmark suites, see [`benchmarks`](benchmarks/OVERVIEW.md).
 
 ## Tests and benchmarks
 
-- Tests live in `tests/`.
-- Criterion benchmarks in `benches/`.
-- Stress tests are included and meant to be brutal.
+Oxidalloc is verified against a comprehensive suite of integration and stress tests:
+
+### Integration Tests
+- `tests/correctness.rs`: Multi-threaded allocation/free consistency (e.g., `Arc<Mutex<Vec>>` patterns).
+- `tests/global_alloc_verification.rs`: Verifies performance and correctness as a `#[global_allocator]`.
+- `tests/abi_verification.rs`: Ensures C ABI parity and cross-allocator pointer handling.
+- `tests/basic.rs`: Smoke tests for core allocation logic.
+
+### Concurrency Verification
+- `tests/icc_loom.rs`: Uses [loom](https://github.com/tokio-rs/loom) to verify the lock-free InterConnect Cache for data races and ABA issues.
+- `tests/va_loom.rs`: Loom-verified virtual address management and claim/release logic.
+
+### Stress and Performance
+- `tests/stress.rs`: Brutal multi-threaded stress tests with random allocation patterns.
+- `tests/stress_internals.rs`: Low-level bitmap and slab management stress testing.
+- `tests/metrics.rs`: Measures fragmentation, freelist efficiency, and cache utilization | Optimistic.
+
+### Running Tests
+```bash
+# Run all tests
+cargo +nightly test --release -- --no-capture
+
+# Run concurrency verification (Loom)
+cargo +nightly test --test "*loom"
+```
+
+For more extensive benchmark suites, see [`benchmarks`](benchmarks/OVERVIEW.md).
 
 ## Contributing
 

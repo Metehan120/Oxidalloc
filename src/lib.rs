@@ -1,3 +1,7 @@
+//! Oxidalloc is a memory allocator designed for high performance and predictable memory fragmentation.
+//! It is optimized for Linux systems and provides a fast and efficient way to allocate and deallocate memory.
+//! Licensed under the MIT license.
+
 #![allow(
     static_mut_refs,
     unsafe_op_in_unsafe_fn,
@@ -108,7 +112,6 @@ pub(crate) enum OxidallocError {
     DoubleFree = 0x1000,
     MemoryCorruption = 0x1001,
     OutOfMemory = 0x1003,
-    VaBitmapExhausted = 0x1004,
     VAIinitFailed = 0x1005,
     PThreadCacheFailed = 0x1006,
     SecurityViolation = 0x100A,
@@ -122,7 +125,6 @@ impl Debug for OxidallocError {
             Self::DoubleFree => write!(f, "DoubleFree (0x1000)"),
             Self::MemoryCorruption => write!(f, "MemoryCorruption (0x1001)"),
             Self::OutOfMemory => write!(f, "OutOfMemory (0x1003)"),
-            Self::VaBitmapExhausted => write!(f, "VaBitmapExhausted (0x1004)"),
             Self::VAIinitFailed => write!(f, "VAIinitFailed (0x1005)"),
             Self::PThreadCacheFailed => write!(f, "PThreadCacheFailed (0x1006)"),
             Self::SecurityViolation => write!(f, "SecurityViolation (0x100A)"),
