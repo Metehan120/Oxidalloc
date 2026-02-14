@@ -255,7 +255,7 @@ impl InterConnectCache {
         batch_size: usize,
         need_pushed: bool,
         cpu: usize,
-    ) -> *mut OxHeader {
+    ) -> (*mut OxHeader, *mut OxHeader, usize) {
         let ncpu = self.ncpu;
 
         if self.node_count > 1 && !self.cpu_to_node.is_null() && cpu < ncpu {
@@ -287,7 +287,7 @@ impl InterConnectCache {
             }
         }
 
-        null_mut()
+        (null_mut(), null_mut(), 0)
     }
 
     #[inline(always)]
@@ -296,7 +296,7 @@ impl InterConnectCache {
         class: usize,
         batch_size: usize,
         need_pushed: bool,
-    ) -> *mut OxHeader {
+    ) -> (*mut OxHeader, *mut OxHeader, usize) {
         self.ensure_cache();
         let cpu = self.get_cpu_fast();
 
@@ -314,7 +314,7 @@ impl InterConnectCache {
         batch_size: usize,
         thread_id: usize,
         need_pushed: bool,
-    ) -> Option<*mut OxHeader> {
+    ) -> Option<(*mut OxHeader, *mut OxHeader, usize)> {
         #[cfg(feature = "hardened-linked-list")]
         let _guard = (*self.locks.add(thread_id)).lock(class);
         let internalcache = &*self.cache.add(thread_id);
@@ -410,7 +410,7 @@ impl InterConnectCache {
                     eprintln!("hit: {}, inter: {}, ratio: {}", hit, inter, ratio);
                 }
 
-                return Some(head);
+                return Some((head, tail, count));
             }
         }
     }

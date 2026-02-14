@@ -13,7 +13,7 @@ use crate::{
         interconnect::ICC, match_size_class, thread_local::ThreadLocalEngine,
     },
     trim::thread::spawn_gtrim_thread,
-    va::{align_to, bootstrap::boot_strap, is_ours},
+    va::{align_to, bootstrap::boot_strap},
 };
 #[cfg(not(feature = "global-alloc"))]
 use crate::{internals::__errno_location, sys::NOMEM};
@@ -46,7 +46,7 @@ unsafe fn try_split_from_icc(class: usize) -> *mut OxHeader {
             continue;
         }
 
-        let donor_header = ICC.try_pop(donor, 1, true);
+        let (donor_header, _, _) = ICC.try_pop(donor, 1, true);
         if donor_header.is_null() {
             continue;
         }
@@ -134,20 +134,10 @@ unsafe fn try_fill(thread: &mut ThreadLocalEngine, class: usize) -> *mut OxHeade
 
     let global_cache = ICC.try_pop(class, batch, true);
 
-    if !global_cache.is_null() {
-        let mut tail = global_cache;
-        let mut real = 1;
+    if !global_cache.0.is_null() {
+        thread.push_to_thread_tailed(class, global_cache.0, global_cache.1, global_cache.2);
 
-        // Loop through cache and found the last header and set linked list to null
-        while real < batch && !(*tail).next.is_null() && is_ours((*tail).next as usize) {
-            tail = (*tail).next;
-            real += 1;
-        }
-        (*tail).next = null_mut();
-
-        thread.push_to_thread_tailed(class, global_cache, tail, real);
-
-        if real == batch {
+        if global_cache.2 == batch {
             bump_batch_hint(class, true);
         } else {
             bump_batch_hint(class, false);
@@ -237,15 +227,13 @@ unsafe fn allocate_boot_segment(class: usize) -> *mut c_void {
 
 #[inline(always)]
 fn bump_batch_hint(class: usize, up: bool) {
-    let _ = BATCH_HINTS[class].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
-        let cur = val.clamp(BATCH_MIN, BATCH_MAX);
-        let next = if up {
-            (cur + 1).min(BATCH_MAX)
-        } else {
-            cur.saturating_sub(2).max(BATCH_MIN)
-        };
-        Some(next)
-    });
+    let cur = BATCH_HINTS[class].load(Ordering::Relaxed);
+    let next = if up {
+        (cur + 1).min(BATCH_MAX)
+    } else {
+        cur.saturating_sub(2).max(BATCH_MIN)
+    };
+    BATCH_HINTS[class].store(next, Ordering::Relaxed);
 }
 
 #[inline(always)]

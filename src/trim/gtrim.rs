@@ -17,7 +17,7 @@ pub struct GTrim;
 
 impl GTrim {
     unsafe fn pop_from_global(&self, class: usize, need_pushed: bool) -> (*mut OxHeader, usize) {
-        let global_cache = ICC.try_pop(class, 16, need_pushed);
+        let global_cache = ICC.try_pop(class, 16, need_pushed).0;
 
         if global_cache.is_null() {
             return (null_mut(), 0);

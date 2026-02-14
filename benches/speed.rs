@@ -93,7 +93,7 @@ fn bench_icc(c: &mut Criterion) {
                     barrier_inner.wait();
                     let popped = (*icc).try_pop(0, 1, false);
                     black_box(popped);
-                    if !popped.is_null() {}
+                    if !popped.0.is_null() {}
                 }
                 let elapsed = start.elapsed();
 

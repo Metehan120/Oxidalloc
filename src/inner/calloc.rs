@@ -7,6 +7,20 @@ use crate::{internals::__errno_location, sys::NOMEM};
 use std::{alloc::Layout, os::raw::c_void, ptr::null_mut};
 
 #[inline(always)]
+unsafe fn get_big_size(header: *mut OxHeader) -> usize {
+    BIG_ALLOC_MAP
+        .get(header as usize)
+        .map(|meta| meta.size)
+        .unwrap_or_else(|| {
+            OxidallocError::AttackOrCorruption.log_and_abort(
+                header as *mut c_void,
+                "Missing big allocation metadata during calloc",
+                None,
+            )
+        })
+}
+
+#[inline(always)]
 unsafe fn calc_and_get(size: Layout, nmem: usize) -> Option<(*mut c_void, usize)> {
     let size = size.size();
     let total_size = match nmem.checked_mul(size) {
@@ -51,18 +65,7 @@ pub unsafe fn calloc_inner(nmemb: usize, size: usize) -> *mut c_void {
 
             let mut actual_size = (*header).class as usize;
             if actual_size == 100 {
-                let payload_size = BIG_ALLOC_MAP
-                    .get(header as usize)
-                    .map(|meta| meta.size)
-                    .unwrap_or_else(|| {
-                        OxidallocError::AttackOrCorruption.log_and_abort(
-                            header as *mut c_void,
-                            "Missing big allocation metadata during calloc",
-                            None,
-                        )
-                    });
-
-                actual_size = payload_size;
+                actual_size = get_big_size(header);
             } else {
                 actual_size = SIZE_CLASSES[actual_size]
             }
