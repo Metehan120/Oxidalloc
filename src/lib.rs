@@ -5,9 +5,7 @@
 #![allow(
     static_mut_refs,
     unsafe_op_in_unsafe_fn,
-    named_asm_labels,
-    invalid_reference_casting,
-    binary_asm_labels,
+    bad_asm_style,
     clippy::ptr_as_ptr,
     clippy::inline_always,
     clippy::new_without_default,
@@ -104,8 +102,8 @@ pub struct OxHeader {
 #[cfg(feature = "hardened-linked-list")]
 #[repr(C, align(16))]
 pub struct OxHeader {
-    pub magic: u64,
     pub next: *mut OxHeader,
+    pub magic: u64,
     pub class: u8,
     pub life_time: u32,
 }

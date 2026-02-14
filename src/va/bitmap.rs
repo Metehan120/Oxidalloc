@@ -96,14 +96,12 @@ pub unsafe fn get_va_from_kernel() -> (*mut c_void, usize, usize) {
             null_mut()
         };
 
-        let probe = mmap_memory(
-            target,
-            size,
-            MMapFlags {
-                prot: MProtFlags::NONE,
-                map: flags,
-            },
-        );
+        #[cfg(feature = "hardened-malloc")]
+        let prot = MProtFlags::NONE;
+        #[cfg(not(feature = "hardened-malloc"))]
+        let prot = MProtFlags::READ | MProtFlags::WRITE;
+
+        let probe = mmap_memory(target, size, MMapFlags { prot, map: flags });
 
         match probe {
             Ok(output) => {

@@ -1,7 +1,7 @@
 use crate::{
     FREED_MAGIC, HEADER_SIZE, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OxHeader, OxidallocError,
     internals::hashmap::{BIG_ALLOC_MAP, BigAllocMeta},
-    sys::memory_system::{MadviseFlags, RMProtFlags, madvise, protect_memory},
+    sys::memory_system::{MadviseFlags, madvise},
     va::{align_to, bitmap::VA_MAP},
 };
 use std::{
@@ -84,17 +84,23 @@ pub unsafe fn big_malloc(size: usize) -> *mut u8 {
             None => return null_mut(),
         };
 
-        let is_err = protect_memory(
-            hint as *mut c_void,
-            aligned_total,
-            RMProtFlags::WRITE | RMProtFlags::READ,
-        )
-        .is_err();
+        #[cfg(feature = "hardened-malloc")]
+        {
+            use crate::sys::memory_system::{RMProtFlags, protect_memory};
 
-        if is_err {
-            VA_MAP.free(hint, aligned_total);
-            return null_mut();
+            let is_err = protect_memory(
+                hint as *mut c_void,
+                aligned_total,
+                RMProtFlags::WRITE | RMProtFlags::READ,
+            )
+            .is_err();
+
+            if is_err {
+                VA_MAP.free(hint, aligned_total);
+                return null_mut();
+            }
         }
+
         actual_ptr = hint as *mut OxHeader;
     }
 
@@ -150,10 +156,6 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
 
     (*header).magic = FREED_MAGIC;
 
-    if total_size % (1024 * 1024 * 2) == 0 && !OX_DISABLE_THP {
-        let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
-    }
-
     let mut pushed = false;
     {
         let _guard = BIG_FREE_CACHE.lock.lock();
@@ -178,6 +180,11 @@ pub unsafe fn big_free(ptr: *mut OxHeader) {
                 );
                 VA_MAP.free(to_trim.ptr as usize, to_trim.total_size);
             }
+
+            if total_size % (1024 * 1024 * 2) == 0 && !OX_DISABLE_THP {
+                let _ = madvise(header as *mut c_void, total_size, MadviseFlags::NORMAL);
+            }
+
             for i in 0..cache.len() - 1 {
                 cache[i] = cache[i + 1];
             }

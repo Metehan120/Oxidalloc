@@ -33,7 +33,7 @@ macro_rules! free_main {
         let mut header_search_ptr = $ptr;
         let tag_loc = ($ptr as usize).wrapping_sub(TAG_SIZE) as *const usize;
 
-        if std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG {
+        if unlikely(std::ptr::read_unaligned(tag_loc) == OX_ALIGN_TAG) {
             let raw_loc = ($ptr as usize).wrapping_sub(OFFSET_SIZE) as *const usize;
             let presumed_original_ptr = std::ptr::read_unaligned(raw_loc) as *mut c_void;
             if is_ours(presumed_original_ptr as usize) {

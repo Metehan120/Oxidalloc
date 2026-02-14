@@ -10,7 +10,7 @@ use crate::internals::lock::GlobalLock;
 use crate::{
     MAX_NUMA_NODES, OxHeader, OxidallocError,
     internals::once::Once,
-    slab::{NUM_SIZE_CLASSES, rseq_general::get_cpu_id, xor_ptr_general},
+    slab::{NUM_SIZE_CLASSES, rseq_general::get_rseq, xor_ptr_general},
     sys::{
         memory_system::{MMapFlags, MProtFlags, MemoryFlags, get_cpu_count, mmap_memory},
         numa::{MAX_CPUS, get_numa_maps},
@@ -44,7 +44,6 @@ pub static HIT: AtomicUsize = AtomicUsize::new(0);
 pub static INTER: AtomicUsize = AtomicUsize::new(0);
 
 pub static mut ICC: InterConnectCache = InterConnectCache::new();
-pub static mut SHOULD_USE_RSEQ: bool = false;
 
 #[cfg(not(feature = "hardened-linked-list"))]
 const ABA_TAG_BITS: usize = 4;
@@ -157,7 +156,7 @@ impl InterConnectCache {
 
     #[inline(always)]
     pub unsafe fn get_cpu_fast(&self) -> usize {
-        get_cpu_id() as usize
+        get_rseq().cpu_id as usize
     }
 
     #[inline(always)]

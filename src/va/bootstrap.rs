@@ -6,10 +6,7 @@ use crate::{
     FREED_MAGIC, MAGIC, OX_DISABLE_THP, OX_FORCE_THP, OX_MAX_RESERVATION, OX_TRIM,
     OX_TRIM_THRESHOLD, OxidallocError,
     internals::{env::get_env_usize, once::Once},
-    slab::{
-        interconnect::SHOULD_USE_RSEQ, rseq_general::is_glibc_new_enough,
-        thread_local::ThreadLocalEngine,
-    },
+    slab::thread_local::ThreadLocalEngine,
     sys::memory_system::{get_cpu_count, getrandom},
 };
 
@@ -225,7 +222,6 @@ pub unsafe fn boot_strap() {
         init_random();
         init_magic();
         init_thread();
-        SHOULD_USE_RSEQ = is_glibc_new_enough();
         #[cfg(feature = "hardened-linked-list")]
         init_random_numa();
         init_nthreads();

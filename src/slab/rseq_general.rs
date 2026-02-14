@@ -1,5 +1,7 @@
 use core::arch::asm;
-use std::os::raw::c_char;
+use std::arch::global_asm;
+
+use crate::OxHeader;
 
 #[repr(C, align(32))]
 pub struct rseq {
@@ -14,68 +16,73 @@ pub struct rseq {
 pub const RSEQ_SIG: u32 = 0x53053053;
 
 unsafe extern "C" {
-    fn gnu_get_libc_version() -> *const c_char;
     static __rseq_offset: isize;
     static __rseq_size: u32;
 }
 
-pub unsafe fn is_glibc_new_enough() -> bool {
-    let version_ptr = gnu_get_libc_version();
-    if version_ptr.is_null() {
-        return false;
-    }
+pub unsafe fn get_rseq() -> &'static rseq {
+    let rseq_ptr: *mut rseq;
+    let _: usize;
 
-    let mut s = version_ptr as *const u8;
-    let mut major = 0u32;
-    while *s >= b'0' && *s <= b'9' {
-        major = major * 10 + (*s - b'0') as u32;
-        s = s.add(1);
-    }
-    if *s != b'.' {
-        return major > 2;
-    }
-    s = s.add(1);
-    let mut minor = 0u32;
-    while *s >= b'0' && *s <= b'9' {
-        minor = minor * 10 + (*s - b'0') as u32;
-        s = s.add(1);
-    }
-    major > 2 || (major == 2 && minor >= 35)
+    #[cfg(target_arch = "x86_64")]
+    asm!(
+        "mov {tmp}, qword ptr [{offset_sym}@GOTPCREL + rip]",
+        "mov {offset}, [{tmp}]",
+        "mov {rseq_ptr}, qword ptr fs:[{offset}]",
+
+        tmp = out(reg) _,
+        offset = out(reg) _,
+        offset_sym = sym __rseq_offset,
+        rseq_ptr = out(reg) rseq_ptr,
+        options(readonly, nostack, preserves_flags)
+    );
+
+    #[cfg(target_arch = "aarch64")]
+    asm!(
+        "adrp {tmp}, :gottprel:__rseq_offset",
+        "ldr {offset}, [{tmp}, :gottprel_lo12:__rseq_offset]",
+        "mrs {tp}, tpidr_el0",
+        "add {rseq_ptr}, {tp}, {offset}",
+
+        tmp = out(reg) _,
+        offset = out(reg) _,
+        tp = out(reg) _,
+        rseq_ptr = out(reg) rseq_ptr,
+        options(readonly, nostack, preserves_flags)
+    );
+
+    &*rseq_ptr
 }
 
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
-pub unsafe fn get_cpu_id() -> u32 {
-    let cpu_id: u32;
-    asm!(
-        "mov {offset}, qword ptr [{offset_sym}@GOTPCREL + rip]",
-        "mov {offset}, [{offset}]",
-        "mov {cpu_id:e}, fs:[{offset} + 4]",
-        offset = out(reg) _,
-        offset_sym = sym __rseq_offset,
-        cpu_id = out(reg) cpu_id,
-        options(readonly, nostack, preserves_flags)
+global_asm!(include_str!("asm/rseq_pop_x86.s"));
+#[cfg(target_arch = "x86_64")]
+global_asm!(include_str!("asm/rseq_push_x86.s"));
+
+unsafe extern "C" {
+    // RDI: head_ptr
+    // RSI: rseq_cs_ptr (TLS)
+    // RDX: counter_ptr
+    pub fn rseq_pop_header(
+        head_ptr: *mut *mut OxHeader,
+        rseq_cs_ptr: *mut usize,
+        counter_ptr: *mut usize,
+    ) -> *mut OxHeader;
+
+    // RDI: head_ptr
+    // RSI: new_node
+    // RDX: rseq_cs_ptr (TLS)
+    // RCX: counter_ptr
+    pub fn rseq_push_header(
+        head_ptr: *mut *mut OxHeader,
+        new_node: *mut OxHeader,
+        rseq_cs_ptr: *mut usize,
+        counter_ptr: *mut usize,
     );
-    cpu_id
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
-pub unsafe fn get_cpu_id() -> u32 {
-    let cpu_id: u32;
-    let mut offset: isize;
-    asm!(
-        "mrs {tp}, tpidr_el0",
-        "adrp {tmp}, :got:__rseq_offset",
-        "ldr {tmp}, [{tmp}, :got_lo12:__rseq_offset]",
-        "ldr {offset}, [{tmp}]",
-        "add {tp}, {tp}, {offset}",
-        "ldr {cpu_id:w}, [{tp}, #4]",
-        tp = out(reg) _,
-        tmp = out(reg) _,
-        offset = out(reg) offset,
-        cpu_id = out(reg) cpu_id,
-        options(readonly, nostack, preserves_flags)
-    );
-    cpu_id
+pub unsafe fn get_cs_ptr() -> *mut usize {
+    let rseq_info = get_rseq();
+    core::ptr::addr_of!((*rseq_info).rseq_cs) as *mut usize
 }

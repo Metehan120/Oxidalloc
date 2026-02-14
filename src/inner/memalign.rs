@@ -43,12 +43,16 @@ pub unsafe fn align_inner(memptr: *mut *mut c_void, alignment: usize, size: usiz
 
 #[inline(always)]
 pub unsafe fn memalign_inner(alignment: usize, size: usize) -> *mut c_void {
-    let align = alignment.max(size_of::<*mut c_void>());
-    if !align.is_power_of_two() {
+    let mut ptr: *mut c_void = null_mut();
+    let adjusted_alignment = if alignment < 8 { 8 } else { alignment };
+
+    if !adjusted_alignment.is_power_of_two() {
         return null_mut();
     }
 
-    let target_size = (size.max(align) + align - 1) & align.wrapping_neg();
-
-    alloc_inner(target_size)
+    if align_inner(&mut ptr, adjusted_alignment, size) == 0 {
+        ptr
+    } else {
+        null_mut()
+    }
 }
